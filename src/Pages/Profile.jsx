@@ -56,11 +56,11 @@ const carouselTexts = [
 const BACKEND_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 
 const createAuthenticatedRequest = () => {
-  const token = 
-    localStorage.getItem("access_token") || 
+  const token =
+    localStorage.getItem("access_token") ||
     localStorage.getItem("token") ||
     localStorage.getItem("accessToken");
-  
+
   return axios.create({
     baseURL: BACKEND_URL,
     headers: {
@@ -72,35 +72,35 @@ const createAuthenticatedRequest = () => {
 
 async function fetchUserProfile(authFetch) {
   try {
-    const token = localStorage.getItem("access_token") || 
-                  localStorage.getItem("token") ||
-                  localStorage.getItem("accessToken");
-    
+    const token = localStorage.getItem("access_token") ||
+      localStorage.getItem("token") ||
+      localStorage.getItem("accessToken");
+
     if (!token) {
       throw new Error("No authentication token found");
     }
-    
+
     let userId = null;
-    
+
     try {
       const payload = JSON.parse(atob(token.split('.')[1]));
       userId = payload.user_id || payload.sub || payload.id;
-      
+
       if (userId) {
         localStorage.setItem("userId", userId);
       }
     } catch (e) {
       console.error("Failed to decode token:", e);
     }
-    
+
     if (!userId) {
       userId = localStorage.getItem("userId");
     }
-    
+
     if (!userId) {
       throw new Error("User ID not found");
     }
-    
+
     if (authFetch) {
       const response = await authFetch(`${BACKEND_URL}/profile/${userId}`);
       if (!response.ok) {
@@ -110,22 +110,22 @@ async function fetchUserProfile(authFetch) {
       const data = await response.json();
       return data;
     }
-    
+
     const response = await fetch(`${BACKEND_URL}/profile/${userId}`, {
       headers: {
         "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json",
       }
     });
-    
+
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
-    
+
     const data = await response.json();
     return data;
-    
+
   } catch (error) {
     console.error("Error fetching profile:", error);
     throw error;
@@ -133,29 +133,29 @@ async function fetchUserProfile(authFetch) {
 }
 
 async function updateUserProfile(data, authFetch) {
-  const token = localStorage.getItem("access_token") || 
-                localStorage.getItem("token") ||
-                localStorage.getItem("accessToken");
-  
+  const token = localStorage.getItem("access_token") ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("accessToken");
+
   if (!token) throw new Error("No authentication token found");
-  
+
   let userId = null;
-  
+
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
     userId = payload.user_id || payload.sub || payload.id;
-    
+
     if (userId) {
       localStorage.setItem("userId", userId);
     }
   } catch (e) {
     console.error("Failed to decode token:", e);
   }
-  
+
   if (!userId) {
     userId = localStorage.getItem("userId");
   }
-  
+
   if (!userId) throw new Error("User ID not found");
 
   if (authFetch) {
@@ -166,12 +166,12 @@ async function updateUserProfile(data, authFetch) {
       },
       body: JSON.stringify(data),
     });
-    
+
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       throw new Error(errorData.detail || errorData.message || `HTTP ${response.status}`);
     }
-    
+
     return response.json();
   } else {
     const api = createAuthenticatedRequest();
@@ -198,7 +198,7 @@ async function uploadAvatarFromDataUrl(dataUrl, authFetch) {
   } else {
     const token = localStorage.getItem("access_token") || localStorage.getItem("token") || localStorage.getItem("accessToken");
     if (!token) throw new Error("Authentication required");
-    
+
     const response = await fetch(`${BACKEND_URL}/users/${userId}/avatar`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
@@ -268,19 +268,19 @@ export default function Profile() {
   const [croppingSrc, setCroppingSrc] = useState(null);
   const [croppingOpen, setCroppingOpen] = useState(false);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
-  
+
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  
+
   const [leaders, setLeaders] = useState({
     leaderAt1: "",
     leaderAt12: "",
     leaderAt144: "",
   });
-  
+
   const [organization, setOrganization] = useState("");
-  
+
   const [form, setForm] = useState({
     name: "",
     surname: "",
@@ -357,10 +357,10 @@ export default function Profile() {
   const updateFormWithProfile = useCallback((profile) => {
     console.log("Profile data received:", profile);
     console.log("Leaders data:", profile.leaders);
-    
+
     const orgValue = profile?.organization || profile?.Organization || "";
     setOrganization(orgValue);
-    
+
     const formData = {
       name: profile?.name || "",
       surname: profile?.surname || "",
@@ -376,20 +376,25 @@ export default function Profile() {
       confirmPassword: "",
     };
 
-    if (profile?.leaders) {
-      const leaderNames = {
-        leaderAt1: profile.leaders.leaderAt1 
-          ? `${profile.leaders.leaderAt1.name} ${profile.leaders.leaderAt1.surname}`
-          : profile.invited_by || "",
-        leaderAt12: profile.leaders.leaderAt12 
-          ? `${profile.leaders.leaderAt12.name} ${profile.leaders.leaderAt12.surname}`
-          : profile.invited_by || "",
-        leaderAt144: profile.leaders.leaderAt144 
-          ? `${profile.leaders.leaderAt144.name} ${profile.leaders.leaderAt144.surname}`
-          : "",
-      };
-      console.log("Setting leaders:", leaderNames);
-      setLeaders(leaderNames);
+    // In updateFormWithProfile, the leaderAt1 display for newly signed-up users
+    // whose LeaderPath IDs resolve to null. Add this fallback after the leaders block:
+
+if (profile?.leaders) {
+  const leaderNames = {
+    leaderAt1: profile.leaders.leaderAt1
+      ? `${profile.leaders.leaderAt1.name} ${profile.leaders.leaderAt1.surname}`
+      : profile.invited_by || "",
+    leaderAt12: profile.leaders.leaderAt12
+      ? `${profile.leaders.leaderAt12.name} ${profile.leaders.leaderAt12.surname}`
+      : profile.invited_by || "",
+    leaderAt144: profile.leaders.leaderAt144
+      ? `${profile.leaders.leaderAt144.name} ${profile.leaders.leaderAt144.surname}`
+      : "",
+  };
+
+  setLeaders(leaderNames);
+  localStorage.setItem("leaders", JSON.stringify(leaderNames));
+} else if (profile?.invited_by) {
       localStorage.setItem("leaders", JSON.stringify(leaderNames));
     } else {
       const savedLeaders = JSON.parse(localStorage.getItem("leaders")) || {};
@@ -404,17 +409,17 @@ export default function Profile() {
     if (hasFetchedProfile.current) {
       return;
     }
-    
+
     let isMounted = true;
 
     const loadProfile = async () => {
       try {
         setLoadingProfile(true);
-        
-        const token = localStorage.getItem("access_token") || 
-                      localStorage.getItem("token") ||
-                      localStorage.getItem("accessToken");
-        
+
+        const token = localStorage.getItem("access_token") ||
+          localStorage.getItem("token") ||
+          localStorage.getItem("accessToken");
+
         if (!token) {
           console.log("No token found");
           setLoadingProfile(false);
@@ -422,25 +427,25 @@ export default function Profile() {
         }
 
         let userId = null;
-        
+
         try {
           const payload = JSON.parse(atob(token.split('.')[1]));
           userId = payload.user_id || payload.sub || payload.id;
-          
+
           if (userId) {
             localStorage.setItem("userId", userId);
           }
         } catch (e) {
           console.error("Failed to decode token:", e);
         }
-        
+
         if (!userId) {
           setLoadingProfile(false);
           return;
         }
-        
+
         let profileData = null;
-        
+
         if (authFetch) {
           try {
             const response = await authFetch(`${BACKEND_URL}/profile/${userId}`);
@@ -451,7 +456,7 @@ export default function Profile() {
             console.error("AuthFetch error:", error);
           }
         }
-        
+
         if (!profileData) {
           try {
             const response = await fetch(`${BACKEND_URL}/profile/${userId}`, {
@@ -460,7 +465,7 @@ export default function Profile() {
                 "Content-Type": "application/json",
               }
             });
-            
+
             if (response.ok) {
               profileData = await response.json();
             }
@@ -468,19 +473,19 @@ export default function Profile() {
             console.error("Direct fetch error:", error);
           }
         }
-        
+
         if (profileData && isMounted) {
           updateFormWithProfile(profileData);
           if (setUserProfile) setUserProfile(profileData);
           if (profileData.profile_picture && setProfilePic) {
             setProfilePic(profileData.profile_picture);
           }
-          
+
           if (profileData.role) {
             setLoggedInUserRole(profileData.role);
             localStorage.setItem("userRole", profileData.role);
           }
-          
+
           hasFetchedProfile.current = true;
         }
       } catch (error) {
@@ -513,7 +518,7 @@ export default function Profile() {
 
   const validate = () => {
     const n = {};
-    
+
     if (canEditProfile) {
       if (!form.name.trim()) n.name = "Name is required";
       if (!form.surname.trim()) n.surname = "Surname is required";
@@ -523,13 +528,13 @@ export default function Profile() {
       if (!form.email.trim()) n.email = "Email is required";
       else if (!/\S+@\S+\.\S+/.test(form.email)) n.email = "Email is invalid";
     }
-    
+
     if (form.dob && canEditProfile) {
       const dobDate = new Date(form.dob);
       const today = new Date();
       if (dobDate > today) n.dob = "Date of birth cannot be in the future";
     }
-    
+
     if (form.phone && form.phone.trim()) {
       const hasNumbers = /\d/.test(form.phone);
       if (!hasNumbers) n.phone = "Phone number should contain numbers";
@@ -537,14 +542,14 @@ export default function Profile() {
       if (cleaned.length < 7) n.phone = "Phone number seems too short";
       if (cleaned.length > 15) n.phone = "Phone number seems too long";
     }
-    
+
     if (form.newPassword || form.confirmPassword || form.currentPassword) {
       if (!form.currentPassword.trim()) n.currentPassword = "Current password is required to change password";
       if (form.newPassword && form.newPassword.length < 8) n.newPassword = "New password must be at least 8 characters long";
       if (form.newPassword !== form.confirmPassword) n.confirmPassword = "Passwords do not match";
       if (form.newPassword && !form.confirmPassword) n.confirmPassword = "Please confirm your new password";
     }
-    
+
     setErrors(n);
     return Object.keys(n).length === 0;
   };
@@ -603,7 +608,7 @@ export default function Profile() {
           return;
         }
       }
-      
+
       if (hasPasswordChange) {
         try {
           await updatePassword(form.currentPassword, form.newPassword, authFetch);
@@ -738,45 +743,45 @@ export default function Profile() {
 
   return (
     <Box sx={{ minHeight: "100vh", bgcolor: isDark ? "#0a0a0a" : "#f8f9fa", pb: 4 }}>
-      <Box sx={{ 
-        position: "relative", 
-        minHeight: "30vh", 
-        background: isDark 
-          ? `linear-gradient(135deg, ${currentCarouselItem.color}15 0%, ${currentCarouselItem.color}25 100%)` 
-          : `linear-gradient(135deg, ${currentCarouselItem.color}10 0%, ${currentCarouselItem.color}20 100%)`, 
-        display: "flex", 
-        flexDirection: "column", 
-        alignItems: "center", 
-        justifyContent: "center", 
-        transition: "background 1s ease-in-out", 
-        overflow: "hidden", 
-        pt: 6, 
+      <Box sx={{
+        position: "relative",
+        minHeight: "30vh",
+        background: isDark
+          ? `linear-gradient(135deg, ${currentCarouselItem.color}15 0%, ${currentCarouselItem.color}25 100%)`
+          : `linear-gradient(135deg, ${currentCarouselItem.color}10 0%, ${currentCarouselItem.color}20 100%)`,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        transition: "background 1s ease-in-out",
+        overflow: "hidden",
+        pt: 6,
         pb: 12,
       }}>
-        <Box sx={{ 
-          position: "absolute", 
-          top: 0, 
-          left: 0, 
-          right: 0, 
-          bottom: 0, 
-          "&::before": { 
-            content: '""', 
-            position: "absolute", 
-            width: "200%", 
-            height: "200%", 
-            background: `radial-gradient(circle at 50% 50%, ${currentCarouselItem.color}08 0%, transparent 70%)`, 
-            animation: "pulse 4s ease-in-out infinite alternate", 
-          }, 
+        <Box sx={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          "&::before": {
+            content: '""',
+            position: "absolute",
+            width: "200%",
+            height: "200%",
+            background: `radial-gradient(circle at 50% 50%, ${currentCarouselItem.color}08 0%, transparent 70%)`,
+            animation: "pulse 4s ease-in-out infinite alternate",
+          },
         }} />
         <Box sx={{ position: "relative", zIndex: 2, textAlign: "center", px: 2 }}>
           <Fade in key={carouselIndex} timeout={1000}>
-            <Typography variant="h3" sx={{ 
-              fontWeight: 700, 
-              fontSize: { xs: "1.5rem", sm: "2rem", md: "2.5rem" }, 
-              color: currentCarouselItem.color, 
-              textShadow: isDark ? "0 2px 20px rgba(255,255,255,0.1)" : "0 2px 20px rgba(0,0,0,0.1)", 
-              transition: "color 1s ease-in-out", 
-              lineHeight: 1.2, 
+            <Typography variant="h3" sx={{
+              fontWeight: 700,
+              fontSize: { xs: "1.5rem", sm: "2rem", md: "2.5rem" },
+              color: currentCarouselItem.color,
+              textShadow: isDark ? "0 2px 20px rgba(255,255,255,0.1)" : "0 2px 20px rgba(0,0,0,0.1)",
+              transition: "color 1s ease-in-out",
+              lineHeight: 1.2,
               maxWidth: "800px",
             }}>
               {currentCarouselItem.text}
@@ -788,67 +793,67 @@ export default function Profile() {
       <Box sx={{ position: "relative", zIndex: 10, display: "flex", justifyContent: "center", mt: -10, mb: 5 }}>
         <Box sx={{ position: "relative", textAlign: "center" }}>
           <Box sx={{ position: "relative", display: "inline-block" }}>
-            <Avatar sx={{ 
-              width: 150, 
-              height: 150, 
-              border: `6px solid ${isDark ? "#0a0a0a" : "#ffffff"}`, 
-              boxShadow: `0 12px 40px ${currentCarouselItem.color}60`, 
-              bgcolor: isDark ? "#1a1a1a" : "#ffffff", 
-              color: currentCarouselItem.color, 
-              fontSize: "2.5rem", 
-              fontWeight: 700, 
-              cursor: "pointer", 
-              transition: "all 0.3s ease", 
-              "&:hover": { 
-                transform: "scale(1.05)", 
-                boxShadow: `0 16px 60px ${currentCarouselItem.color}80`, 
-              }, 
-            }} 
-            src={profilePic} 
-            onClick={() => fileInputRef.current?.click()}>
+            <Avatar sx={{
+              width: 150,
+              height: 150,
+              border: `6px solid ${isDark ? "#0a0a0a" : "#ffffff"}`,
+              boxShadow: `0 12px 40px ${currentCarouselItem.color}60`,
+              bgcolor: isDark ? "#1a1a1a" : "#ffffff",
+              color: currentCarouselItem.color,
+              fontSize: "2.5rem",
+              fontWeight: 700,
+              cursor: "pointer",
+              transition: "all 0.3s ease",
+              "&:hover": {
+                transform: "scale(1.05)",
+                boxShadow: `0 16px 60px ${currentCarouselItem.color}80`,
+              },
+            }}
+              src={profilePic}
+              onClick={() => fileInputRef.current?.click()}>
               {!profilePic && getInitials()}
             </Avatar>
-            <IconButton sx={{ 
-              position: "absolute", 
-              bottom: 4, 
-              right: 4, 
-              bgcolor: currentCarouselItem.color, 
-              color: "white", 
-              width: 36, 
-              height: 36, 
-              border: `2px solid ${isDark ? "#0a0a0a" : "#ffffff"}`, 
-              "&:hover": { 
-                bgcolor: currentCarouselItem.color, 
-                transform: "scale(1.1)", 
-              }, 
-              transition: "all 0.2s ease", 
-              boxShadow: "0 4px 12px rgba(0,0,0,0.3)", 
-            }} 
-            size="small" 
-            onClick={() => fileInputRef.current?.click()}>
+            <IconButton sx={{
+              position: "absolute",
+              bottom: 4,
+              right: 4,
+              bgcolor: currentCarouselItem.color,
+              color: "white",
+              width: 36,
+              height: 36,
+              border: `2px solid ${isDark ? "#0a0a0a" : "#ffffff"}`,
+              "&:hover": {
+                bgcolor: currentCarouselItem.color,
+                transform: "scale(1.1)",
+              },
+              transition: "all 0.2s ease",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            }}
+              size="small"
+              onClick={() => fileInputRef.current?.click()}>
               <CameraAlt sx={{ fontSize: 18 }} />
             </IconButton>
           </Box>
           <input ref={fileInputRef} hidden accept="image/*" type="file" onChange={onFileChange} />
           <Box sx={{ mt: 2 }}>
-            <Typography variant="h4" sx={{ 
-              fontWeight: 700, 
-              color: isDark ? "#ffffff" : "#000000", 
-              mb: 1, 
-              fontSize: { xs: "1.5rem", sm: "2rem", md: "2.25rem" }, 
+            <Typography variant="h4" sx={{
+              fontWeight: 700,
+              color: isDark ? "#ffffff" : "#000000",
+              mb: 1,
+              fontSize: { xs: "1.5rem", sm: "2rem", md: "2.25rem" },
             }}>
               {form.name} {form.surname}
             </Typography>
-            <Typography variant="body2" sx={{ 
+            <Typography variant="body2" sx={{
               display: "inline-block",
-              px: 2, 
-              py: 0.5, 
+              px: 2,
+              py: 0.5,
               borderRadius: 2,
               bgcolor: canEditProfile ? `${currentCarouselItem.color}20` : isDark ? "#333333" : "#e0e0e0",
               color: canEditProfile ? currentCarouselItem.color : isDark ? "#999999" : "#666666",
-              fontWeight: 600, 
-              textTransform: "uppercase", 
-              fontSize: "0.75rem", 
+              fontWeight: 600,
+              textTransform: "uppercase",
+              fontSize: "0.75rem",
               letterSpacing: 1
             }}>
               {getUserRole()}
@@ -858,10 +863,10 @@ export default function Profile() {
       </Box>
 
       <Container maxWidth="md" sx={{ px: { xs: 2, sm: 3 }, position: "relative", zIndex: 2 }}>
-        <Card sx={{ 
-          bgcolor: isDark ? "#111111" : "#ffffff", 
-          borderRadius: 3, 
-          boxShadow: isDark ? "0 8px 32px rgba(255,255,255,0.02)" : "0 8px 32px rgba(0,0,0,0.08)", 
+        <Card sx={{
+          bgcolor: isDark ? "#111111" : "#ffffff",
+          borderRadius: 3,
+          boxShadow: isDark ? "0 8px 32px rgba(255,255,255,0.02)" : "0 8px 32px rgba(0,0,0,0.08)",
           border: `1px solid ${isDark ? "#222222" : "#e0e0e0"}`,
         }}>
           <CardContent sx={{ p: { xs: 3, sm: 4 }, pt: 4 }}>
@@ -880,53 +885,53 @@ export default function Profile() {
               <Grid container spacing={3}>
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Name</Typography>
-                  <TextField 
-                    value={form.name || ""} 
-                    onChange={handleChange("name")} 
-                    fullWidth 
-                    disabled={!canEditProfile} 
-                    error={!!errors.name} 
-                    helperText={errors.name} 
-                    sx={commonFieldSx} 
+                  <TextField
+                    value={form.name || ""}
+                    onChange={handleChange("name")}
+                    fullWidth
+                    disabled={!canEditProfile}
+                    error={!!errors.name}
+                    helperText={errors.name}
+                    sx={commonFieldSx}
                   />
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Surname</Typography>
-                  <TextField 
-                    value={form.surname || ""} 
-                    onChange={handleChange("surname")} 
-                    fullWidth 
-                    disabled={!canEditProfile} 
-                    error={!!errors.surname} 
-                    helperText={errors.surname} 
-                    sx={commonFieldSx} 
+                  <TextField
+                    value={form.surname || ""}
+                    onChange={handleChange("surname")}
+                    fullWidth
+                    disabled={!canEditProfile}
+                    error={!!errors.surname}
+                    helperText={errors.surname}
+                    sx={commonFieldSx}
                   />
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Date Of Birth</Typography>
-                  <TextField 
-                    value={form.dob || ""} 
-                    onChange={handleChange("dob")} 
-                    fullWidth 
-                    type="date" 
-                    disabled={!canEditProfile} 
-                    error={!!errors.dob} 
-                    helperText={errors.dob} 
+                  <TextField
+                    value={form.dob || ""}
+                    onChange={handleChange("dob")}
+                    fullWidth
+                    type="date"
+                    disabled={!canEditProfile}
+                    error={!!errors.dob}
+                    helperText={errors.dob}
                     slotProps={{ inputLabel: { shrink: true } }}
-                    sx={commonFieldSx} 
+                    sx={commonFieldSx}
                   />
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Gender</Typography>
-                  <TextField 
-                    select 
-                    value={form.gender || ""} 
-                    onChange={handleChange("gender")} 
-                    fullWidth 
-                    disabled={!canEditProfile} 
+                  <TextField
+                    select
+                    value={form.gender || ""}
+                    onChange={handleChange("gender")}
+                    fullWidth
+                    disabled={!canEditProfile}
                     sx={commonFieldSx}
                   >
                     {genderOptions.map((option) => (
@@ -937,97 +942,97 @@ export default function Profile() {
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Email Address</Typography>
-                  <TextField 
-                    value={form.email || ""} 
-                    onChange={handleChange("email")} 
-                    fullWidth 
-                    error={!!errors.email} 
-                    helperText={errors.email} 
-                    sx={commonFieldSx} 
+                  <TextField
+                    value={form.email || ""}
+                    onChange={handleChange("email")}
+                    fullWidth
+                    error={!!errors.email}
+                    helperText={errors.email}
+                    sx={commonFieldSx}
                   />
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Home Address</Typography>
-                  <TextField 
-                    value={form.address || ""} 
-                    onChange={handleChange("address")} 
-                    fullWidth 
-                    disabled={!canEditProfile} 
-                    sx={commonFieldSx} 
+                  <TextField
+                    value={form.address || ""}
+                    onChange={handleChange("address")}
+                    fullWidth
+                    disabled={!canEditProfile}
+                    sx={commonFieldSx}
                   />
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Phone Number</Typography>
-                  <TextField 
-                    value={form.phone || ""} 
-                    onChange={handleChange("phone")} 
-                    fullWidth 
-                    error={!!errors.phone} 
-                    helperText={errors.phone} 
-                    sx={commonFieldSx} 
+                  <TextField
+                    value={form.phone || ""}
+                    onChange={handleChange("phone")}
+                    fullWidth
+                    error={!!errors.phone}
+                    helperText={errors.phone}
+                    sx={commonFieldSx}
                     slotProps={{ htmlInput: { inputMode: "numeric", pattern: "[0-9]*" } }}
                   />
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Invited By</Typography>
-                  <TextField 
-                    value={form.invitedBy || ""} 
-                    onChange={handleChange("invitedBy")} 
-                    fullWidth 
-                    disabled={!canEditProfile} 
-                    sx={commonFieldSx} 
+                  <TextField
+                    value={form.invitedBy || ""}
+                    onChange={handleChange("invitedBy")}
+                    fullWidth
+                    disabled={!canEditProfile}
+                    sx={commonFieldSx}
                   />
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Organization / Church</Typography>
-                  <TextField 
-                    value={organization || form.organization || ""} 
-                    onChange={handleChange("organization")} 
-                    fullWidth 
-                    disabled={!canEditProfile} 
-                    sx={commonFieldSx} 
-                    placeholder="Your church or organization" 
+                  <TextField
+                    value={organization || form.organization || ""}
+                    onChange={handleChange("organization")}
+                    fullWidth
+                    disabled={!canEditProfile}
+                    sx={commonFieldSx}
+                    placeholder="Your church or organization"
                   />
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Leader@1</Typography>
-                  <TextField 
-                    value={leaders.leaderAt1 || ""} 
-                    fullWidth 
-                    disabled={true} 
-                    sx={commonFieldSx} 
+                  <TextField
+                    value={leaders.leaderAt1 || ""}
+                    fullWidth
+                    disabled={true}
+                    sx={commonFieldSx}
                   />
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Leader@12</Typography>
-                  <TextField 
-                    value={leaders.leaderAt12 || ""} 
-                    fullWidth 
-                    disabled={true} 
-                    sx={commonFieldSx} 
+                  <TextField
+                    value={leaders.leaderAt12 || ""}
+                    fullWidth
+                    disabled={true}
+                    sx={commonFieldSx}
                   />
                 </Grid>
 
                 <Grid size={{ xs: 12, sm: 6 }}>
                   <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Leader@144</Typography>
-                  <TextField 
-                    value={leaders.leaderAt144 || ""} 
-                    fullWidth 
-                    disabled={true} 
-                    sx={commonFieldSx} 
+                  <TextField
+                    value={leaders.leaderAt144 || ""}
+                    fullWidth
+                    disabled={true}
+                    sx={commonFieldSx}
                   />
                 </Grid>
               </Grid>
 
               <Box sx={{ mt: 4 }}>
-                <Accordion 
-                  expanded={advancedOpen} 
+                <Accordion
+                  expanded={advancedOpen}
                   onChange={() => setAdvancedOpen(!advancedOpen)}
                   sx={{
                     bgcolor: isDark ? "#1a1a1a" : "#f8f9fa",
@@ -1059,74 +1064,74 @@ export default function Profile() {
                     <Grid container spacing={3}>
                       <Grid size={{ xs: 12 }}>
                         <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Current Password</Typography>
-                        <TextField 
-                          value={form.currentPassword || ""} 
-                          onChange={handleChange("currentPassword")} 
-                          type={showPassword.current ? "text" : "password"} 
-                          fullWidth 
-                          error={!!errors.currentPassword} 
-                          helperText={errors.currentPassword} 
-                          autoComplete="current-password" 
-                          slotProps={{ 
-                            input: { 
-                              endAdornment: ( 
-                                <InputAdornment position="end"> 
-                                  <IconButton onClick={() => togglePasswordVisibility("current")} edge="end" sx={{ color: isDark ? "#cccccc" : "#666666" }}> 
-                                    {showPassword.current ? <VisibilityOff /> : <Visibility />} 
-                                  </IconButton> 
-                                </InputAdornment> 
-                              ), 
+                        <TextField
+                          value={form.currentPassword || ""}
+                          onChange={handleChange("currentPassword")}
+                          type={showPassword.current ? "text" : "password"}
+                          fullWidth
+                          error={!!errors.currentPassword}
+                          helperText={errors.currentPassword}
+                          autoComplete="current-password"
+                          slotProps={{
+                            input: {
+                              endAdornment: (
+                                <InputAdornment position="end">
+                                  <IconButton onClick={() => togglePasswordVisibility("current")} edge="end" sx={{ color: isDark ? "#cccccc" : "#666666" }}>
+                                    {showPassword.current ? <VisibilityOff /> : <Visibility />}
+                                  </IconButton>
+                                </InputAdornment>
+                              ),
                             },
-                          }} 
-                          sx={commonFieldSx} 
+                          }}
+                          sx={commonFieldSx}
                         />
                       </Grid>
                       <Grid size={{ xs: 12, sm: 6 }}>
                         <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>New Password</Typography>
-                        <TextField 
-                          value={form.newPassword || ""} 
-                          onChange={handleChange("newPassword")} 
-                          type={showPassword.new ? "text" : "password"} 
-                          fullWidth 
-                          error={!!errors.newPassword} 
-                          helperText={errors.newPassword} 
-                          autoComplete="new-password" 
-                          slotProps={{ 
-                            input: { 
-                              endAdornment: ( 
-                                <InputAdornment position="end"> 
-                                  <IconButton onClick={() => togglePasswordVisibility("new")} edge="end" sx={{ color: isDark ? "#cccccc" : "#666666" }}> 
-                                    {showPassword.new ? <VisibilityOff /> : <Visibility />} 
-                                  </IconButton> 
-                                </InputAdornment> 
-                              ), 
+                        <TextField
+                          value={form.newPassword || ""}
+                          onChange={handleChange("newPassword")}
+                          type={showPassword.new ? "text" : "password"}
+                          fullWidth
+                          error={!!errors.newPassword}
+                          helperText={errors.newPassword}
+                          autoComplete="new-password"
+                          slotProps={{
+                            input: {
+                              endAdornment: (
+                                <InputAdornment position="end">
+                                  <IconButton onClick={() => togglePasswordVisibility("new")} edge="end" sx={{ color: isDark ? "#cccccc" : "#666666" }}>
+                                    {showPassword.new ? <VisibilityOff /> : <Visibility />}
+                                  </IconButton>
+                                </InputAdornment>
+                              ),
                             },
-                          }} 
-                          sx={commonFieldSx} 
+                          }}
+                          sx={commonFieldSx}
                         />
                       </Grid>
                       <Grid size={{ xs: 12, sm: 6 }}>
                         <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Confirm New Password</Typography>
-                        <TextField 
-                          value={form.confirmPassword || ""} 
-                          onChange={handleChange("confirmPassword")} 
-                          type={showPassword.confirm ? "text" : "password"} 
-                          fullWidth 
-                          error={!!errors.confirmPassword} 
-                          helperText={errors.confirmPassword} 
-                          autoComplete="new-password" 
-                          slotProps={{ 
-                            input: { 
-                              endAdornment: ( 
-                                <InputAdornment position="end"> 
-                                  <IconButton onClick={() => togglePasswordVisibility("confirm")} edge="end" sx={{ color: isDark ? "#cccccc" : "#666666" }}> 
-                                    {showPassword.confirm ? <VisibilityOff /> : <Visibility />} 
-                                  </IconButton> 
-                                </InputAdornment> 
-                              ), 
+                        <TextField
+                          value={form.confirmPassword || ""}
+                          onChange={handleChange("confirmPassword")}
+                          type={showPassword.confirm ? "text" : "password"}
+                          fullWidth
+                          error={!!errors.confirmPassword}
+                          helperText={errors.confirmPassword}
+                          autoComplete="new-password"
+                          slotProps={{
+                            input: {
+                              endAdornment: (
+                                <InputAdornment position="end">
+                                  <IconButton onClick={() => togglePasswordVisibility("confirm")} edge="end" sx={{ color: isDark ? "#cccccc" : "#666666" }}>
+                                    {showPassword.confirm ? <VisibilityOff /> : <Visibility />}
+                                  </IconButton>
+                                </InputAdornment>
+                              ),
                             },
-                          }} 
-                          sx={commonFieldSx} 
+                          }}
+                          sx={commonFieldSx}
                         />
                       </Grid>
                     </Grid>
@@ -1135,37 +1140,37 @@ export default function Profile() {
               </Box>
 
               <Box sx={{ mt: 4, display: "flex", gap: 2, justifyContent: "center", flexWrap: "wrap" }}>
-                <Button 
-                  type="submit" 
-                  variant="contained" 
-                  startIcon={<Save />} 
-                  disabled={!hasChanges} 
-                  sx={{ 
-                    bgcolor: currentCarouselItem.color, 
-                    "&:hover": { bgcolor: currentCarouselItem.color, opacity: 0.9 }, 
-                    "&:disabled": { bgcolor: isDark ? "#333333" : "#cccccc", color: isDark ? "#666666" : "#999999" }, 
-                    borderRadius: 2, 
-                    px: 4, 
-                    py: 1.5, 
-                    fontWeight: 600, 
-                    textTransform: "none", 
-                    fontSize: "1rem", 
+                <Button
+                  type="submit"
+                  variant="contained"
+                  startIcon={<Save />}
+                  disabled={!hasChanges}
+                  sx={{
+                    bgcolor: currentCarouselItem.color,
+                    "&:hover": { bgcolor: currentCarouselItem.color, opacity: 0.9 },
+                    "&:disabled": { bgcolor: isDark ? "#333333" : "#cccccc", color: isDark ? "#666666" : "#999999" },
+                    borderRadius: 2,
+                    px: 4,
+                    py: 1.5,
+                    fontWeight: 600,
+                    textTransform: "none",
+                    fontSize: "1rem",
                   }}
                 >
                   {canEditProfile ? "Save Changes" : "Update Profile"}
                 </Button>
                 {hasChanges && (
-                  <Button 
-                    variant="outlined" 
-                    onClick={handleCancel} 
-                    startIcon={<Cancel />} 
-                    sx={{ 
-                      borderRadius: 2, 
-                      px: 4, 
-                      py: 1.5, 
-                      fontWeight: 600, 
-                      textTransform: "none", 
-                      fontSize: "1rem", 
+                  <Button
+                    variant="outlined"
+                    onClick={handleCancel}
+                    startIcon={<Cancel />}
+                    sx={{
+                      borderRadius: 2,
+                      px: 4,
+                      py: 1.5,
+                      fontWeight: 600,
+                      textTransform: "none",
+                      fontSize: "1rem",
                     }}
                   >
                     Cancel
@@ -1178,89 +1183,89 @@ export default function Profile() {
       </Container>
 
       {croppingOpen && (
-        <Box 
-          sx={{ 
-            position: "fixed", 
-            inset: 0, 
-            bgcolor: "rgba(0,0,0,0.9)", 
-            display: "flex", 
-            alignItems: "center", 
-            justifyContent: "center", 
-            zIndex: 1300, 
-            p: 2, 
-          }} 
+        <Box
+          sx={{
+            position: "fixed",
+            inset: 0,
+            bgcolor: "rgba(0,0,0,0.9)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1300,
+            p: 2,
+          }}
           onClick={() => setCroppingOpen(false)}
         >
-          <Paper 
-            sx={{ 
-              position: "relative", 
-              width: "90vw", 
-              maxWidth: 500, 
-              bgcolor: isDark ? "#111111" : "#ffffff", 
-              borderRadius: 3, 
-              p: 3, 
-              border: `1px solid ${isDark ? "#333333" : "#e0e0e0"}`, 
-            }} 
+          <Paper
+            sx={{
+              position: "relative",
+              width: "90vw",
+              maxWidth: 500,
+              bgcolor: isDark ? "#111111" : "#ffffff",
+              borderRadius: 3,
+              p: 3,
+              border: `1px solid ${isDark ? "#333333" : "#e0e0e0"}`,
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <Typography variant="h6" sx={{ mb: 2, textAlign: "center", color: isDark ? "#ffffff" : "#000000", fontWeight: 600 }}>
               Crop Your Profile Picture
             </Typography>
             <Box sx={{ position: "relative", width: "100%", height: 300 }}>
-              <Cropper 
-                image={croppingSrc} 
-                crop={crop} 
-                zoom={zoom} 
-                aspect={1} 
-                onCropChange={setCrop} 
-                onCropComplete={onCropComplete} 
-                onZoomChange={setZoom} 
+              <Cropper
+                image={croppingSrc}
+                crop={crop}
+                zoom={zoom}
+                aspect={1}
+                onCropChange={setCrop}
+                onCropComplete={onCropComplete}
+                onZoomChange={setZoom}
               />
             </Box>
             <Box sx={{ mt: 2 }}>
               <Typography gutterBottom sx={{ color: isDark ? "#cccccc" : "#666666", fontWeight: 600, mb: 1 }}>Zoom</Typography>
-              <Slider 
-                value={zoom} 
-                min={1} 
-                max={3} 
-                step={0.1} 
-                onChange={(_, v) => setZoom(v)} 
-                sx={{ 
-                  color: currentCarouselItem.color, 
-                  "& .MuiSlider-thumb": { bgcolor: currentCarouselItem.color }, 
-                  "& .MuiSlider-track": { bgcolor: currentCarouselItem.color }, 
-                  "& .MuiSlider-rail": { bgcolor: isDark ? "#333333" : "#cccccc" } 
-                }} 
+              <Slider
+                value={zoom}
+                min={1}
+                max={3}
+                step={0.1}
+                onChange={(_, v) => setZoom(v)}
+                sx={{
+                  color: currentCarouselItem.color,
+                  "& .MuiSlider-thumb": { bgcolor: currentCarouselItem.color },
+                  "& .MuiSlider-track": { bgcolor: currentCarouselItem.color },
+                  "& .MuiSlider-rail": { bgcolor: isDark ? "#333333" : "#cccccc" }
+                }}
               />
             </Box>
             <Box sx={{ mt: 3, display: "flex", gap: 2, justifyContent: "center" }}>
-              <Button 
-                variant="outlined" 
-                onClick={() => setCroppingOpen(false)} 
-                sx={{ 
-                  borderColor: isDark ? "#666666" : "#cccccc", 
-                  color: isDark ? "#cccccc" : "#666666", 
-                  "&:hover": { borderColor: isDark ? "#888888" : "#999999", bgcolor: isDark ? "#222222" : "#f5f5f5" }, 
-                  borderRadius: 2, 
-                  px: 3, 
-                  py: 1, 
-                  fontWeight: 600, 
-                  textTransform: "none" 
+              <Button
+                variant="outlined"
+                onClick={() => setCroppingOpen(false)}
+                sx={{
+                  borderColor: isDark ? "#666666" : "#cccccc",
+                  color: isDark ? "#cccccc" : "#666666",
+                  "&:hover": { borderColor: isDark ? "#888888" : "#999999", bgcolor: isDark ? "#222222" : "#f5f5f5" },
+                  borderRadius: 2,
+                  px: 3,
+                  py: 1,
+                  fontWeight: 600,
+                  textTransform: "none"
                 }}
               >
                 Cancel
               </Button>
-              <Button 
-                variant="contained" 
-                onClick={onCropSave} 
-                sx={{ 
-                  bgcolor: currentCarouselItem.color, 
-                  "&:hover": { bgcolor: currentCarouselItem.color, opacity: 0.9 }, 
-                  borderRadius: 2, 
-                  px: 3, 
-                  py: 1, 
-                  fontWeight: 600, 
-                  textTransform: "none" 
+              <Button
+                variant="contained"
+                onClick={onCropSave}
+                sx={{
+                  bgcolor: currentCarouselItem.color,
+                  "&:hover": { bgcolor: currentCarouselItem.color, opacity: 0.9 },
+                  borderRadius: 2,
+                  px: 3,
+                  py: 1,
+                  fontWeight: 600,
+                  textTransform: "none"
                 }}
               >
                 Save Picture
@@ -1270,15 +1275,15 @@ export default function Profile() {
         </Box>
       )}
 
-      <Snackbar 
-        open={snackbar.open} 
-        autoHideDuration={6000} 
-        onClose={() => setSnackbar((s) => ({ ...s, open: false }))} 
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
         anchorOrigin={{ vertical: "top", horizontal: "center" }}
       >
-        <Alert 
-          onClose={() => setSnackbar((s) => ({ ...s, open: false }))} 
-          severity={snackbar.severity} 
+        <Alert
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          severity={snackbar.severity}
           sx={{ borderRadius: 2, fontWeight: 600, "& .MuiAlert-icon": { fontSize: "1.2rem" } }}
         >
           {snackbar.message}

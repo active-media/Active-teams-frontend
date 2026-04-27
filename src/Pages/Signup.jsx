@@ -136,7 +136,7 @@ const initialForm = {
   gender: "",
   password: "",
   confirm_password: "",
-  organization: "", // Added organization field
+  organization: "",
 };
 
 const Signup = ({ onSignup, mode, setMode }) => {
@@ -165,11 +165,17 @@ const Signup = ({ onSignup, mode, setMode }) => {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  
+
   // Organizations state
   const [organizations, setOrganizations] = useState([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
   const [orgsError, setOrgsError] = useState("");
+
+  // Invited By (users filtered by organization) state
+  const [orgUsers, setOrgUsers] = useState([]);
+  const [orgUsersLoading, setOrgUsersLoading] = useState(false);
+  const [orgUsersError, setOrgUsersError] = useState("");
+  const [selectedInvitedBy, setSelectedInvitedBy] = useState(null);
 
   // Geoapify address autocomplete
   const [addressOptions, setAddressOptions] = useState([]);
@@ -207,6 +213,57 @@ const Signup = ({ onSignup, mode, setMode }) => {
 
     fetchOrganizations();
   }, [BACKEND_URL]);
+
+  // Fetch users filtered by selected organization
+  useEffect(() => {
+    // Reset invited-by whenever organization changes
+    setSelectedInvitedBy(null);
+    setForm((prev) => ({ ...prev, invited_by: "", invited_by_id: "" }));
+    setOrgUsers([]);
+    setOrgUsersError("");
+
+    const org = form.organization?.trim();
+    if (!org) return;
+
+    let isActive = true;
+
+    const fetchOrgUsers = async () => {
+      setOrgUsersLoading(true);
+      setOrgUsersError("");
+      try {
+        const url = `${BACKEND_URL}/users?organization=${encodeURIComponent(org)}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Failed to fetch users");
+        const data = await response.json();
+
+        if (!isActive) return;
+
+        // Support both { users: [...] } and { data: [...] } response shapes
+        const list = Array.isArray(data.users)
+          ? data.users
+          : Array.isArray(data.data)
+          ? data.data
+          : Array.isArray(data)
+          ? data
+          : [];
+
+        setOrgUsers(list);
+      } catch (err) {
+        if (!isActive) return;
+        console.error("Error fetching org users:", err);
+        setOrgUsersError("Could not load members for this organization.");
+        setOrgUsers([]);
+      } finally {
+        if (isActive) setOrgUsersLoading(false);
+      }
+    };
+
+    fetchOrgUsers();
+
+    return () => {
+      isActive = false;
+    };
+  }, [form.organization]);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -384,12 +441,14 @@ const Signup = ({ onSignup, mode, setMode }) => {
   };
 
   const handleInvitedByChange = (event, newValue) => {
-    const invitedByValue = newValue && typeof newValue === "object" ? (newValue.label || "") : (newValue || "");
+    const invitedByValue =
+      newValue && typeof newValue === "object" ? (newValue.label || "") : (newValue || "");
     const invitedById =
       newValue && typeof newValue === "object"
         ? (newValue._id || newValue.key || "")
         : "";
 
+    setSelectedInvitedBy(typeof newValue === "object" ? newValue : null);
     setForm((prev) => ({ ...prev, invited_by: invitedByValue, invited_by_id: invitedById }));
     if (errors.invited_by) setErrors((prev) => ({ ...prev, invited_by: "" }));
   };
@@ -457,7 +516,9 @@ const Signup = ({ onSignup, mode, setMode }) => {
           setForm(initialForm);
           setShowWelcome(false);
           setSelectedAddress(null);
+          setSelectedInvitedBy(null);
           setAddressOptions([]);
+          setOrgUsers([]);
           navigate("/");
         }, 2000);
       }
@@ -466,6 +527,40 @@ const Signup = ({ onSignup, mode, setMode }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Build the label shown for each user in the Invited By dropdown
+  const getUserLabel = (user) => {
+    if (typeof user === "string") return user;
+    const full = [user.name, user.surname].filter(Boolean).join(" ");
+    return full || user.email || user._id || "";
+  };
+
+  // Shared dropdown paper/listbox styles
+  const dropdownSx = {
+    ListboxProps: {
+      sx: {
+        bgcolor: isDark ? "#1a1a1a" : "#ffffff",
+        "& .MuiAutocomplete-option": {
+          color: isDark ? "#ffffff" : "#000000",
+          "&:hover": { bgcolor: isDark ? "#2a2a2a" : "#f5f5f5" },
+          "&[aria-selected='true']": {
+            bgcolor: isDark ? "#333333" : "#e0e0e0",
+            "&:hover": { bgcolor: isDark ? "#3a3a3a" : "#d5d5d5" },
+          },
+        },
+      },
+    },
+    PaperComponent: ({ children }) => (
+      <Paper
+        sx={{
+          bgcolor: isDark ? "#1a1a1a" : "#ffffff",
+          border: `1px solid ${isDark ? "#333333" : "#e0e0e0"}`,
+        }}
+      >
+        {children}
+      </Paper>
+    ),
   };
 
   return (
@@ -658,29 +753,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
                 getOptionLabel={(option) => (typeof option === "string" ? option : option.label || "")}
                 filterOptions={(x) => x}
                 loading={addressLoading}
-                ListboxProps={{
-                  sx: {
-                    bgcolor: isDark ? "#1a1a1a" : "#ffffff",
-                    "& .MuiAutocomplete-option": {
-                      color: isDark ? "#ffffff" : "#000000",
-                      "&:hover": { bgcolor: isDark ? "#2a2a2a" : "#f5f5f5" },
-                      "&[aria-selected='true']": {
-                        bgcolor: isDark ? "#333333" : "#e0e0e0",
-                        "&:hover": { bgcolor: isDark ? "#3a3a3a" : "#d5d5d5" },
-                      },
-                    },
-                  },
-                }}
-                PaperComponent={({ children }) => (
-                  <Paper
-                    sx={{
-                      bgcolor: isDark ? "#1a1a1a" : "#ffffff",
-                      border: `1px solid ${isDark ? "#333333" : "#e0e0e0"}`,
-                    }}
-                  >
-                    {children}
-                  </Paper>
-                )}
+                {...dropdownSx}
                 renderInput={(params) => (
                   <TextField
                     {...params}
@@ -821,12 +894,12 @@ const Signup = ({ onSignup, mode, setMode }) => {
               )}
             </FormControl>
 
-            {/* Organization Field - Dropdown with Autocomplete */}
+            {/* Organization Field */}
             <FormControl fullWidth error={!!errors.organization}>
               <Autocomplete
                 freeSolo
                 options={organizations}
-                value={organizations.find(org => org.name === form.organization) || null}
+                value={organizations.find((org) => org.name === form.organization) || null}
                 inputValue={form.organization}
                 onInputChange={(event, newInputValue) => {
                   setForm((prev) => ({ ...prev, organization: newInputValue }));
@@ -846,13 +919,14 @@ const Signup = ({ onSignup, mode, setMode }) => {
                   return option.name || "";
                 }}
                 loading={orgsLoading}
+                {...dropdownSx}
                 renderInput={(params) => (
                   <TextField
                     {...params}
                     label="Organization / Church"
                     error={!!errors.organization}
                     helperText={
-                      errors.organization || 
+                      errors.organization ||
                       orgsError ||
                       (orgsLoading ? "Loading organizations..." : "Select or type your organization")
                     }
@@ -890,28 +964,95 @@ const Signup = ({ onSignup, mode, setMode }) => {
                     }}
                   />
                 )}
-                ListboxProps={{
-                  sx: {
-                    bgcolor: isDark ? "#1a1a1a" : "#ffffff",
-                    "& .MuiAutocomplete-option": {
-                      color: isDark ? "#ffffff" : "#000000",
-                      "&:hover": { bgcolor: isDark ? "#2a2a2a" : "#f5f5f5" },
-                      "&[aria-selected='true']": {
-                        bgcolor: isDark ? "#333333" : "#e0e0e0",
-                        "&:hover": { bgcolor: isDark ? "#3a3a3a" : "#d5d5d5" },
-                      },
-                    },
-                  },
+              />
+            </FormControl>
+
+            {/* ── Invited By ── filtered to selected organization */}
+            <FormControl fullWidth>
+              <Autocomplete
+                freeSolo
+                options={orgUsers}
+                value={selectedInvitedBy}
+                inputValue={form.invited_by}
+                disabled={!form.organization?.trim()}
+                onInputChange={(event, newInputValue) => {
+                  setForm((prev) => ({ ...prev, invited_by: newInputValue, invited_by_id: "" }));
+                  setSelectedInvitedBy(null);
+                  if (errors.invited_by) setErrors((prev) => ({ ...prev, invited_by: "" }));
                 }}
-                PaperComponent={({ children }) => (
-                  <Paper
-                    sx={{
-                      bgcolor: isDark ? "#1a1a1a" : "#ffffff",
-                      border: `1px solid ${isDark ? "#333333" : "#e0e0e0"}`,
+                onChange={handleInvitedByChange}
+                getOptionLabel={getUserLabel}
+                isOptionEqualToValue={(option, value) =>
+                  option._id === value?._id || getUserLabel(option) === getUserLabel(value)
+                }
+                loading={orgUsersLoading}
+                noOptionsText={
+                  !form.organization?.trim()
+                    ? "Select an organization first"
+                    : orgUsersLoading
+                    ? "Loading members…"
+                    : "No members found"
+                }
+                {...dropdownSx}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Invited By"
+                    error={!!errors.invited_by}
+                    helperText={
+                      errors.invited_by ||
+                      orgUsersError ||
+                      (!form.organization?.trim()
+                        ? "Select an organization to see its members"
+                        : orgUsersLoading
+                        ? "Loading members…"
+                        : "Please select who invited you")
+                    }
+                    fullWidth
+                    InputProps={{
+                      ...params.InputProps,
+                      endAdornment: (
+                        <>
+                          {orgUsersLoading ? <CircularProgress color="inherit" size={20} /> : null}
+                          {params.InputProps.endAdornment}
+                        </>
+                      ),
                     }}
-                  >
-                    {children}
-                  </Paper>
+                    sx={{
+                      ...inputFieldSx,
+                      "& .MuiOutlinedInput-root": {
+                        ...inputFieldSx["& .MuiOutlinedInput-root"],
+                        "& fieldset": {
+                          borderColor: errors.invited_by
+                            ? theme.palette.error.main
+                            : isDark
+                            ? "#333333"
+                            : "#e0e0e0",
+                        },
+                      },
+                      "& .MuiFormHelperText-root": {
+                        color: errors.invited_by
+                          ? theme.palette.error.main
+                          : orgUsersError
+                          ? theme.palette.warning.main
+                          : isDark
+                          ? "#999999"
+                          : "#666666",
+                      },
+                    }}
+                  />
+                )}
+                renderOption={(props, option) => (
+                  <li {...props} key={option._id || getUserLabel(option)}>
+                    <Box>
+                      <Typography variant="body1">{getUserLabel(option)}</Typography>
+                      {option.email && (
+                        <Typography variant="caption" color="text.secondary">
+                          {option.email}
+                        </Typography>
+                      )}
+                    </Box>
+                  </li>
                 )}
               />
             </FormControl>
