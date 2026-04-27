@@ -1137,7 +1137,28 @@ export const PeopleSection = () => {
   }, []);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
-  const handleRefresh = () => fetchAllPeople(true);
+  const handleRefresh = useCallback(async () => {
+  setIsRefreshing(true);
+  try {
+    const res = await authFetch(`${BACKEND_URL}/cache/people/refresh`, { method: "POST" });
+    if (!res.ok) throw new Error("Refresh failed");
+    
+    // Clear local cache so next fetch goes to server
+    window.globalPeopleCache = null;
+    window.globalCacheTimestamp = null;
+    window.globalPeopleCacheOrg = null;
+    isFetchingRef.current = false;
+    peopleFetchPromiseRef.current = null;
+
+    await fetchAllPeople(true);
+    setSnackbar({ open: true, message: "People list refreshed.", severity: "success" });
+  } catch (err) {
+    setSnackbar({ open: true, message: `Refresh failed: ${safeStr(err?.message)}`, severity: "error" });
+  } finally {
+    setIsRefreshing(false);
+  }
+}, [authFetch, BACKEND_URL, fetchAllPeople]);
+
   const handleViewFilterChange = (e, v) => {
     if (v !== null) setViewFilter(v);
   };
@@ -1190,10 +1211,15 @@ export const PeopleSection = () => {
         throw new Error(e.detail || "Delete failed");
       }
       removePersonFromCache(personToDelete._id);
-      // Keep backend cache in sync
+      
+      window.globalPeopleCache = null;
+      window.globalCacheTimestamp = null;
+      window.globalPeopleCacheOrg = null;
+      
       authFetch(`${BACKEND_URL}/cache/people/refresh`, {
         method: "POST",
       }).catch(() => {});
+
       setSnackbar({
         open: true,
         message: "Person deleted successfully",
@@ -1211,87 +1237,67 @@ export const PeopleSection = () => {
   };
 
   const handleSaveFromDialog = useCallback(
-    async (savedPerson) => {
-      const leadersMap = {
-        leader1: safeStr(savedPerson.invitedBy),
-        leader12: safeStr(savedPerson.leader12),
-        leader144: safeStr(savedPerson.leader144),
-        leader1728: safeStr(savedPerson.leader1728),
-      };
-      const mappedPerson = {
-        _id: safeStr(savedPerson._id || editingPerson?._id),
-        name: safeStr(savedPerson.name),
-        surname: safeStr(savedPerson.surname),
-        gender: safeStr(savedPerson.gender),
-        dob: safeStr(savedPerson.dob),
-        location: safeStr(savedPerson.address),
-        email: safeStr(savedPerson.email),
-        phone: safeStr(savedPerson.number),
-        Stage: safeStr(savedPerson.stage) || "Win",
-        lastUpdated: new Date().toISOString(),
-        invitedBy: safeStr(savedPerson.invitedBy),
-        leaders: leadersMap,
-        leadersCombinedLower: Object.values(leadersMap).join(" ").toLowerCase(),
-        leadersRaw: Array.isArray(savedPerson.leaders)
-          ? savedPerson.leaders
-          : [],
-        fullName:
-          `${safeStr(savedPerson.name)} ${safeStr(savedPerson.surname)}`.trim(),
-        fullNameLower:
-          `${safeStr(savedPerson.name)} ${safeStr(savedPerson.surname)}`
-            .trim()
-            .toLowerCase(),
-        emailLower: safeStr(savedPerson.email).toLowerCase(),
-        phoneLower: safeStr(savedPerson.number).toLowerCase(),
-        addressLower: safeStr(savedPerson.address).toLowerCase(),
-      };
+  async (savedPerson) => {
+    // Read leaders from the normalized fields the dialog returns
+    const leader1   = savedPerson.leader1   || savedPerson["Leader @1"]   || "";
+    const leader12  = savedPerson.leader12  || savedPerson["Leader @12"]  || "";
+    const leader144 = savedPerson.leader144 || savedPerson["Leader @144"] || "";
 
-      if (editingPerson) {
-        updatePersonInCache(editingPerson._id, mappedPerson);
-        setSnackbar({
-          open: true,
-          message: "Person updated successfully",
-          severity: "success",
-        });
-        // Replace the else branch in handleSaveFromDialog
-      } else {
-        setSnackbar({
-          open: true,
-          message: "Person added — refreshing list…",
-          severity: "info",
-        });
+    const leadersMap = { leader1, leader12, leader144 };
 
-        // Tell backend to refresh its cache too
-        try {
-          await authFetch(`${BACKEND_URL}/cache/people/refresh`, {
-            method: "POST",
-          });
-        } catch {
-          /* non-critical */
-        }
+    // Build leadersRaw in the array shape extractLeaders() expects
+    const leadersRaw = [
+      leader1   ? { level: 1,   name: leader1   } : null,
+      leader12  ? { level: 12,  name: leader12  } : null,
+      leader144 ? { level: 144, name: leader144 } : null,
+    ].filter(Boolean);
 
-        window.globalPeopleCache = null;
-        window.globalCacheTimestamp = null;
-        window.globalPeopleCacheOrg = null;
-        try {
-          await fetchAllPeople(true);
-          setSnackbar({
-            open: true,
-            message: "Person added successfully",
-            severity: "success",
-          });
-        } catch {
-          addPersonToCache(mappedPerson);
-          setSnackbar({
-            open: true,
-            message: "Person added (refresh if needed)",
-            severity: "warning",
-          });
-        }
+    const mappedPerson = {
+      _id:      safeStr(savedPerson._id || editingPerson?._id),
+      name:     safeStr(savedPerson.name),
+      surname:  safeStr(savedPerson.surname),
+      gender:   safeStr(savedPerson.gender),
+      dob:      safeStr(savedPerson.birthday || savedPerson.dob),
+      location: safeStr(savedPerson.address),   // ← store as location to match mapRawPerson
+      address:  safeStr(savedPerson.address),   // ← also keep address so dialog can read it on re-edit
+      email:    safeStr(savedPerson.email),
+      phone:    safeStr(savedPerson.number || savedPerson.phone),
+      Stage:    safeStr(savedPerson.stage || savedPerson.Stage) || "Win",
+      lastUpdated: new Date().toISOString(),
+      invitedBy: safeStr(savedPerson.invitedBy),
+      ...leadersMap,
+      leaders:  leadersMap,
+      leadersRaw,
+      leadersCombinedLower: Object.values(leadersMap).join(" ").toLowerCase(),
+      fullName: `${safeStr(savedPerson.name)} ${safeStr(savedPerson.surname)}`.trim(),
+      fullNameLower: `${safeStr(savedPerson.name)} ${safeStr(savedPerson.surname)}`.trim().toLowerCase(),
+      emailLower:   safeStr(savedPerson.email).toLowerCase(),
+      phoneLower:   safeStr(savedPerson.number || savedPerson.phone).toLowerCase(),
+      addressLower: safeStr(savedPerson.address).toLowerCase(),
+    };
+
+    if (editingPerson) {
+      updatePersonInCache(editingPerson._id, mappedPerson);
+      setSnackbar({ open: true, message: "Person updated successfully", severity: "success" });
+    } else {
+      setSnackbar({ open: true, message: "Person added — refreshing list…", severity: "info" });
+      try {
+        await authFetch(`${BACKEND_URL}/cache/people/refresh`, { method: "POST" });
+      } catch { /* non-critical */ }
+      window.globalPeopleCache = null;
+      window.globalCacheTimestamp = null;
+      window.globalPeopleCacheOrg = null;
+      try {
+        await fetchAllPeople(true);
+        setSnackbar({ open: true, message: "Person added successfully", severity: "success" });
+      } catch {
+        addPersonToCache(mappedPerson);
+        setSnackbar({ open: true, message: "Person added (refresh if needed)", severity: "warning" });
       }
-    },
-    [editingPerson, updatePersonInCache, addPersonToCache, fetchAllPeople],
-  );
+    }
+  },
+  [editingPerson, updatePersonInCache, addPersonToCache, fetchAllPeople, authFetch, BACKEND_URL],
+);
 
   const handleCloseDialog = () => {
     setIsModalOpen(false);

@@ -219,13 +219,6 @@ export default function DailyTasks() {
     return `${year}-${month}-${day}T${hours}:${minutes}`;
   };
 
-  console.log("Deleting:", selectedTypeToManage);
-  console.log(
-    "Deleting tasktype:",
-    selectedTypeToManage?.name,
-    selectedTypeToManage?.id,
-  );
-
   const fetchTaskTypes = async () => {
     try {
       const res = await authFetch(`${API_URL}/tasktypes`);
@@ -453,6 +446,7 @@ export default function DailyTasks() {
 
     return () => controller.abort();
   }, [user, authFetch, API_URL]);
+
   const pollIntervalRef = useRef(null);
 
   const pollUntilCacheComplete = useCallback(
@@ -906,8 +900,7 @@ export default function DailyTasks() {
         Email: task.contacted_person?.email || "",
       },
       recipientDisplay: task.contacted_person?.name || "",
-      assignedTo:
-        task.assignedTo || (user ? `${user.name} ${user.surname}` : ""),
+      assignedTo:task.assignedTo || (user ? `${user.name} ${user.surname}` : ""),
       assignedEmail: task.assignedfor || user?.email || "",
       dueDate: formatDateTime(task.date),
       status: task.status,

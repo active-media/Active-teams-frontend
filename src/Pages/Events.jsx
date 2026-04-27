@@ -498,7 +498,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
     renderCell: (params) => {
       const isOverdueEvent = isOverdue(params.row);
       const status = params.row.status || "incomplete";
-      if (isOverdueEvent && isCellType) {
+      if (isOverdueEvent) {
         return (
           <Box sx={{ color: "#dc3545", fontSize: "0.8rem", fontWeight: "bold", textAlign: "center", width: "100%" }}>
             OVERDUE
