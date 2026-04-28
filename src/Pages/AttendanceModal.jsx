@@ -1428,15 +1428,17 @@ const AttendanceModal = ({
   );
   const [preloadedPeople, setPreloadedPeople] = useState([]);
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
-  const isTicketedEvent = event?.isTicketed || false;
-  const eventPriceTiers =
-    event?.priceTiers || event?.formData?.priceTiers || [];
+  
+  // Ensure isTicketed and priceTiers are properly accessed from the event object
+  const isTicketedEvent = event?.isTicketed === true || event?.isTicketed === "true" || false;
+  const eventPriceTiers = (
+    event?.priceTiers || 
+    event?.formData?.priceTiers ||
+    event?.price_tiers ||
+    []
+  );
 
   const theme = useTheme();
-
-  console.log("Event isTicketed:", event?.isTicketed);
-  console.log("Event priceTiers:", event?.priceTiers);
-  console.log("Full event object:", event);
 
   const isDarkMode = theme.palette.mode === "dark";
   const decisionOptions = [
@@ -1774,55 +1776,50 @@ const AttendanceModal = ({
       setDecisions(newDecisions);
       setDecisionTypes(newDecisionTypes);
 
-      if (isTicketedEvent) {
-        const newTicketInfo = {};
+      // Always initialize ticket info for both ticketed and non-ticketed events
+      // This ensures we're ready if the ticketed flag changes
+      const newTicketInfo = {};
 
-        persistentList.forEach((att) => {
+      persistentList.forEach((att) => {
+        if (att.id) {
+          newTicketInfo[att.id] = {
+            priceName: att.priceName || "",
+            price: att.price ?? att.Price ?? 0,
+            ageGroup: att.ageGroup || att.AgeGroup || "",
+            paymentMethod: att.paymentMethod || att.PaymentMethod || "Cash",
+            paidAmount: att.paidAmount ?? att.PaidAmount ?? att.paid ?? att.Paid ?? 0,
+            paid: att.paid ?? att.Paid ?? 0,
+            owing: att.owing ?? att.Owing ?? 0,
+            change: att.change ?? att.Change ?? 0,
+          };
+        }
+      });
+
+      if (isCompleted && data.attendance_status !== "did_not_meet") {
+        checkedInList.forEach((att) => {
           if (att.id) {
             newTicketInfo[att.id] = {
-              priceName: att.priceName || "",
-              price: att.price ?? 0,
-              ageGroup: att.ageGroup || "",
-              paymentMethod: att.paymentMethod || "",
-
-              paidAmount: att.paidAmount ?? att.paid ?? 0,
-              paid: att.paid ?? 0,
-              owing: att.owing ?? 0,
-              change: att.change ?? 0,
+              ...newTicketInfo[att.id],
+              priceName:
+                att.priceName ?? att.PriceName ?? newTicketInfo[att.id]?.priceName ?? "",
+              price: att.price ?? att.Price ?? newTicketInfo[att.id]?.price ?? 0,
+              ageGroup: att.ageGroup ?? att.AgeGroup ?? newTicketInfo[att.id]?.ageGroup ?? "",
+              paymentMethod:
+                att.paymentMethod ?? att.PaymentMethod ??
+                newTicketInfo[att.id]?.paymentMethod ?? "Cash",
+              paidAmount:
+                att.paidAmount ?? att.PaidAmount ??
+                att.paid ?? att.Paid ??
+                newTicketInfo[att.id]?.paidAmount ?? 0,
+              paid: att.paid ?? att.Paid ?? newTicketInfo[att.id]?.paid ?? 0,
+              owing: att.owing ?? att.Owing ?? newTicketInfo[att.id]?.owing ?? 0,
+              change: att.change ?? att.Change ?? newTicketInfo[att.id]?.change ?? 0,
             };
           }
         });
-
-        if (isCompleted && data.attendance_status !== "did_not_meet") {
-          checkedInList.forEach((att) => {
-            if (att.id) {
-              newTicketInfo[att.id] = {
-                ...newTicketInfo[att.id],
-
-                priceName:
-                  att.priceName ?? newTicketInfo[att.id]?.priceName ?? "",
-                price: att.price ?? newTicketInfo[att.id]?.price ?? 0,
-                ageGroup: att.ageGroup ?? newTicketInfo[att.id]?.ageGroup ?? "",
-                paymentMethod:
-                  att.paymentMethod ??
-                  newTicketInfo[att.id]?.paymentMethod ??
-                  "",
-
-                paidAmount:
-                  att.paidAmount ??
-                  att.paid ??
-                  newTicketInfo[att.id]?.paidAmount ??
-                  0,
-                paid: att.paid ?? newTicketInfo[att.id]?.paid ?? 0,
-                owing: att.owing ?? newTicketInfo[att.id]?.owing ?? 0,
-                change: att.change ?? newTicketInfo[att.id]?.change ?? 0,
-              };
-            }
-          });
-        }
-
-        setAttendeeTicketInfo(newTicketInfo);
       }
+
+      setAttendeeTicketInfo(newTicketInfo);
 
       if (data.attendance_status === "did_not_meet") {
         setDidNotMeet(true);
@@ -2307,6 +2304,7 @@ const AttendanceModal = ({
       toast.info(`${person.fullName} is already in attendees list`);
       return;
     }
+    
     const personWithLeaders = {
       id: person.id,
       fullName: person.fullName,
@@ -2320,7 +2318,7 @@ const AttendanceModal = ({
         priceName: "",
         price: 0,
         ageGroup: "",
-        paymentMethod: "",
+        paymentMethod: "Cash",
         paidAmount: 0,
       }),
     };
@@ -2328,6 +2326,23 @@ const AttendanceModal = ({
     const updatedAttendees = [...persistentCommonAttendees, personWithLeaders];
     setPersistentCommonAttendees(updatedAttendees);
     setCheckedIn((prev) => ({ ...prev, [person.id]: false }));
+
+    // Initialize ticket info for new person if ticketed event
+    if (isTicketedEvent) {
+      setAttendeeTicketInfo((prev) => ({
+        ...prev,
+        [person.id]: {
+          priceName: "",
+          price: 0,
+          ageGroup: "",
+          paymentMethod: "Cash",
+          paidAmount: 0,
+          paid: 0,
+          owing: 0,
+          change: 0,
+        },
+      }));
+    }
 
     toast.success(`${person.fullName} added to attendees list`);
     saveAllAttendees(updatedAttendees, attendeeTicketInfo).catch((error) => {

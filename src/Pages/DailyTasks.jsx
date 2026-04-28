@@ -793,7 +793,25 @@ export default function DailyTasks() {
   const handleOpen = (type) => {
     setFormType(type);
     setIsModalOpen(true);
-    setTaskData(getInitialTaskData());
+    const initialData = getInitialTaskData();
+    // Pre-select task type based on the button clicked
+    if (type === "visit") {
+      const visitType = taskTypes.find(t => t.name.toLowerCase() === "visit");
+      if (visitType) {
+        initialData.taskType = visitType._id || visitType.id;
+      }
+    } else if (type === "call") {
+      const callType = taskTypes.find(t => t.name.toLowerCase() === "call");
+      if (callType) {
+        initialData.taskType = callType._id || callType.id;
+      }
+    } else if (type === "consolidation") {
+      const consolidationType = taskTypes.find(t => t.name.toLowerCase() === "consolidation");
+      if (consolidationType) {
+        initialData.taskType = consolidationType._id || consolidationType.id;
+      }
+    }
+    setTaskData(initialData);
     setSearchResults([]);
     setAssignedResults([]);
     setSelectedTask({});
