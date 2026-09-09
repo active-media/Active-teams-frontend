@@ -9,6 +9,8 @@ import React, {
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { AuthContext } from "../contexts/AuthContext";
 import { UserContext } from "../contexts/UserContext";
+import { useOrgConfig } from "../contexts/OrgConfigContext";
+import { getPersonLeaders, labelForLevel, DEFAULT_HIERARCHY } from "../utils/hierarchy";
 import {
   Box,
   Paper,
@@ -81,8 +83,8 @@ const safeStr = (v) => {
   return "";
 };
 
-function getLeadersByLevel(person) {
-  if (Array.isArray(person?.leaders) && person.leaders.length > 0) {
+function getLeadersByLevel(person, levels) {
+  if (Array.isArray(person?.leaders) && person.leaders.length > 0 && !Array.isArray(levels)) {
     const map = {};
     for (const l of person.leaders) {
       if (l?.level != null && l?.name)
@@ -90,20 +92,26 @@ function getLeadersByLevel(person) {
     }
     if (Object.keys(map).length > 0) return map;
   }
+  const activeLevels = Array.isArray(levels) && levels.length > 0
+    ? levels
+    : DEFAULT_HIERARCHY;
   const map = {};
-  const l1 = safeStr(person?.["Leader @1"] || person?.leader1 || "");
-  const l12 = safeStr(person?.["Leader @12"] || person?.leader12 || "");
-  const l144 = safeStr(person?.["Leader @144"] || person?.leader144 || "");
-  const l1728 = safeStr(person?.["Leader @1728"] || person?.leader1728 || "");
-  if (l1) map.leader1 = l1;
-  if (l12) map.leader12 = l12;
-  if (l144) map.leader144 = l144;
-  if (l1728) map.leader1728 = l1728;
+  for (const lv of activeLevels) {
+    const key = lv.key || lv.field || "";
+    if (!key) continue;
+    const value = safeStr(
+      person?.leaders?.[key] ??
+        person?.[key] ??
+        person?.[lv.label] ??
+        (person?.["Leader @ " + lv.label] || ""),
+    );
+    if (value) map[key] = value;
+  }
   return map;
 }
 
-function getLeadersCombined(person) {
-  return Object.values(getLeadersByLevel(person)).join(" ");
+function getLeadersCombined(person, levels) {
+  return Object.values(getLeadersByLevel(person, levels)).join(" ");
 }
 
 const stages = [
@@ -113,7 +121,7 @@ const stages = [
   { id: "Send", title: "Send" },
 ];
 
-function mapRawPerson(raw) {
+function mapRawPerson(raw, levels) {
   if (!raw || typeof raw !== "object") return null;
   const name = safeStr(raw.Name || raw.name || "").trim();
   const surname = safeStr(raw.Surname || raw.surname || "").trim();
@@ -135,7 +143,7 @@ function mapRawPerson(raw) {
       raw.org_id ||
       "",
   ).trim();
-  const leaderMap = getLeadersByLevel(raw);
+  const leaderMap = getLeadersByLevel(raw, levels);
   const leadersCombined = Object.values(leaderMap).join(" ");
   const fullName = `${name} ${surname}`.trim();
   return {
@@ -274,6 +282,7 @@ const BoardSkeleton = ({ cardCount = 4 }) => {
 const PersonCard = React.memo(({ person, onEdit, onDelete, isDragging }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const open = Boolean(anchorEl);
+  const { orgConfig } = useOrgConfig();
 
   const handleMenuClick = (e) => {
     e.stopPropagation();
@@ -329,12 +338,20 @@ const PersonCard = React.memo(({ person, onEdit, onDelete, isDragging }) => {
   }, []);
 
   const leaderEntries = useMemo(() => {
-    if (Array.isArray(person.leadersRaw) && person.leadersRaw.length > 0)
+    if (Array.isArray(person.leadersRaw) && person.leadersRaw.length > 0) {
       return person.leadersRaw
         .filter((l) => l?.name)
-        .map((l) => [`leader${l.level}`, safeStr(l.name)]);
-    return Object.entries(getLeadersByLevel(person)).filter(([, n]) => n);
-  }, [person]);
+        .map((l) => {
+          const key = `leader${l.level}`;
+          return { key, label: labelForLevel(orgConfig, key), name: safeStr(l.name) };
+        });
+    }
+    return getPersonLeaders(orgConfig, person).map((l) => ({
+      key: l.key,
+      label: l.label,
+      name: l.value,
+    }));
+  }, [person, orgConfig]);
 
   const displayName =
     `${safeStr(person.name)} ${safeStr(person.surname)}`.trim();
@@ -399,11 +416,11 @@ const PersonCard = React.memo(({ person, onEdit, onDelete, isDragging }) => {
             <Box
               sx={{ display: "flex", flexDirection: "column", gap: 0.5, mt: 1 }}
             >
-              {leaderEntries.map(([key, name]) => (
+              {leaderEntries.map(({ key, label, name }) => (
                 <Box key={key} sx={{ display: "flex", alignItems: "center" }}>
                   <GroupIcon fontSize="small" sx={{ mr: 0.5 }} />
                   <Typography variant="caption">
-                    Leader @{safeStr(key).replace("leader", "")}: {name}
+                    {label}: {name}
                   </Typography>
                 </Box>
               ))}
@@ -659,6 +676,15 @@ export const PeopleSection = () => {
   const theme = useTheme();
   const { user, authFetch } = useContext(AuthContext);
   const { userProfile } = useContext(UserContext);
+  const { orgConfig } = useOrgConfig();
+
+  const hierarchyLevels = useMemo(
+    () =>
+      Array.isArray(orgConfig?.hierarchy) && orgConfig.hierarchy.length > 0
+        ? orgConfig.hierarchy
+        : DEFAULT_HIERARCHY,
+    [orgConfig],
+  );
 
   const currentUserOrg = useMemo(() => {
     const org = safeStr(
@@ -714,6 +740,7 @@ export const PeopleSection = () => {
     leader1728: "",
     stage: "Win",
   });
+  const [editLeaderValues, setEditLeaderValues] = useState({});
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: "",
@@ -808,7 +835,7 @@ export const PeopleSection = () => {
           });
 
           const mapped = (data?.cached_data || [])
-            .map(mapRawPerson)
+            .map((p) => mapRawPerson(p, hierarchyLevels))
             .filter(Boolean);
 
           // ── NEW: if backend is still loading, show partial data and poll ──
@@ -831,7 +858,7 @@ export const PeopleSection = () => {
                   if (!pollRes?.ok) return;
                   const pollData = await pollRes.json();
                   const pollMapped = (pollData?.cached_data || [])
-                    .map(mapRawPerson)
+                    .map((p) => mapRawPerson(p, hierarchyLevels))
                     .filter(Boolean);
                   if (pollMapped.length > 0) {
                     setAllPeople(pollMapped);
@@ -882,7 +909,7 @@ export const PeopleSection = () => {
 
       return await peopleFetchPromiseRef.current;
     },
-    [BACKEND_URL, authFetch, currentUserOrg],
+    [BACKEND_URL, authFetch, currentUserOrg, hierarchyLevels],
   );
 
   // ── Mount effect ───────────────────────────────────────────────────────────
@@ -1108,13 +1135,13 @@ export const PeopleSection = () => {
         m.emailLower = safeStr(m.email).toLowerCase();
         m.phoneLower = safeStr(m.phone).toLowerCase();
         m.addressLower = safeStr(m.location).toLowerCase();
-        m.leadersCombinedLower = getLeadersCombined(m).toLowerCase();
+        m.leadersCombinedLower = getLeadersCombined(m, hierarchyLevels).toLowerCase();
         return m;
       });
       window.globalPeopleCache = updated;
       return updated;
     });
-  }, []);
+  }, [hierarchyLevels]);
 
   const addPersonToCache = useCallback((newPerson) => {
     setAllPeople((prev) => {
@@ -1124,12 +1151,12 @@ export const PeopleSection = () => {
       p.emailLower = safeStr(p.email).toLowerCase();
       p.phoneLower = safeStr(p.phone).toLowerCase();
       p.addressLower = safeStr(p.location).toLowerCase();
-      p.leadersCombinedLower = getLeadersCombined(p).toLowerCase();
+      p.leadersCombinedLower = getLeadersCombined(p, hierarchyLevels).toLowerCase();
       const updated = [...prev, p];
       window.globalPeopleCache = updated;
       return updated;
     });
-  }, []);
+  }, [hierarchyLevels]);
 
   const removePersonFromCache = useCallback((personId) => {
     setAllPeople((prev) => {
@@ -1181,6 +1208,10 @@ export const PeopleSection = () => {
       }
     }
     const lm = person.leaders || {};
+    const dynamicLeaders = getPersonLeaders(orgConfig, person);
+    const leaderMapFromDynamic = {};
+    for (const l of dynamicLeaders) leaderMapFromDynamic[l.key] = l.name;
+    setEditLeaderValues(leaderMapFromDynamic);
     setFormData({
       name: safeStr(person.name),
       surname: safeStr(person.surname),
@@ -1241,19 +1272,26 @@ export const PeopleSection = () => {
 
   const handleSaveFromDialog = useCallback(
   async (savedPerson) => {
-    // Read leaders from the normalized fields the dialog returns
-    const leader1   = savedPerson.leader1   || savedPerson["Leader @1"]   || "";
-    const leader12  = savedPerson.leader12  || savedPerson["Leader @12"]  || "";
-    const leader144 = savedPerson.leader144 || savedPerson["Leader @144"] || "";
-
-    const leadersMap = { leader1, leader12, leader144 };
+    // Build leader map from the org's configured hierarchy (dynamic keys + legacy fallback)
+    const leadersMap = {};
+    for (const lv of hierarchyLevels) {
+      const key = lv.key || "";
+      if (!key) continue;
+      const val = safeStr(
+        savedPerson?.leaders?.[key] ??
+          savedPerson?.[key] ??
+          savedPerson?.[lv.label] ?? "",
+      );
+      if (val) leadersMap[key] = val;
+    }
 
     // Build leadersRaw in the array shape extractLeaders() expects
-    const leadersRaw = [
-      leader1   ? { level: 1,   name: leader1   } : null,
-      leader12  ? { level: 12,  name: leader12  } : null,
-      leader144 ? { level: 144, name: leader144 } : null,
-    ].filter(Boolean);
+    const leadersRaw = hierarchyLevels
+      .map((lv) => {
+        const name = leadersMap[lv.key];
+        return name ? { level: lv.level, name } : null;
+      })
+      .filter(Boolean);
 
     const mappedPerson = {
       _id:      safeStr(savedPerson._id || editingPerson?._id),
@@ -1299,12 +1337,13 @@ export const PeopleSection = () => {
       }
     }
   },
-  [editingPerson, updatePersonInCache, addPersonToCache, fetchAllPeople, authFetch, BACKEND_URL],
+  [editingPerson, updatePersonInCache, addPersonToCache, fetchAllPeople, authFetch, BACKEND_URL, hierarchyLevels],
 );
 
   const handleCloseDialog = () => {
     setIsModalOpen(false);
     setEditingPerson(null);
+    setEditLeaderValues({});
     setFormData({
       name: "",
       surname: "",
@@ -1673,6 +1712,8 @@ export const PeopleSection = () => {
           personId={editingPerson?._id || null}
           editingPersonObject={editingPerson}
           preloadedPeople={allPeople}
+          hierarchyLevels={hierarchyLevels}
+          editLeaderValues={editLeaderValues}
         />
 
         <DeleteConfirmationModal

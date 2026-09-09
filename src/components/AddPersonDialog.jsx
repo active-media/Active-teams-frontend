@@ -9,6 +9,13 @@ import { LoadingButton } from "@mui/lab";
 import { toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { AuthContext } from "../contexts/AuthContext";
+import { useCapabilities } from "../utils/capabilities";
+import { DEFAULT_HIERARCHY } from "../utils/hierarchy";
+
+const LEGACY_LEADER_KEYS = ["leader1", "leader12", "leader144"];
+
+const leaderFormKey = (lv) =>
+  LEGACY_LEADER_KEYS.includes(lv.key) ? lv.key : "__h_" + lv.key;
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
@@ -64,8 +71,37 @@ const mapPerson = (raw) => {
     fullNameLower: fullName.toLowerCase(),
     searchText: `${fullName} ${email} ${phone}`.toLowerCase(),
     leader1, leader12, leader144,
+    leader1Id: raw.leader1Id || raw["Leader @1 Id"] || "",
+    leader12Id: raw.leader12Id || raw["Leader @12 Id"] || "",
+    leader144Id: raw.leader144Id || raw["Leader @144 Id"] || "",
+    // Generic leader map for any org hierarchy (object or legacy array/fields)
+    leader_values: extractLeaderValues(raw),
   };
 };
+
+function extractLeaderValues(raw) {
+  const out = {};
+  if (raw?.leaders && typeof raw.leaders === "object" && !Array.isArray(raw.leaders)) {
+    for (const [k, v] of Object.entries(raw.leaders)) {
+      if (v) out[k] = String(v);
+    }
+  }
+  if (Array.isArray(raw?.leaders)) {
+    for (const l of raw.leaders) {
+      if (l?.level != null && l?.name) out["leader" + l.level] = String(l.name);
+    }
+  }
+  for (const [k, v] of Object.entries(raw || {})) {
+    if (k.startsWith("leader")) {
+      const num = k.replace(/\D/g, "");
+      if (num && v) out[k] = String(v);
+    }
+  }
+  for (const k of ["Leader @1", "Leader @12", "Leader @144", "Leader @1728"]) {
+    if (raw?.[k]) out["leader" + k.match(/\d+/)?.[0] || ""] = String(raw[k]);
+  }
+  return out;
+}
 
 // Synchronous in-memory search — instant, no debounce needed
 const searchPeople = (term) => {
@@ -372,8 +408,28 @@ function AddressSearchField({ value, onChange, error, disabled }) {
 export default function AddPersonDialog({
   open, onClose, onSave, formData, setFormData,
   isEdit = false, personId = null, editingPersonObject = null,
+  hierarchyLevels = [], editLeaderValues = {},
 }) {
-  const { authFetch, user } = useContext(AuthContext);
+  const { authFetch } = useContext(AuthContext);
+  const { can } = useCapabilities();
+
+  const leaderLevels = useMemo(() => {
+    const src = Array.isArray(hierarchyLevels) && hierarchyLevels.length > 0
+      ? hierarchyLevels
+      : DEFAULT_HIERARCHY;
+    return [...src].sort((a, b) => (a.level || 0) - (b.level || 0));
+  }, [hierarchyLevels]);
+
+  const firstLevel = leaderLevels[0];
+
+  const resetLeaderFields = (base) => {
+    const next = { ...base };
+    leaderLevels.forEach((lv) => {
+      next[leaderFormKey(lv)] = "";
+      next[leaderFormKey(lv) + "Id"] = "";
+    });
+    return next;
+  };
 
   const [errors,           setErrors]           = useState({});
   const [isSubmitting,     setIsSubmitting]      = useState(false);
@@ -467,8 +523,21 @@ export default function AddPersonDialog({
 
   useEffect(() => {
     if (!open || !isEdit || !editingPersonObject) return;
-    const leaders  = extractLeaders(editingPersonObject);
-    const src      = editingPersonObject;
+    const leaders   = extractLeaders(editingPersonObject);
+    const src       = editingPersonObject;
+    const leaderInit = {};
+    for (const lv of leaderLevels) {
+      const key = leaderFormKey(lv);
+      const legacyVal =
+        lv.key === "leader1" ? leaders.leader1 :
+        lv.key === "leader12" ? leaders.leader12 :
+        lv.key === "leader144" ? leaders.leader144 : "";
+      leaderInit[key] =
+        (src.leader_values?.[lv.key] ?? "") ||
+        (src.leaders?.[lv.key] ?? "") ||
+        (editLeaderValues?.[lv.key] ?? "") || legacyVal;
+      leaderInit[key + "Id"] = src[lv.key + "Id"] || "";
+    }
     const initData = {
       name:      src.name      || src.Name      || "",
       surname:   src.surname   || src.Surname   || "",
@@ -478,18 +547,15 @@ export default function AddPersonDialog({
       number:    src.number    || src.phone     || src.Number || src.Phone || "",
       gender:    src.gender    || src.Gender    || "",
       invitedBy: src.invitedBy || src.InvitedBy || "",
-      leader1:   leaders.leader1,
-      leader12:  leaders.leader12,
-      leader144: leaders.leader144,
+      ...leaderInit,
       stage:     src.stage     || src.Stage     || "Win",
     };
-    setFormData(initData);
+    setFormData((prev) => ({ ...prev, ...initData }));
     setOriginalFormData(initData);
-    setShowLeaderFields(true);
-  }, [open, isEdit, editingPersonObject]);
+    setShowLeaderFields(leaderLevels.length > 1);
+  }, [open, isEdit, editingPersonObject, leaderLevels, editLeaderValues]);
 
-  const canEditLeaders = ["leaderat12", "leader", "admin", "manager"]
-    .includes(String(user?.role || "").toLowerCase());
+  const canEditLeaders = can("manage_people") || can("admin");
 
   const hasChanges = useMemo(() => {
     if (!isEdit || !originalFormData) return true;
@@ -497,7 +563,7 @@ export default function AddPersonDialog({
   }, [isEdit, formData, originalFormData]);
 
   const validate = () => {
-    const required = ["name", "surname", "dob", "address", "email", "number", "gender", "leader1"];
+    const required = ["name", "surname", "dob", "address", "email", "number", "gender", leaderFormKey(firstLevel)];
     const errs = {};
     required.forEach((f) => { if (!formData[f]?.trim()) errs[f] = "This field is required"; });
     setErrors(errs);
@@ -505,7 +571,7 @@ export default function AddPersonDialog({
   };
 
   const isFormValid = () =>
-    ["name", "surname", "dob", "address", "email", "number", "gender", "leader1"]
+    ["name", "surname", "dob", "address", "email", "number", "gender", leaderFormKey(firstLevel)]
       .every((f) => formData[f]?.toString().trim() !== "");
 
   const handleSaveClick = async () => {
@@ -532,11 +598,20 @@ export default function AddPersonDialog({
         }
       }
 
+      const hierarchyLeaders = {};
+      for (const lv of leaderLevels) {
+        const v = (formData[leaderFormKey(lv)] || "").toString().trim();
+        if (v) hierarchyLeaders[lv.key] = v;
+      }
+
       const normalizedLeaders = normalizeLeaderChain({
-        leader1: formData.leader1,
-        leader12: formData.leader12,
-        leader144: formData.leader144,
+        leader1: hierarchyLeaders.leader1 || formData.leader1,
+        leader12: hierarchyLeaders.leader12 || formData.leader12,
+        leader144: hierarchyLeaders.leader144 || formData.leader144,
       });
+
+      const firstLevelId =
+        formData[leaderFormKey(firstLevel) + "Id"] || formData.leader1Id || formData.invitedById || "";
 
       const payload = {
         invitedBy: formData.invitedBy || "",
@@ -546,20 +621,16 @@ export default function AddPersonDialog({
         number: formData.number, phone: formData.number,
         dob: formData.dob ? formData.dob.replace(/-/g, "/") : "",
         address: formData.address,
+        // Canonical per-org leader map (new backend / dual-write source)
+        hierarchy_leaders: hierarchyLeaders,
         leaders: [
           normalizedLeaders.leader1,
           normalizedLeaders.leader12,
           normalizedLeaders.leader144,
           "",
         ],
-        leader1: normalizedLeaders.leader1,
-        leader1Id: formData.leader1Id || "",
-        leader12: normalizedLeaders.leader12,
-        leader12Id: formData.leader12Id || "",
-        leader144: normalizedLeaders.leader144,
-        leader144Id: formData.leader144Id || "",
         // leaderId is what your backend's create_person endpoint checks first
-        leaderId: formData.leader1Id || formData.invitedById || "",
+        leaderId: firstLevelId,
         stage: formData.stage || "Win",
       };
 
@@ -582,6 +653,7 @@ export default function AddPersonDialog({
             leader12: data.person?.["Leader @12"] ?? formData.leader12 ?? "",
             leader144: data.person?.["Leader @144"] ?? formData.leader144 ?? "",
             stage: data.person?.Stage || payload.stage || "Win",
+            leaders: hierarchyLeaders,
             fullName: `${payload.name} ${payload.surname}`.trim(),
             __updatedNewPerson: true,
           });
@@ -599,6 +671,7 @@ export default function AddPersonDialog({
             ...data,
             person: {
               ...created,
+              leaders: hierarchyLeaders,
               leader1:   created["Leader @1"]   || created.leader1   || "",
               leader12:  created["Leader @12"]  || created.leader12  || "",
               leader144: created["Leader @144"] || created.leader144 || "",
@@ -610,7 +683,7 @@ export default function AddPersonDialog({
         }
       }
 
-      if (!isEdit) setFormData(initialFormState);
+      if (!isEdit) setFormData(resetLeaderFields(initialFormState));
       onClose();
     } catch (err) {
       toast.error(`Error: ${err.message || "An error occurred"}`);
@@ -621,7 +694,7 @@ export default function AddPersonDialog({
 
   const handleClose = () => {
     if (isSubmitting) return;
-    if (!isEdit) setFormData(initialFormState);
+    if (!isEdit) setFormData(resetLeaderFields(initialFormState));
     onClose();
   };
 
@@ -693,17 +766,24 @@ export default function AddPersonDialog({
                 if (person) {
                   update.invitedById = person._id || "";
 
-                  const ancestors = [
-                    { name: person.leader1, id: person.leader1Id },
-                    { name: person.leader12, id: person.leader12Id },
-                    { name: person.leader144, id: person.leader144Id },
-                  ].filter((a) => a.name && a.name.trim());
+                  const ancestors = leaderLevels
+                    .map((lv) => {
+                      const name =
+                        person.leader_values?.[lv.key] ||
+                        person.leaders?.[lv.key] ||
+                        person[lv.key] ||
+                        "";
+                      return name && name.trim()
+                        ? { name, id: person[lv.key + "Id"] || "" }
+                        : null;
+                    })
+                    .filter(Boolean);
 
                   const inviterName = person.fullName?.trim();
                   const inviterId = person._id || "";
                   if (
                     inviterName &&
-                    ancestors.length < 3 &&
+                    ancestors.length < leaderLevels.length &&
                     ancestors[ancestors.length - 1]?.name !== inviterName
                   ) {
                     ancestors.push({ name: inviterName, id: inviterId });
@@ -716,24 +796,22 @@ export default function AddPersonDialog({
                     return true;
                   });
 
-                  update.leader1 = uniqueAncestors[0]?.name || "";
-                  update.leader1Id = uniqueAncestors[0]?.id || "";
-                  update.leader12 = uniqueAncestors[1]?.name || "";
-                  update.leader12Id = uniqueAncestors[1]?.id || "";
-                  update.leader144 = uniqueAncestors[2]?.name || "";
-                  update.leader144Id = uniqueAncestors[2]?.id || "";
+                  leaderLevels.forEach((lv, idx) => {
+                    update[leaderFormKey(lv)] = uniqueAncestors[idx]?.name || "";
+                    update[leaderFormKey(lv) + "Id"] = uniqueAncestors[idx]?.id || "";
+                  });
                 } else {
                   update.invitedById = "";
-                  update.leader1 = "";
-                  update.leader1Id = "";
-                  update.leader12 = "";
-                  update.leader12Id = "";
-                  update.leader144 = "";
-                  update.leader144Id = "";
+                  leaderLevels.forEach((lv) => {
+                    update[leaderFormKey(lv)] = "";
+                    update[leaderFormKey(lv) + "Id"] = "";
+                  });
                 }
                 return update;
               });
-              setErrors((p) => ({ ...p, invitedBy: "", leader1: "", leader12: "", leader144: "" }));
+              const cleared = { invitedBy: "" };
+              leaderLevels.forEach((lv) => { cleared[leaderFormKey(lv)] = ""; });
+              setErrors((p) => ({ ...p, ...cleared }));
             }}
             disabled={isSubmitting}
             error={errors.invitedBy}
@@ -752,45 +830,55 @@ export default function AddPersonDialog({
 
           <Box sx={{ mt: 1 }}>
             <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 0.5 }}>Leadership</Typography>
-            <PeopleSearchField
-              label="Leader @1"
-              value={formData.leader1}
-              onChange={(val, person) => {
-                setFormData((p) => ({ ...p, leader1: val, leader1Id: person?._id || "" }));
-                setErrors((p) => ({ ...p, leader1: "" }));
-              }}
-              disabled={isSubmitting || !canEditLeaders}
-              error={errors.leader1}
-              required
-            />
+            {leaderLevels.length > 0 && (
+              <PeopleSearchField
+                label={`${leaderLevels[0].label} *`}
+                value={formData[leaderFormKey(leaderLevels[0])] || ""}
+                onChange={(val, person) => {
+                  setFormData((p) => ({
+                    ...p,
+                    [leaderFormKey(leaderLevels[0])]: val,
+                    [leaderFormKey(leaderLevels[0]) + "Id"]: person?._id || "",
+                  }));
+                  setErrors((p) => ({ ...p, [leaderFormKey(leaderLevels[0])]: "" }));
+                }}
+                disabled={isSubmitting || !canEditLeaders}
+                error={errors[leaderFormKey(leaderLevels[0])]}
+                required
+              />
+            )}
           </Box>
 
-          <Collapse in={showLeaderFields}>
-            <Box>
-              <PeopleSearchField
-                label="Leader @12"
-                value={formData.leader12}
-                onChange={(val, person) =>
-                  setFormData((p) => ({ ...p, leader12: val, leader12Id: person?._id || "" }))
-                }
-                disabled={isSubmitting || !canEditLeaders}
-              />
-              <PeopleSearchField
-                label="Leader @144"
-                value={formData.leader144}
-                onChange={(val, person) =>
-                  setFormData((p) => ({ ...p, leader144: val, leader144Id: person?._id || "" }))
-                }
-                disabled={isSubmitting || !canEditLeaders}
-              />
-            </Box>
-          </Collapse>
+          {leaderLevels.length > 1 && (
+            <>
+              <Collapse in={showLeaderFields}>
+                <Box>
+                  {leaderLevels.slice(1).map((lv) => (
+                    <PeopleSearchField
+                      key={lv.key}
+                      label={lv.label}
+                      value={formData[leaderFormKey(lv)] || ""}
+                      onChange={(val, person) => {
+                        setFormData((p) => ({
+                          ...p,
+                          [leaderFormKey(lv)]: val,
+                          [leaderFormKey(lv) + "Id"]: person?._id || "",
+                        }));
+                        setErrors((p) => ({ ...p, [leaderFormKey(lv)]: "" }));
+                      }}
+                      disabled={isSubmitting || !canEditLeaders}
+                    />
+                  ))}
+                </Box>
+              </Collapse>
 
-          <Box sx={{ mt: 1, textAlign: "center" }}>
-            <Button onClick={() => setShowLeaderFields((v) => !v)} startIcon={<LeaderIcon />} variant="outlined" color="primary" size="small">
-              {showLeaderFields ? "Hide Additional Leaders" : "Add Additional Leaders"}
-            </Button>
-          </Box>
+              <Box sx={{ mt: 1, textAlign: "center" }}>
+                <Button onClick={() => setShowLeaderFields((v) => !v)} startIcon={<LeaderIcon />} variant="outlined" color="primary" size="small">
+                  {showLeaderFields ? "Hide Additional Leaders" : "Add Additional Leaders"}
+                </Button>
+              </Box>
+            </>
+          )}
         </Box>
       </DialogContent>
 

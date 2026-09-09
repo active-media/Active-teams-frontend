@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { useTheme } from "@mui/material/styles";
 import { useOrgConfig } from "../contexts/OrgConfigContext";
+import { DEFAULT_HIERARCHY, getLevelsWithLabels, getLeaderValue } from "../utils/hierarchy";
 import AttendanceModal from "./AttendanceModal";
 import IconButton from "@mui/material/IconButton";
 import EditIcon from "@mui/icons-material/Edit";
@@ -480,7 +481,7 @@ const formatDate = (date) => {
     .replace(/\//g, " - ");
 };
 
-const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
+const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter, hierarchyLevels = []) => {
   if (!events || events.length === 0) return [];
 
   const isCellType =
@@ -488,6 +489,12 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
     selectedEventTypeFilter === "all" ||
     selectedEventTypeFilter === "CELLS" ||
     selectedEventTypeFilter.toLowerCase().includes("cell");
+
+  const levelsUsed = hierarchyLevels.length > 0 ? hierarchyLevels : DEFAULT_HIERARCHY;
+  const hierarchyExclude = new Set(
+    levelsUsed.flatMap((lv) => [lv.key, lv.field, lv.label].filter(Boolean)).map((n) => n.toLowerCase()),
+  );
+  const topName = String(levelsUsed[0]?.key || levelsUsed[0]?.field || levelsUsed[0]?.label || "").toLowerCase();
 
   //STATUS column
   const statusCol = {
@@ -596,8 +603,8 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
     const excludedFields = [
       "persistent_attendees", "uuid", "did_not_meet", "status", "week_identifier",
       "attendees", "_id", "id", "isoverdue", "attendance", "location", "eventtype",
-      "event_type", "eventtypes", "displaydate", "originatedid", "leader12",
-      "leader@12", "leader at 12", "original_event_id", "_is_overdue", "haspersonsteps",
+      "event_type", "eventtypes", "displaydate", "originatedid",
+      "original_event_id", "_is_overdue", "haspersonsteps",
       "has_person_steps", "is_recurring", "isrecurring", "recurring", "recurring_days",
       "is_active", "Is_active", "Is active", "time", "Time", "isGlobal", "isTicketed",
       "description", "new_people", "consolidations", "total_attendance", "closed_by",
@@ -608,15 +615,10 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
     const containsOverdue = keyLower.includes("overdue");
     const containsDisplayDate = keyLower.includes("display") && keyLower.includes("date");
     const containsOriginated = keyLower.includes("originated");
-    const containsLeader12 = keyLower.includes("leader") && keyLower.includes("12");
-    const containsLeader1 = keyLower.includes("leader1") || keyLower.includes("leader@1") || keyLower.includes("leader at 1");
-    const shouldExcludeLeader1 =
-      containsLeader1 &&
-      selectedEventTypeFilter !== "all" &&
-      selectedEventTypeFilter !== "CELLS" &&
-      selectedEventTypeFilter !== "Cells";
+    const containsLeaderField = keyLower.includes("leader") || hierarchyExclude.has(keyLower);
+    const isTopLeaderField = keyLower === topName;
     const containsPersonSteps = keyLower.includes("person") && keyLower.includes("steps");
-    return !(exactMatch || caseInsensitiveMatch || containsOverdue || containsDisplayDate || containsOriginated || containsLeader12 || shouldExcludeLeader1 || containsPersonSteps);
+    return !(exactMatch || caseInsensitiveMatch || containsOverdue || containsDisplayDate || containsOriginated || (containsLeaderField && !(isCellType && isTopLeaderField)) || containsPersonSteps);
   });
 
   const columns = [statusCol, recurringCol];
@@ -657,6 +659,7 @@ const MobileEventCard = ({
   eventTypes,
 }) => {
   const { authFetch } = React.useContext(AuthContext);
+  const { orgConfig } = useOrgConfig();
   if (!theme) {
     return <Box sx={{ height: 100 }} />;
   }
@@ -667,6 +670,7 @@ const MobileEventCard = ({
     selectedEventTypeFilter === "all" ||
     selectedEventTypeFilter === "CELLS" ||
     selectedEventTypeFilter === "Cells";
+  const levelsUsed = getLevelsWithLabels(orgConfig).length ? getLevelsWithLabels(orgConfig) : DEFAULT_HIERARCHY;
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
   const escapeHtml = (s) =>
     String(s || "")
@@ -797,7 +801,7 @@ ${xmlCols}
     }, 100);
   };
 
-const normalizeEventAttendance = (event, eventTypes = []) => {
+const normalizeEventAttendance = (event, eventTypes = [], hierarchyLevels = []) => {
   if (!event) return [];
   const eventDate = event.date;
 
@@ -852,11 +856,17 @@ const normalizeEventAttendance = (event, eventTypes = []) => {
   console.log("LEADER  FIELDS:", leaderKeys.reduce((acc, k) => ({ ...acc, [k]: event[k] }), {}));
 
   
-  const leaderAt12  = event.leader12 || event.leaderAt12 || event.leader_at_12 || "";
-  const leaderAt1   = event.leader1  || event.leaderAt1  || event.leader_at_1  || event.leaderAt1Name  || "";
-  const leaderAt144 = event.leader144 || event.leaderAt144 || event.leader_at_144 || event.leaderAt144Name || "";
-
-  const hasLeaderHierarchy = leaderAt1 || leaderAt12 || leaderAt144;
+  const levelsUsed = hierarchyLevels.length > 0 ? hierarchyLevels : DEFAULT_HIERARCHY;
+  const leaderMap = { ...(event.hierarchy_leaders || {}) };
+  levelsUsed.forEach((lv) => {
+    if (leaderMap[lv.key]) return;
+    const legacy =
+      event[lv.key] || event[lv.field] || (lv.label ? event[lv.label] : "") ||
+      event[`Leader @${lv.level}`] || event[`leaderAt${lv.level}`] ||
+      event[`leader_at_${lv.level}`] || event[`leaderAt${lv.level}Name`] || "";
+    if (legacy) leaderMap[lv.key] = legacy;
+  });
+  const hasLeaderHierarchy = levelsUsed.some((lv) => leaderMap[lv.key]);
 
   return Array.from(peopleMap.values()).map((person) => {
     const row = {
@@ -873,9 +883,10 @@ const normalizeEventAttendance = (event, eventTypes = []) => {
     };
 
     if (hasLeaderHierarchy) {
-      if (leaderAt1)   row["Leader @1"]   = leaderAt1;
-      if (leaderAt12)  row["Leader @12"]  = leaderAt12;
-      if (leaderAt144) row["Leader @144"] = leaderAt144;
+      levelsUsed.forEach((lv) => {
+        const v = leaderMap[lv.key];
+        if (v) row[lv.label] = v;
+      });
     }
 
     if (isTicketed) {
@@ -918,7 +929,7 @@ const normalizeEventAttendance = (event, eventTypes = []) => {
 
     const fullEvent = await fetchEventFull(event); // Always fetch full event
 
-    const rows = normalizeEventAttendance(fullEvent, eventTypes);
+    const rows = normalizeEventAttendance(fullEvent, eventTypes, getLevelsWithLabels(orgConfig));
 
     if (!rows || rows.length === 0) {
       toast.dismiss(TOAST_ID);
@@ -1011,16 +1022,25 @@ const normalizeEventAttendance = (event, eventTypes = []) => {
           {event.eventLeaderName || "N/A"}
         </span>
       </div>
-      {isCellEvent && (
-        <div style={styles.mobileCardRow}>
-          <span style={styles.mobileCardLabel}>Leader @1:</span>
-          <span style={styles.mobileCardValue}>{event.leader1 || "N/A"}</span>
-        </div>
-      )}
-      {!event.isTicketed && <div style={styles.mobileCardRow}>
-        <span style={styles.mobileCardLabel}>Leader @12:</span>
-        <span style={styles.mobileCardValue}>{event.leader12 || "N/A"}</span>
-      </div>}
+      {isCellEvent && levelsUsed.length > 0 && (() => {
+        const lv = levelsUsed[0];
+        const v = getLeaderValue(event, lv.key) || event[`Leader @${lv.level}`] || "";
+        return (
+          <div style={styles.mobileCardRow}>
+            <span style={styles.mobileCardLabel}>{lv.label}:</span>
+            <span style={styles.mobileCardValue}>{v || "N/A"}</span>
+          </div>
+        );
+      })()}
+      {!event.isTicketed && levelsUsed.slice(1).map((lv) => {
+        const v = getLeaderValue(event, lv.key) || event[`Leader @${lv.level}`] || event[`leaderAt${lv.level}`] || event[`leader_at_${lv.level}`] || "";
+        return (
+          <div key={lv.key} style={styles.mobileCardRow}>
+            <span style={styles.mobileCardLabel}>{lv.label}:</span>
+            <span style={styles.mobileCardValue}>{v || "N/A"}</span>
+          </div>
+        );
+      })}
       <div style={styles.mobileActions}>
         <Tooltip title={`View Attendance (${attendeesCount} people)`}>
           <IconButton
@@ -1324,7 +1344,7 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
 
     const fullEvent = await fetchEventFull(event); // Always fetch full event
 
-    const rows = normalizeEventAttendance(fullEvent);
+    const rows = normalizeEventAttendance(fullEvent, getLevelsWithLabels(orgConfig));
 
     if (!rows || rows.length === 0) {
       toast.dismiss(TOAST_ID);
@@ -1346,7 +1366,7 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
   }
 };
 
-const normalizeEventAttendance = (event) => {
+const normalizeEventAttendance = (event, hierarchyLevels = []) => {
   if (!event) return [];
   const eventDate = event.date;
 
@@ -1399,12 +1419,17 @@ const normalizeEventAttendance = (event) => {
   if (peopleMap.size === 0) return [];
 
   // Resolve leader hierarchy from the event itself
-  // Adjust these field names to match whatever your API actually returns
-  const leaderAt1   = event.leaderAt1   || event.leader_at_1   || event.leaderAt1Name   || "";
-  const leaderAt12  = event.leaderAt12  || event.leader_at_12  || event.leaderAt12Name  || event.leader12 || "";
-  const leaderAt144 = event.leaderAt144 || event.leader_at_144 || event.leaderAt144Name || "";
-
-  const hasLeaderHierarchy = leaderAt1 || leaderAt12 || leaderAt144;
+  const levelsUsed = hierarchyLevels.length > 0 ? hierarchyLevels : DEFAULT_HIERARCHY;
+  const leaderMap = { ...(event.hierarchy_leaders || {}) };
+  levelsUsed.forEach((lv) => {
+    if (leaderMap[lv.key]) return;
+    const legacy =
+      event[lv.key] || event[lv.field] || (lv.label ? event[lv.label] : "") ||
+      event[`Leader @${lv.level}`] || event[`leaderAt${lv.level}`] ||
+      event[`leader_at_${lv.level}`] || event[`leaderAt${lv.level}Name`] || "";
+    if (legacy) leaderMap[lv.key] = legacy;
+  });
+  const hasLeaderHierarchy = levelsUsed.some((lv) => leaderMap[lv.key]);
 
   return Array.from(peopleMap.values()).map((person) => {
     // Base row — always present
@@ -1424,9 +1449,10 @@ const normalizeEventAttendance = (event) => {
 
     // Leader hierarchy columns — only if the event has them
     if (hasLeaderHierarchy) {
-      row["Leader @1"]   = leaderAt1;
-      row["Leader @12"]  = leaderAt12;
-      row["Leader @144"] = leaderAt144;
+      levelsUsed.forEach((lv) => {
+        const v = leaderMap[lv.key];
+        if (v) row[lv.label] = v;
+      });
     }
 
     // Ticketed-only columns
@@ -1548,8 +1574,9 @@ const normalizeEventAttendance = (event) => {
       const fullEvents = await fetchInBatches(eventsToExport, fetchEventFull, 6);
 
       const allRows = [];
+      const exportLevels = getLevelsWithLabels(orgConfig).length ? getLevelsWithLabels(orgConfig) : DEFAULT_HIERARCHY;
       for (const ev of fullEvents) {
-        const rows = normalizeEventAttendance(ev);
+        const rows = normalizeEventAttendance(ev, exportLevels);
         if (rows && rows.length > 0) {
           // For did_not_meet events, mark all rows as Did Not Meet
           if (status === "did_not_meet") {
@@ -1567,8 +1594,7 @@ const normalizeEventAttendance = (event) => {
             Name: "",
             Email: "",
             "Event Leader Name ": ev.eventLeaderName || ev.leaderName || ev.eventLeader || ev.leader || "",
-            "Leader @12": ev.leader12 || "",
-            "Leader @144": ev.leader144 || "",
+            ...Object.fromEntries(exportLevels.map((lv) => [lv.label, getLeaderValue(ev, lv.key) || (lv.label ? ev[lv.label] : "") || ev[`leaderAt${lv.level}`] || ev[`leader_at_${lv.level}`] || ""])),
             Phone: "",
             Decision: "",
             "Price Tier": "",
@@ -2416,20 +2442,22 @@ const getFilteredEventTypes = (allEventTypes) => {
 
     const newArray = allCurrentEvents.filter((event) => {
       let found = false;
-      [
-        "Event Name",
-        "eventName",
-        "EventName",
-        "Leader",
-        "eventLeaderName",
-        "EventLeaderName",
-        "Email",
-        "eventLeaderEmail",
-        "EventLeaderEmail",
-        "Leader at 12",
-        "Leader @12",
-        "leader12",
-      ].forEach((field) => {
+      const searchFields = [
+      "Event Name",
+      "eventName",
+      "EventName",
+      "Leader",
+      "eventLeaderName",
+      "EventLeaderName",
+      "Email",
+      "eventLeaderEmail",
+      "EventLeaderEmail",
+    ];
+      const searchLevels = getLevelsWithLabels(orgConfig).length ? getLevelsWithLabels(orgConfig) : DEFAULT_HIERARCHY;
+      searchLevels.forEach((lv) => {
+        searchFields.push(lv.label, lv.key, lv.field, `Leader @${lv.level}`, `leaderAt${lv.level}`, `leader_at_${lv.level}`);
+      });
+      searchFields.forEach((field) => {
         if (event[field] && typeof event[field] === "string") {
           found =
             found ||
@@ -5055,6 +5083,7 @@ const getTypeValue = (type) => {
                           !isSearching ? paginatedEvents : filteredEvents,
                           isOverdue,
                           selectedEventTypeFilter,
+                          getLevelsWithLabels(orgConfig),
                         ),
                         {
                           field: "actions",

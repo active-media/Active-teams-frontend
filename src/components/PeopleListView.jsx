@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Table,
@@ -33,14 +33,32 @@ import {
   ExpandLess as ExpandLessIcon
 } from '@mui/icons-material';
 
+import { useOrgConfig } from '../contexts/OrgConfigContext';
+import { getLeaderValue } from '../utils/hierarchy';
+
 const PeopleListView = ({ people, onEdit, onDelete }) => {
   const theme = useTheme();
+  const { orgConfig } = useOrgConfig();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [anchorEl, setAnchorEl] = useState(null);
   const [selectedPerson, setSelectedPerson] = useState(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [expandedRow, setExpandedRow] = useState(null);
+
+  const levels = useMemo(() => {
+    const h = Array.isArray(orgConfig?.hierarchy) ? orgConfig.hierarchy : [];
+    return [...h].sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
+  }, [orgConfig]);
+
+  const personLeaderEntries = (person) =>
+    levels
+      .map((lv) => ({
+        key: lv.key || "",
+        label: lv.label || lv.key || "",
+        value: getLeaderValue(person, lv.key || ""),
+      }))
+      .filter((e) => e.key && e.value);
 
   const handleMenuClick = (e, person) => {
     e.stopPropagation();
@@ -211,36 +229,18 @@ const PeopleListView = ({ people, onEdit, onDelete }) => {
                     )}
 
                     {/* Leaders */}
-                    {(person.leaders.leader1 || person.leaders.leader12 || person.leaders.leader144 || person.leaders.leader1728) && (
+                    {personLeaderEntries(person).length > 0 && (
                       <Box sx={{ mb: 1.5 }}>
                         <Typography variant="caption" fontWeight={600} color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
                           Leaders
                         </Typography>
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                          {person.leaders.leader1 && (
-                            <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          {personLeaderEntries(person).map(({ key, label, value }) => (
+                            <Typography variant="body2" key={key} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                               <GroupIcon sx={{ fontSize: 14 }} />
-                              @1: {person.leaders.leader1}
+                              {label}: {value}
                             </Typography>
-                          )}
-                          {person.leaders.leader12 && (
-                            <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <GroupIcon sx={{ fontSize: 14 }} />
-                              @12: {person.leaders.leader12}
-                            </Typography>
-                          )}
-                          {person.leaders.leader144 && (
-                            <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <GroupIcon sx={{ fontSize: 14 }} />
-                              @144: {person.leaders.leader144}
-                            </Typography>
-                          )}
-                          {person.leaders.leader1728 && (
-                            <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <GroupIcon sx={{ fontSize: 14 }} />
-                              @1728: {person.leaders.leader1728}
-                            </Typography>
-                          )}
+                          ))}
                         </Box>
                       </Box>
                     )}
@@ -380,26 +380,11 @@ const PeopleListView = ({ people, onEdit, onDelete }) => {
                   </TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-                      {person.leaders.leader1 && (
-                        <Typography variant="caption" noWrap>
-                          @1: {person.leaders.leader1}
+                      {personLeaderEntries(person).map(({ key, label, value }) => (
+                        <Typography variant="caption" noWrap key={key}>
+                          {label}: {value}
                         </Typography>
-                      )}
-                      {person.leaders.leader12 && (
-                        <Typography variant="caption" noWrap>
-                          @12: {person.leaders.leader12}
-                        </Typography>
-                      )}
-                      {person.leaders.leader144 && (
-                        <Typography variant="caption" noWrap>
-                          @144: {person.leaders.leader144}
-                        </Typography>
-                      )}
-                      {person.leaders.leader1728 && (
-                        <Typography variant="caption" noWrap>
-                          @1728: {person.leaders.leader1728}
-                        </Typography>
-                      )}
+                      ))}
                     </Box>
                   </TableCell>
                   <TableCell>

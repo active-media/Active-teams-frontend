@@ -20,6 +20,11 @@ import { CircularProgress, Box, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { AuthContext } from "../contexts/AuthContext";
 import { useOrgConfig } from "../contexts/OrgConfigContext";
+import {
+  getLevelsWithLabels,
+  getLeaderValue,
+  DEFAULT_HIERARCHY,
+} from "../utils/hierarchy";
 const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
 const GEOAPIFY_COUNTRY_CODE = (
   import.meta.env.VITE_GEOAPIFY_COUNTRY_CODE || "za"
@@ -32,6 +37,50 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
   const isDarkMode = theme.palette.mode === "dark";
   console.log("AddPersonToEvents - isDarkMode:", isDarkMode);
   const { authFetch } = useContext(AuthContext);
+
+  const { orgConfig } = useOrgConfig();
+  const levelsUsed = useMemo(() => {
+    const levels = getLevelsWithLabels(orgConfig);
+    return levels.length ? levels : DEFAULT_HIERARCHY;
+  }, [orgConfig]);
+  const buildEmptyLeaders = useCallback(() => {
+    const out = {};
+    levelsUsed.forEach((lv) => {
+      out[lv.key] = "";
+    });
+    return out;
+  }, [levelsUsed]);
+  const extractLeaders = useCallback(
+    (p) => {
+      const out = {};
+      levelsUsed.forEach((lv, li) => {
+        out[lv.key] =
+          getLeaderValue(p, lv.key) ||
+          (p.leaders && Array.isArray(p.leaders)
+            ? p.leaders.find(
+                (l) =>
+                  String(l.level ?? l.Level ?? l.leader_level ?? l.leaderLevel) ===
+                    String(lv.level) || l.key === lv.key,
+              )?.name
+            : "") ||
+          (p.leaders && !Array.isArray(p.leaders) ? p.leaders[lv.key] : "") ||
+          p[`leader${lv.level}`] ||
+          (lv.label ? p[lv.label] : "") ||
+          p[`Leader @${lv.level}`] ||
+          p[`Leader at ${lv.level}`] ||
+          p[`Leader @ ${lv.level}`] ||
+          (p.leaders && Array.isArray(p.leaders) ? p.leaders[li] : "") ||
+          "";
+      });
+      return out;
+    },
+    [levelsUsed],
+  );
+  const lvVal = (person, lv) =>
+    getLeaderValue(person, lv.key) ||
+    (lv.label ? person?.[lv.label] : "") ||
+    person?.[`Leader @${lv.level}`] ||
+    "";
 
   const [formData, setFormData] = useState({
     invitedBy: "",
@@ -51,11 +100,7 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
   const [showLeaderModal, setShowLeaderModal] = useState(false);
   const [, setTouched] = useState({});
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
-  const [autoFilledLeaders, setAutoFilledLeaders] = useState({
-    leader1: "",
-    leader12: "",
-    leader144: "",
-  });
+  const [autoFilledLeaders, setAutoFilledLeaders] = useState(buildEmptyLeaders);
   const [addressOptions, setAddressOptions] = useState([]);
   const [addressLoading, setAddressLoading] = useState(false);
   const [addressError, setAddressError] = useState("");
@@ -182,15 +227,13 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
     const mapPerson = (raw) => {
       const name = (raw.Name || raw.name || "").toString().trim();
       const surname = (raw.Surname || raw.surname || "").toString().trim();
+      const leaders = extractLeaders(raw);
       return {
         id: (raw._id || raw.id || "").toString(),
         fullName: `${name} ${surname}`.trim(),
         email: (raw.Email || raw.email || "").toString().trim(),
         phone: (raw.Number || raw.Phone || raw.phone || "").toString().trim(),
-        leader1: raw["Leader @1"] || raw.leader1 || "",
-        leader12: raw["Leader @12"] || raw.leader12 || "",
-        leader144: raw["Leader @144"] || raw.leader144 || "",
-        leader1728: raw["Leader @1728"] || raw.leader1728 || "",
+        ...leaders,
         fullNameLower: `${name} ${surname}`.toLowerCase().trim(),
         searchText:
           `${name} ${surname} ${raw.Email || raw.email || ""} ${raw.Number || raw.Phone || raw.phone || ""}`.toLowerCase(),
@@ -238,7 +281,7 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
         setIsLoadingPeople(false);
       }
     })();
-  }, [isOpen]);
+  }, [isOpen, levelsUsed, extractLeaders]);
 
   const peopleOptions = useMemo(() => peopleList, [peopleList]);
 
@@ -259,11 +302,7 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
     setTouched((prev) => ({ ...prev, invitedBy: true }));
 
     // Leader fields must be set manually — no auto-fill
-    setAutoFilledLeaders({
-      leader1: "",
-      leader12: "",
-      leader144: "",
-    });
+    setAutoFilledLeaders(buildEmptyLeaders());
   };
 
   const handleInviterInputChange = (value) => {
@@ -273,11 +312,7 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
 
     if (value.trim() === "") {
       setFormData((prev) => ({ ...prev, invitedBy: "" }));
-      setAutoFilledLeaders({
-        leader1: "",
-        leader12: "",
-        leader144: "",
-      });
+      setAutoFilledLeaders(buildEmptyLeaders());
     }
   };
 
@@ -310,12 +345,9 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
         number: formData.mobile,
         dob: formData.dob,
         address: formData.address,
-        leaders: [
-          finalLeaderInfo.leader1 || "",
-          finalLeaderInfo.leader12 || "",
-          finalLeaderInfo.leader144 || "",
-          finalLeaderInfo.leader1728 || "",
-        ].filter((leader) => leader.trim() !== ""),
+        leaders: levelsUsed
+          .map((lv) => finalLeaderInfo[lv.key] || "")
+          .filter((leader) => leader.trim() !== ""),
         stage: "Win",
       };
 
@@ -412,11 +444,7 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
     setShowLeaderModal(false);
     setAttemptedSubmit(false);
     setTouched({});
-    setAutoFilledLeaders({
-      leader1: "",
-      leader12: "",
-      leader144: "",
-    });
+    setAutoFilledLeaders(buildEmptyLeaders());
     onClose();
   };
 
@@ -679,10 +707,15 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
                           }}
                         >
                           {person.email || person.phone || "No contact info"}
-                          {person.leader1 && (
-                            <div style={{ marginTop: "2px", fontSize: "11px" }}>
-                              L@1: {person.leader1}
-                            </div>
+                          {levelsUsed.map((lv) =>
+                            lvVal(person, lv) ? (
+                              <div
+                                key={lv.key}
+                                style={{ marginTop: "2px", fontSize: "11px" }}
+                              >
+                                {lv.label}: {lvVal(person, lv)}
+                              </div>
+                            ) : null,
                           )}
                         </div>
                       </div>
@@ -990,50 +1023,80 @@ const LeaderSelectionModal = ({
   const isDarkMode = theme.palette.mode === "dark";
   const { authFetch } = useContext(AuthContext);
 
-  const [leaderData, setLeaderData] = useState({
-    leader1: "",
-    leader12: "",
-    leader144: "",
-  });
+  const { orgConfig } = useOrgConfig();
+  const levelsUsed = useMemo(() => {
+    const levels = getLevelsWithLabels(orgConfig);
+    return levels.length ? levels : DEFAULT_HIERARCHY;
+  }, [orgConfig]);
+  const buildEmptyLeaders = useCallback(() => {
+    const out = {};
+    levelsUsed.forEach((lv) => {
+      out[lv.key] = "";
+    });
+    return out;
+  }, [levelsUsed]);
+  const buildEmptyLeaderLists = useCallback(() => {
+    const out = {};
+    levelsUsed.forEach((lv) => {
+      out[lv.key] = [];
+    });
+    return out;
+  }, [levelsUsed]);
+  const buildEmptyLeaderBools = useCallback(() => {
+    const out = {};
+    levelsUsed.forEach((lv) => {
+      out[lv.key] = false;
+    });
+    return out;
+  }, [levelsUsed]);
+  const extractLeaders = useCallback(
+    (p) => {
+      const out = {};
+      levelsUsed.forEach((lv, li) => {
+        out[lv.key] =
+          getLeaderValue(p, lv.key) ||
+          (p.leaders && Array.isArray(p.leaders)
+            ? p.leaders.find(
+                (l) =>
+                  String(l.level ?? l.Level ?? l.leader_level ?? l.leaderLevel) ===
+                    String(lv.level) || l.key === lv.key,
+              )?.name
+            : "") ||
+          (p.leaders && !Array.isArray(p.leaders) ? p.leaders[lv.key] : "") ||
+          p[`leader${lv.level}`] ||
+          (lv.label ? p[lv.label] : "") ||
+          p[`Leader @${lv.level}`] ||
+          p[`Leader at ${lv.level}`] ||
+          p[`Leader @ ${lv.level}`] ||
+          (p.leaders && Array.isArray(p.leaders) ? p.leaders[li] : "") ||
+          "";
+      });
+      return out;
+    },
+    [levelsUsed],
+  );
 
-  const [leaderSearches, setLeaderSearches] = useState({
-    leader1: "",
-    leader12: "",
-    leader144: "",
-  });
+  const [leaderData, setLeaderData] = useState(buildEmptyLeaders);
 
-  const [, setLeaderResults] = useState({
-    leader1: [],
-    leader12: [],
-    leader144: [],
-  });
+  const [leaderSearches, setLeaderSearches] = useState(buildEmptyLeaders);
 
-  const [showDropdowns, setShowDropdowns] = useState({
-    leader1: false,
-    leader12: false,
-    leader144: false,
-  });
+  const [, setLeaderResults] = useState(buildEmptyLeaderLists);
+
+  const [showDropdowns, setShowDropdowns] = useState(buildEmptyLeaderBools);
 
   const [, setLoadingLeaders] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
 
-  useEffect(() => {
+useEffect(() => {
     if (isOpen) {
       // Always start with empty leader fields — no auto-fill
-      setLeaderData({
-        leader1: "",
-        leader12: "",
-        leader144: "",
-      });
-      setLeaderSearches({
-        leader1: "",
-        leader12: "",
-        leader144: "",
-      });
+      setLeaderData(buildEmptyLeaders());
+
+      setLeaderSearches(buildEmptyLeaders());
     }
-  }, [isOpen]);
+  }, [isOpen, levelsUsed, buildEmptyLeaders]);
 
   const fetchLeaders = async (searchTerm, leaderField) => {
     if (!searchTerm || searchTerm.length < 1) {
@@ -1072,45 +1135,14 @@ const LeaderSelectionModal = ({
           : data.results || data.people || [];
 
         const formatted = peopleArray.map((p) => {
-          const leader1 =
-            p["Leader @1"] ||
-            p["Leader at 1"] ||
-            p["Leader @ 1"] ||
-            p.leader1 ||
-            (p.leaders && p.leaders[0]) ||
-            "";
-          const leader12 =
-            p["Leader @12"] ||
-            p["Leader at 12"] ||
-            p["Leader @ 12"] ||
-            p.leader12 ||
-            (p.leaders && p.leaders[1]) ||
-            "";
-          const leader144 =
-            p["Leader @144"] ||
-            p["Leader at 144"] ||
-            p["Leader @ 144"] ||
-            p.leader144 ||
-            (p.leaders && p.leaders[2]) ||
-            "";
-          const leader1728 =
-            p["Leader @1728"] ||
-            p["Leader @ 1728"] ||
-            p["Leader at 1728"] ||
-            p["Leader @ 1728"] ||
-            p.leader1728 ||
-            (p.leaders && p.leaders[3]) ||
-            "";
+          const leaders = extractLeaders(p);
 
           return {
             id: p._id,
             fullName:
               `${p.Name || p.name || ""} ${p.Surname || p.surname || ""}`.trim(),
             email: p.Email || p.email || "",
-            leader1: leader1,
-            leader12: leader12,
-            leader144: leader144,
-            leader1728: leader1728,
+            ...leaders,
           };
         });
 
@@ -1126,7 +1158,8 @@ const LeaderSelectionModal = ({
   useEffect(() => {
     const delays = {};
 
-    ["leader1", "leader12", "leader144"].forEach((field) => {
+    levelsUsed.forEach((lv) => {
+      const field = lv.key;
       const searchTerm = leaderSearches[field];
       if (searchTerm.length >= 1) {
         delays[field] = setTimeout(() => {
@@ -1140,7 +1173,7 @@ const LeaderSelectionModal = ({
     return () => {
       Object.values(delays).forEach(clearTimeout);
     };
-  }, [leaderSearches, preloadedPeople]);
+  }, [leaderSearches, preloadedPeople, levelsUsed]);
 
   const handleLeaderSelect = (person, field) => {
     setLeaderData((prev) => ({ ...prev, [field]: person.fullName }));
@@ -1151,12 +1184,10 @@ const LeaderSelectionModal = ({
 
   const handleSubmitLeaders = async () => {
     setIsSubmitting(true);
-    const finalLeaderInfo = {
-      leader1: leaderData.leader1 || "",
-      leader12: leaderData.leader12 || "",
-      leader144: leaderData.leader144 || "",
-      leader1728: "",
-    };
+    const finalLeaderInfo = buildEmptyLeaders();
+    levelsUsed.forEach((lv) => {
+      finalLeaderInfo[lv.key] = leaderData[lv.key] || "";
+    });
     try {
       await onSubmit(finalLeaderInfo);
     } finally {
@@ -1164,11 +1195,10 @@ const LeaderSelectionModal = ({
     }
   };
 
-  const leaderLabels = {
-    leader1: "Leader @1",
-    leader12: "Leader @12",
-    leader144: "Leader @144",
-  };
+  const leaderLabels = {};
+  levelsUsed.forEach((lv) => {
+    leaderLabels[lv.key] = lv.label;
+  });
 
   const styles = {
     overlay: {
@@ -1321,76 +1351,79 @@ const LeaderSelectionModal = ({
         <h2 style={styles.title}>Set Leadership</h2>
 
         <div style={styles.leaderGroup}>
-          {["leader1", "leader12", "leader144"].map((field) => (
-            <div key={field} style={styles.inputGroup}>
-              <label style={styles.label}>{leaderLabels[field]}</label>
+          {levelsUsed.map((lv) => {
+            const field = lv.key;
+            return (
+              <div key={field} style={styles.inputGroup}>
+                <label style={styles.label}>{leaderLabels[field]}</label>
 
-              <div style={styles.inputContainer}>
-                <input
-                  value={leaderSearches[field]}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setLeaderSearches((prev) => ({ ...prev, [field]: val }));
-                    setLeaderData((prev) => ({ ...prev, [field]: val }));
-                  }}
-                  onFocus={() =>
-                    setShowDropdowns((prev) => ({ ...prev, [field]: true }))
-                  }
-                  onBlur={() =>
-                    setTimeout(
-                      () =>
-                        setShowDropdowns((prev) => ({
-                          ...prev,
-                          [field]: false,
-                        })),
-                      200,
-                    )
-                  }
-                  style={styles.input}
-                  placeholder={`Type to search...`}
-                  autoComplete="off"
-                />
-                {leaderSearches[field] && (
-                  <button
-                    style={styles.clearButton}
-                    onClick={() => {
-                      setLeaderSearches((prev) => ({ ...prev, [field]: "" }));
-                      setLeaderData((prev) => ({ ...prev, [field]: "" }));
+                <div style={styles.inputContainer}>
+                  <input
+                    value={leaderSearches[field]}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setLeaderSearches((prev) => ({ ...prev, [field]: val }));
+                      setLeaderData((prev) => ({ ...prev, [field]: val }));
                     }}
-                  >
-                    ×
-                  </button>
-                )}
+                    onFocus={() =>
+                      setShowDropdowns((prev) => ({ ...prev, [field]: true }))
+                    }
+                    onBlur={() =>
+                      setTimeout(
+                        () =>
+                          setShowDropdowns((prev) => ({
+                            ...prev,
+                            [field]: false,
+                          })),
+                        200,
+                      )
+                    }
+                    style={styles.input}
+                    placeholder={`Type to search...`}
+                    autoComplete="off"
+                  />
+                  {leaderSearches[field] && (
+                    <button
+                      style={styles.clearButton}
+                      onClick={() => {
+                        setLeaderSearches((prev) => ({ ...prev, [field]: "" }));
+                        setLeaderData((prev) => ({ ...prev, [field]: "" }));
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                {showDropdowns[field] &&
+                  leaderSearches[field].length >= 1 &&
+                  (() => {
+                    const term = leaderSearches[field].toLowerCase();
+                    const filtered = preloadedPeople
+                      .filter((p) =>
+                        (
+                          p.searchText ||
+                          p.fullName?.toLowerCase() ||
+                          ""
+                        ).includes(term),
+                      )
+                      .slice(0, 15);
+                    return filtered.length > 0 ? (
+                      <div style={styles.dropdown}>
+                        {filtered.map((person) => (
+                          <div
+                            key={person.id}
+                            style={styles.dropdownItem}
+                            onMouseDown={() => handleLeaderSelect(person, field)}
+                          >
+                            {person.fullName}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
               </div>
-              {showDropdowns[field] &&
-                leaderSearches[field].length >= 1 &&
-                (() => {
-                  const term = leaderSearches[field].toLowerCase();
-                  const filtered = preloadedPeople
-                    .filter((p) =>
-                      (
-                        p.searchText ||
-                        p.fullName?.toLowerCase() ||
-                        ""
-                      ).includes(term),
-                    )
-                    .slice(0, 15);
-                  return filtered.length > 0 ? (
-                    <div style={styles.dropdown}>
-                      {filtered.map((person) => (
-                        <div
-                          key={person.id}
-                          style={styles.dropdownItem}
-                          onMouseDown={() => handleLeaderSelect(person, field)}
-                        >
-                          {person.fullName}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null;
-                })()}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <div style={styles.buttonGroup}>
@@ -1436,7 +1469,49 @@ const AttendanceModal = ({
   isActiveTeams,
 }) => {
   const { authFetch } = useContext(AuthContext);
-  const { getHierarchyLabel } = useOrgConfig();
+  const { orgConfig, getHierarchyLabel } = useOrgConfig();
+  const levelsUsed = useMemo(() => {
+    const levels = getLevelsWithLabels(orgConfig);
+    return levels.length ? levels : DEFAULT_HIERARCHY;
+  }, [orgConfig]);
+  const lvVal = (person, lv) =>
+    getLeaderValue(person, lv.key) ||
+    (lv.label ? person?.[lv.label] : "") ||
+    person?.[`Leader @${lv.level}`] ||
+    "";
+  const extractLeaders = useCallback(
+    (p) => {
+      const out = {};
+      levelsUsed.forEach((lv, li) => {
+        out[lv.key] =
+          getLeaderValue(p, lv.key) ||
+          (p.leaders && Array.isArray(p.leaders)
+            ? p.leaders.find(
+                (l) =>
+                  String(l.level ?? l.Level ?? l.leader_level ?? l.leaderLevel) ===
+                    String(lv.level) || l.key === lv.key,
+              )?.name
+            : "") ||
+          (p.leaders && !Array.isArray(p.leaders) ? p.leaders[lv.key] : "") ||
+          p[`leader${lv.level}`] ||
+          (lv.label ? p[lv.label] : "") ||
+          p[`Leader @${lv.level}`] ||
+          p[`Leader at ${lv.level}`] ||
+          p[`Leader @ ${lv.level}`] ||
+          (p.leaders && Array.isArray(p.leaders) ? p.leaders[li] : "") ||
+          "";
+      });
+      return out;
+    },
+    [levelsUsed],
+  );
+  const buildLeaderExportColumns = (person, empty = false) => {
+    const out = {};
+    levelsUsed.forEach((lv) => {
+      out[lv.label] = empty ? "" : lvVal(person, lv) || "N/A";
+    });
+    return out;
+  };
   const [searchName, setSearchName] = useState("");
   const [activeTab, setActiveTab] = useState(0);
   const [checkedIn, setCheckedIn] = useState({});
@@ -1496,15 +1571,13 @@ const AttendanceModal = ({
   });
 
   // ─── NEW: Helper to resolve which leader gets the consolidation task ───
-  // Uses leader144 if available, falls back to leader12
+  // Uses the deepest leader available (reverse of ascending hierarchy)
   const resolveAssignedTo = (person) => {
-    const leader144 = person.leader144?.trim() || "";
-    const leader12 = person.leader12?.trim() || "";
-    if (leader144 && leader144 !== leader12) {
-      return leader144;
-    }
-    if (leader12) {
-      return leader12;
+    for (const lv of [...levelsUsed].reverse()) {
+      const name = lvVal(person, lv).trim();
+      if (name) {
+        return name;
+      }
     }
     return null;
   };
@@ -1559,12 +1632,14 @@ const AttendanceModal = ({
 
     // Also consider flat leader fields if the structured array is empty
     if (leaders.length === 0) {
-      if (person.leader144 && person.leader144.trim())
-        leaders.push({ level: 144, name: person.leader144.trim() });
-      if (person.leader12 && person.leader12.trim())
-        leaders.push({ level: 12, name: person.leader12.trim() });
-      if (person.leader1 && person.leader1.trim())
-        leaders.push({ level: 1, name: person.leader1.trim() });
+      [...levelsUsed]
+        .sort((a, b) => b.level - a.level)
+        .forEach((lv) => {
+          const name = lvVal(person, lv).trim();
+          if (name) {
+            leaders.push({ level: lv.level, name });
+          }
+        });
     }
 
     if (leaders.length === 0) {
@@ -1583,6 +1658,22 @@ const AttendanceModal = ({
   // Mirrors the ServiceCheckIn resolveLeaderEmail helper
   const resolveLeaderEmail = (leaderName, person) => {
     if (!leaderName || !person) return "";
+
+    for (const lv of levelsUsed) {
+      if (
+        (lvVal(person, lv) || "").trim().toLowerCase() ===
+        leaderName.trim().toLowerCase()
+      ) {
+        const flatEmail =
+          person[`${lv.key}Email`] ||
+          person[`${lv.key}_email`] ||
+          person[`${lv.key}email`] ||
+          "";
+        if (flatEmail) {
+          return flatEmail.trim().toLowerCase();
+        }
+      }
+    }
 
     if (Array.isArray(person.leaders)) {
       const found = person.leaders.find(
@@ -1694,9 +1785,9 @@ const AttendanceModal = ({
       assigned_to_email: "",
       event_id: eventId || "",
       source: "cell_consolidation",
-      leaders: [person.leader12, person.leader144].filter(
-        (l) => l && l.trim() !== "",
-      ),
+      leaders: levelsUsed
+        .map((lv) => lvVal(person, lv))
+        .filter((l) => l && l.trim() !== ""),
       notes: "",
     };
 
@@ -1764,8 +1855,7 @@ const AttendanceModal = ({
       email: person.email || "",
       phone: person.phone || "",
       number: person.phone || "",
-      leader12: person.leader12 || "",
-      leader144: person.leader144 || "",
+      ...extractLeaders(person),
     };
 
     if (isCheckedIn) {
@@ -2254,23 +2344,18 @@ const AttendanceModal = ({
       const formatted = peopleArray.map((person) => {
         const fullName = `${person.Name || ""} ${person.Surname || ""}`.trim();
 
-        const leader1 = person["Leader @1"] || person.leader1 || "";
-        const leader12 = person["Leader @12"] || person.leader12 || "";
-        const leader144 = person["Leader @144"] || person.leader144 || "";
-        const leader1728 = person["Leader @1728"] || person.leader1728 || "";
+        const leaders = extractLeaders(person);
+        const leaderArray = levelsUsed.map((lv) => leaders[lv.key]);
 
         return {
           id: person._id,
           fullName: fullName,
           email: person.Email || "",
-          leader1: leader1,
-          leader12: leader12,
-          leader144: leader144,
-          leader1728: leader1728,
+          ...leaders,
           phone: person.Number || person.Phone || "",
           invitedBy: person.InvitedBy || "",
           searchText:
-            `${person.Name || ""} ${person.Surname || ""} ${person.Email || ""} ${leader1} ${leader12} ${leader144} ${leader1728}`.toLowerCase(),
+            `${person.Name || ""} ${person.Surname || ""} ${person.Email || ""} ${leaderArray.join(" ")}`.toLowerCase(),
         };
       });
 
@@ -2385,43 +2470,18 @@ const AttendanceModal = ({
         .then((data) => {
           const arr = data.results || data.people || [];
           const formatted = arr.map((p) => {
-            const leader1 =
-              p["Leader @1"] ||
-              p["Leader at 1"] ||
-              p["Leader @ 1"] ||
-              p.leader1 ||
-              "";
-            const leader12 =
-              p["Leader @12"] ||
-              p["Leader at 12"] ||
-              p["Leader @ 12"] ||
-              p.leader12 ||
-              "";
-            const leader144 =
-              p["Leader @144"] ||
-              p["Leader at 144"] ||
-              p["Leader @ 144"] ||
-              p.leader144 ||
-              "";
-            const leader1728 =
-              p["Leader @1728"] ||
-              p["Leader at 1728"] ||
-              p["Leader @ 1728"] ||
-              p.leader1728 ||
-              "";
+            const leaders = extractLeaders(p);
+            const leaderArray = levelsUsed.map((lv) => leaders[lv.key]);
 
             return {
               id: p._id,
               fullName: `${p.Name || ""} ${p.Surname || ""}`.trim(),
               email: p.Email || "",
-              leader1: leader1,
-              leader12: leader12,
-              leader144: leader144,
-              leader1728: leader1728,
+              ...leaders,
               phone: p.Number || p.Phone || "",
               invitedBy: p.InvitedBy || "",
               searchText:
-                `${p.Name || ""} ${p.Surname || ""} ${p.Email || ""} ${leader1} ${leader12} ${leader144} ${leader1728}`.toLowerCase(),
+                `${p.Name || ""} ${p.Surname || ""} ${p.Email || ""} ${leaderArray.join(" ")}`.toLowerCase(),
             };
           });
           setPeople(formatted);
@@ -2429,7 +2489,7 @@ const AttendanceModal = ({
         .catch(() => setPeople([]))
         .finally(() => setIsSearching(false));
     },
-    [preloadedPeople, authFetch, BACKEND_URL],
+    [preloadedPeople, authFetch, BACKEND_URL, levelsUsed, extractLeaders],
   );
 
   useEffect(() => {
@@ -2519,24 +2579,18 @@ const AttendanceModal = ({
             const formatted = peopleArray.map((person) => {
               const fullName =
                 `${person.Name || ""} ${person.Surname || ""}`.trim();
-              const leader1 = person["Leader @1"] || person.leader1 || "";
-              const leader12 = person["Leader @12"] || person.leader12 || "";
-              const leader144 = person["Leader @144"] || person.leader144 || "";
-              const leader1728 =
-                person["Leader @1728"] || person.leader1728 || "";
+              const leaders = extractLeaders(person);
+              const leaderArray = levelsUsed.map((lv) => leaders[lv.key]);
 
               return {
                 id: person._id,
                 fullName: fullName,
                 email: person.Email || "",
-                leader1: leader1,
-                leader12: leader12,
-                leader144: leader144,
-                leader1728: leader1728,
+                ...leaders,
                 phone: person.Number || person.Phone || "",
                 invitedBy: person.InvitedBy || "",
                 searchText:
-                  `${person.Name || ""} ${person.Surname || ""} ${person.Email || ""}`.toLowerCase(),
+                  `${person.Name || ""} ${person.Surname || ""} ${person.Email || ""} ${leaderArray.join(" ")}`.toLowerCase(),
               };
             });
 
@@ -2557,7 +2611,7 @@ const AttendanceModal = ({
 
       loadPeople();
     }
-  }, [isOpen, authFetch, BACKEND_URL]);
+  }, [isOpen, authFetch, BACKEND_URL, levelsUsed, extractLeaders]);
 
   useEffect(() => {
     if (activeTab !== 1) return;
@@ -2739,8 +2793,7 @@ const AttendanceModal = ({
       id: person.id,
       fullName: person.fullName,
       email: person.email,
-      leader12: person.leader12 || "",
-      leader144: person.leader144 || "",
+      ...extractLeaders(person),
       phone: person.phone || "",
       invitedBy: person.invitedBy || "",
       uniqueKey: `${person.id}_${Date.now()}`,
@@ -2848,8 +2901,7 @@ const AttendanceModal = ({
             id: attendeeId,
             fullName: att.fullName || att.name || "Unknown Person",
             email: att.email || "",
-            leader12: att.leader12 || "",
-            leader144: att.leader144 || "",
+            ...extractLeaders(att),
             phone: att.phone || "",
             invitedBy: att.invitedBy || "",
             priceName: att.priceName || "",
@@ -2871,8 +2923,7 @@ const AttendanceModal = ({
             id: attendeeId,
             fullName: savedAtt.fullName || savedAtt.name || "Unknown Person",
             email: savedAtt.email || "",
-            leader12: savedAtt.leader12 || "",
-            leader144: savedAtt.leader144 || "",
+            ...extractLeaders(savedAtt),
             phone: savedAtt.phone || "",
             priceName: savedAtt.priceName || "",
             price: savedAtt.price || 0,
@@ -2957,8 +3008,7 @@ const AttendanceModal = ({
             name: person.fullName || "",
             email: person.email || "",
             fullName: person.fullName || "",
-            leader12: person.leader12 || "",
-            leader144: person.leader144 || "",
+            ...extractLeaders(person),
             phone: person.phone || "",
             time: new Date().toISOString(),
             decision: decisions[id] ? decisionTypes[id] || "" : "",
@@ -3014,8 +3064,7 @@ const AttendanceModal = ({
             name: p.fullName,
             fullName: p.fullName,
             email: p.email,
-            leader12: p.leader12,
-            leader144: p.leader144,
+            ...extractLeaders(p),
             phone: p.phone,
             invitedBy: p.invitedBy || "",
             ...(isTicketedEvent && {
@@ -3198,8 +3247,7 @@ const AttendanceModal = ({
             "Event Date": event?.date || "N/A",
             Name: person.fullName || "N/A",
             Email: person.email || "N/A",
-            "Leader @12": person.leader12 || "N/A",
-            "Leader @144": person.leader144 || "N/A",
+            ...buildLeaderExportColumns(person),
             Phone: person.phone || "N/A",
             Decision: decisionTypes[id] || "N/A",
             Status: didNotMeet ? "Did Not Meet" : "Complete",
@@ -3230,8 +3278,7 @@ const AttendanceModal = ({
               "Event Date": event?.date || "N/A",
               Name: "No attendees - Event Did Not Meet",
               Email: "",
-              "Leader @12": "",
-              "Leader @144": "",
+              ...buildLeaderExportColumns(null, true),
               Phone: "",
               Decision: "",
               Status: "Did Not Meet",
@@ -3353,8 +3400,7 @@ const AttendanceModal = ({
             id: p.id,
             fullName: p.fullName,
             email: p.email || "",
-            leader12: p.leader12 || "",
-            leader144: p.leader144 || "",
+            ...extractLeaders(p),
             phone: p.phone || "",
             ...(isTicketedEvent && {
               priceName: ticketOverride.priceName || p.priceName || "",
@@ -3447,9 +3493,7 @@ const AttendanceModal = ({
       email: newPerson.Email || newPerson.email || "",
       phone: newPerson.Number || newPerson.phone || "",
       // Correct field mapping from POST /people response
-      leader12: newPerson["Leader @12"] || newPerson.leader12 || "",
-      leader144: newPerson["Leader @144"] || newPerson.leader144 || "",
-      leader1: newPerson["Leader @1"] || newPerson.leader1 || "",
+      ...extractLeaders(newPerson),
       // Pass through the leaders array if returned, for resolveLeaderEmail
       leaders: newPerson.leaders || [],
       // Pass through raw fields for createCellConsolidationTaskForLeader
@@ -3562,14 +3606,17 @@ const AttendanceModal = ({
             <div style={styles.mobileCardEmail}>{person.email}</div>
             {!isTicketedEvent && (
               <>
-                <div
-                  style={{
-                    fontSize: "12px",
-                    color: theme.palette.text.secondary,
-                  }}
-                >
-                  Leader @12: {person.leader12}
-                </div>
+                {levelsUsed.map((lv) => (
+                  <div
+                    key={lv.key}
+                    style={{
+                      fontSize: "12px",
+                      color: theme.palette.text.secondary,
+                    }}
+                  >
+                    {lv.label}: {lvVal(person, lv)}
+                  </div>
+                ))}
                 <div
                   style={{
                     fontSize: "12px",
@@ -4281,14 +4328,11 @@ const AttendanceModal = ({
                           <th style={styles.th}>Attendees Surname</th>
                           <th style={styles.th}>Attendees Email</th>
                           {isActiveTeams ? (
-                            <>
-                              <th style={styles.th}>
-                                Attendees {getHierarchyLabel(2)}
+                            levelsUsed.map((lv) => (
+                              <th key={lv.key} style={styles.th}>
+                                Attendees {getHierarchyLabel(lv.level)}
                               </th>
-                              <th style={styles.th}>
-                                Attendees {getHierarchyLabel(3)}
-                              </th>
-                            </>
+                            ))
                           ) : (
                             <th style={styles.th}>Attendees Invited By</th>
                           )}
@@ -4359,14 +4403,11 @@ const AttendanceModal = ({
                                 {person.email || "No email"}
                               </td>
                               {isActiveTeams ? (
-                                <>
-                                  <td style={styles.td}>
-                                    {person.leader12 || ""}
+                                levelsUsed.map((lv) => (
+                                  <td key={lv.key} style={styles.td}>
+                                    {lvVal(person, lv) || ""}
                                   </td>
-                                  <td style={styles.td}>
-                                    {person.leader144 || ""}
-                                  </td>
-                                </>
+                                ))
                               ) : (
                                 <td style={styles.td}>
                                   {person.invitedBy || ""}
@@ -4795,26 +4836,18 @@ const AttendanceModal = ({
                                   {person.email}
                                 </div>
                                 {isActiveTeams ? (
-                                  <>
+                                  levelsUsed.map((lv) => (
                                     <div
+                                      key={lv.key}
                                       style={{
                                         fontSize: "12px",
                                         color: theme.palette.text.secondary,
                                       }}
                                     >
-                                      {getHierarchyLabel(2)}:{" "}
-                                      {person.leader12 || "—"}
+                                      {getHierarchyLabel(lv.level)}:{" "}
+                                      {lvVal(person, lv) || "—"}
                                     </div>
-                                    <div
-                                      style={{
-                                        fontSize: "12px",
-                                        color: theme.palette.text.secondary,
-                                      }}
-                                    >
-                                      {getHierarchyLabel(3)}:{" "}
-                                      {person.leader144 || "—"}
-                                    </div>
-                                  </>
+                                  ))
                                 ) : (
                                   <div
                                     style={{
@@ -4868,14 +4901,11 @@ const AttendanceModal = ({
                           <th style={styles.th}>Surname</th>
                           <th style={styles.th}>Email</th>
                           {isActiveTeams ? (
-                            <>
-                              <th style={styles.th}>
-                                {getHierarchyLabel(2) || "Leader @12"}
+                            levelsUsed.map((lv) => (
+                              <th key={lv.key} style={styles.th}>
+                                {getHierarchyLabel(lv.level) || lv.label}
                               </th>
-                              <th style={styles.th}>
-                                {getHierarchyLabel(3) || "Leader @144"}
-                              </th>
-                            </>
+                            ))
                           ) : (
                             <th style={styles.th}>Invited By</th>
                           )}
@@ -4890,7 +4920,7 @@ const AttendanceModal = ({
                         (isLoadingPeople && people.length === 0) ? (
                           <tr>
                             <td
-                              colSpan="7"
+                              colSpan={5 + levelsUsed.length}
                               style={{ ...styles.td, textAlign: "center" }}
                             >
                               <Box
@@ -4917,7 +4947,7 @@ const AttendanceModal = ({
                         ) : people.length === 0 ? (
                           <tr>
                             <td
-                              colSpan="7"
+                              colSpan={5 + levelsUsed.length}
                               style={{
                                 ...styles.td,
                                 textAlign: "center",
@@ -4945,14 +4975,11 @@ const AttendanceModal = ({
                                 <td style={styles.td}>{lastName || "—"}</td>
                                 <td style={styles.td}>{person.email || "—"}</td>
                                 {isActiveTeams ? (
-                                  <>
-                                    <td style={styles.td}>
-                                      {person.leader12 || "—"}
+                                  levelsUsed.map((lv) => (
+                                    <td key={lv.key} style={styles.td}>
+                                      {lvVal(person, lv) || "—"}
                                     </td>
-                                    <td style={styles.td}>
-                                      {person.leader144 || "—"}
-                                    </td>
-                                  </>
+                                  ))
                                 ) : (
                                   <td style={styles.td}>
                                     {person.invitedBy || "—"}

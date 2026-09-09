@@ -16,6 +16,8 @@ import dayjs from "dayjs";
 import Autocomplete from "@mui/material/Autocomplete";
 import { debounce } from "lodash";
 import { AuthContext } from "../contexts/AuthContext";
+import { useOrgConfig } from "../contexts/OrgConfigContext";
+import { getLevelsWithLabels, getLeaderValue, DEFAULT_HIERARCHY } from "../utils/hierarchy";
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 const cleanEventId = (id) => id?.split("_")[0] ?? id;
@@ -26,7 +28,7 @@ function normalizeLeaderValue(value) {
   return String(value).trim();
 }
 
-function resolveLeadersFromPerson(person) {
+function resolveLeadersFromPerson(person, levels) {
   if (!person) return {};
 
   const leaderEntries = [];
@@ -38,23 +40,29 @@ function resolveLeadersFromPerson(person) {
         leader?.name || leader?.full_name || leader?.leader_name || leader?.leaderName,
       );
       if (level != null && name) {
-        leaderEntries.push({ level: Number(level), name, email: normalizeLeaderValue(leader?.email || leader?.Email || leader?.leader_email || leader?.leaderEmail || leader?.mail) });
+        leaderEntries.push({ key: `leader${level}`, level: Number(level), name, email: normalizeLeaderValue(leader?.email || leader?.Email || leader?.leader_email || leader?.leaderEmail || leader?.mail) });
       }
     }
   }
 
-  const directFields = [
-    { level: 1, keys: ["leader1", "leaderAt1", "leader_at_1", "Leader @1", "Leader at 1"] },
-    { level: 12, keys: ["leader12", "leaderAt12", "leader_at_12", "Leader @12", "Leader at 12"] },
-    { level: 144, keys: ["leader144", "leaderAt144", "leader_at_144", "Leader @144", "Leader at 144"] },
-    { level: 1728, keys: ["leader1728", "leaderAt1728", "leader_at_1728", "Leader @1728", "Leader at 1728"] },
-  ];
+  const directFields = levels.map((lv) => ({
+    level: lv.level,
+    key: lv.key,
+    keys: [lv.key, lv.field, lv.label, `Leader @${lv.level}`, `Leader at ${lv.level}`, `leaderAt${lv.level}`, `leader_at_${lv.level}`],
+  }));
+
+  const canonicalMap = person.leaders && typeof person.leaders === "object" && !Array.isArray(person.leaders)
+    ? person.leaders
+    : null;
 
   for (const group of directFields) {
+    const already = leaderEntries.some((e) => e.key === group.key) || (canonicalMap && normalizeLeaderValue(canonicalMap[group.key]));
+    if (already) continue;
     for (const key of group.keys) {
       const rawValue = person?.[key];
       if (rawValue) {
         leaderEntries.push({
+          key: group.key,
           level: group.level,
           name: normalizeLeaderValue(rawValue),
           email: normalizeLeaderValue(
@@ -69,36 +77,29 @@ function resolveLeadersFromPerson(person) {
   const seen = new Set();
   const map = {};
   for (const entry of leaderEntries) {
-    const key = `${entry.level}:${entry.name.toLowerCase()}`;
+    const key = `${entry.key}:${entry.name.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    map[`leader${entry.level}`] = entry.name;
+    map[entry.key] = entry.name;
   }
 
   if (Object.keys(map).length > 0) return map;
 
-  return {
-    leader1: person["Leader @1"] || person.leader1 || "",
-    leader12: person["Leader @12"] || person.leader12 || "",
-    leader144: person["Leader @144"] || person.leader144 || "",
-    leader1728: person["Leader @1728"] || person.leader1728 || "",
-  };
+  const fallback = {};
+  levels.forEach((lv) => {
+    fallback[lv.key] = getLeaderValue(person, lv.key) || (lv.label ? person?.[lv.label] : "") || "";
+  });
+  return fallback;
 }
 
-function getLeaderAt12(person) {
-  const leaders = resolveLeadersFromPerson(person);
-
-  // Try Leader @12 first
-  if (leaders.leader12 && leaders.leader12.trim()) {
-    return { leader: leaders.leader12.trim(), level: 12, hasLeader: true };
+function getDirectLeader(person, levels) {
+  const leaders = resolveLeadersFromPerson(person, levels);
+  const present = levels.filter((lv) => leaders[lv.key] && leaders[lv.key].trim());
+  if (present.length === 0) {
+    return { leader: "No Leader Assigned", level: 0, hasLeader: false };
   }
-
-  // Fall back to Leader @1
-  if (leaders.leader1 && leaders.leader1.trim()) {
-    return { leader: leaders.leader1.trim(), level: 1, hasLeader: true };
-  }
-
-  return { leader: "No Leader Assigned", level: 0, hasLeader: false };
+  const lv = present[present.length - 1];
+  return { leader: leaders[lv.key].trim(), level: lv.level, hasLeader: true };
 }
 
 const ConsolidationModal = ({
@@ -109,6 +110,8 @@ const ConsolidationModal = ({
   consolidatedPeople = [],
   currentEventId,
 }) => {
+  const { orgConfig } = useOrgConfig();
+  const levelsUsed = getLevelsWithLabels(orgConfig).length ? getLevelsWithLabels(orgConfig) : DEFAULT_HIERARCHY;
   const [recipient, setRecipient] = useState(null);
   const [assignedTo, setAssignedTo] = useState("");
   const [dateTime, setDateTime] = useState("");
@@ -162,16 +165,12 @@ const ConsolidationModal = ({
     if (!leaderName || !recipient) return "";
 
     const normalizedLeaderName = (leaderName || "").trim().toLowerCase();
-    const directFields = [
-      { name: recipient?.leader1, email: recipient?.leader1Email || recipient?.leader1_email || recipient?.leader1email || recipient?.leader1EmailAddress || recipient?.leader1emailAddress },
-      { name: recipient?.leader12, email: recipient?.leader12Email || recipient?.leader12_email || recipient?.leader12email || recipient?.leader12EmailAddress || recipient?.leader12emailAddress },
-      { name: recipient?.leader144, email: recipient?.leader144Email || recipient?.leader144_email || recipient?.leader144email || recipient?.leader144EmailAddress || recipient?.leader144emailAddress },
-      { name: recipient?.leader1728, email: recipient?.leader1728Email || recipient?.leader1728_email || recipient?.leader1728email || recipient?.leader1728EmailAddress || recipient?.leader1728emailAddress },
-      { name: recipient?.["Leader @1"], email: recipient?.["Leader @1 Email"] || recipient?.["Leader @1_email"] || recipient?.["Leader @1email"] },
-      { name: recipient?.["Leader @12"], email: recipient?.["Leader @12 Email"] || recipient?.["Leader @12_email"] || recipient?.["Leader @12email"] },
-      { name: recipient?.["Leader @144"], email: recipient?.["Leader @144 Email"] || recipient?.["Leader @144_email"] || recipient?.["Leader @144email"] },
-      { name: recipient?.["Leader @1728"], email: recipient?.["Leader @1728 Email"] || recipient?.["Leader @1728_email"] || recipient?.["Leader @1728email"] },
-    ];
+    const directFields = levelsUsed.flatMap((lv) => {
+      const name = getLeaderValue(recipient, lv.key) || recipient?.[lv.label] || recipient?.[`Leader @${lv.level}`] || recipient?.[`leaderAt${lv.level}`] || recipient?.[`leader_at_${lv.level}`] || "";
+      if (!name || name.trim().toLowerCase() !== normalizedLeaderName) return [];
+      const key = `${lv.key}`;
+      return [{ name, email: recipient?.[`${key}Email`] || recipient?.[`${key}_email`] || recipient?.[`${key}email`] || recipient?.[`${key}EmailAddress`] || recipient?.[`${key}emailAddress`] || recipient?.[`${lv.label} Email`] || "" }];
+    });
 
     for (const candidate of directFields) {
       if ((candidate.name || "").trim().toLowerCase() === normalizedLeaderName && candidate.email) {
@@ -290,7 +289,7 @@ const ConsolidationModal = ({
 
   useEffect(() => {
     if (recipient) {
-      const leaderInfo = getLeaderAt12(recipient);
+      const leaderInfo = getDirectLeader(recipient, levelsUsed);
       setAssignedTo(leaderInfo.leader);
 
       const isAlready = checkIfAlreadyConsolidated(recipient);
@@ -308,7 +307,7 @@ const ConsolidationModal = ({
       setAlreadyConsolidated(false);
       setError("");
     }
-  }, [recipient, checkIfAlreadyConsolidated]);
+  }, [recipient, checkIfAlreadyConsolidated, levelsUsed]);
 
 
   const handleFinish = async () => {
@@ -334,7 +333,7 @@ const ConsolidationModal = ({
       return;
     }
 
-    const leaderInfo = getLeaderAt12(recipient);
+    const leaderInfo = getDirectLeader(recipient, levelsUsed);
     if (!leaderInfo.hasLeader) {
       setError(
         "Cannot create consolidation task: No leader available for this person.",
@@ -350,13 +349,8 @@ const ConsolidationModal = ({
         ? "recommitment"
         : "first_time";
 
-    const leadersMap = resolveLeadersFromPerson(recipient);
-    const leadersArray = [
-      leadersMap.leader1 || "",
-      leadersMap.leader12 || "",
-      leadersMap.leader144 || "",
-      leadersMap.leader1728 || "",
-    ];
+    const leadersMap = resolveLeadersFromPerson(recipient, levelsUsed);
+    const leadersArray = levelsUsed.map((lv) => leadersMap[lv.key] || "");
 
     try {
       const resolvedLeaderEmail = resolveLeaderEmail(

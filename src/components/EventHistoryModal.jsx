@@ -9,6 +9,8 @@ import {
 import DownloadIcon from '@mui/icons-material/Download';
 import * as XLSX from 'xlsx';
 import { toast } from 'react-toastify';
+import { useOrgConfig } from '../contexts/OrgConfigContext';
+import { getLevelsWithLabels, getLeaderValue, DEFAULT_HIERARCHY } from '../utils/hierarchy';
 
 const EventHistoryModal = React.memo(({
     open,
@@ -19,6 +21,10 @@ const EventHistoryModal = React.memo(({
 }) => {
     const theme = useTheme();
     const isSmDown = useMediaQuery(theme.breakpoints.down('sm'));
+    const { orgConfig } = useOrgConfig();
+    const levelsUsed = getLevelsWithLabels(orgConfig).length ? getLevelsWithLabels(orgConfig) : DEFAULT_HIERARCHY;
+    const leaderVal = (item, lv) =>
+        getLeaderValue(item, lv.key) || (lv.label ? item[lv.label] : "") || item[`Leader @${lv.level}`] || "";
     const [searchTerm, setSearchTerm] = useState('');
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(25);
@@ -40,7 +46,7 @@ const EventHistoryModal = React.memo(({
             if (!item) return false;
 
 
-            const searchString = [
+            const searchStringTokens = [
                 item.name || '',
                 item.surname || '',
                 item.person_name || '',
@@ -49,17 +55,15 @@ const EventHistoryModal = React.memo(({
                 item.person_email || '',
                 item.phone || '',
                 item.person_phone || '',
-                item.leader1 || '',
-                item.leader12 || '',
-                item.leader144 || '',
+                ...levelsUsed.map((lv) => leaderVal(item, lv)),
                 item.assigned_to || '',
                 item.decision_type || '',
                 item.consolidation_type || ''
             ].join(' ').toLowerCase();
 
-            return searchString.includes(term);
+            return searchStringTokens.includes(term);
         });
-    }, [data, searchTerm]);
+    }, [data, searchTerm, levelsUsed]);
 
     const paginatedData = useMemo(() => {
         return filteredData.slice(
@@ -95,26 +99,27 @@ const EventHistoryModal = React.memo(({
         let headers = [];
         let dataRows = [];
 
+        const leaderHeaders = levelsUsed.map((lv) => lv.label);
+        const leaderCells = (item) => levelsUsed.map((lv) => leaderVal(item, lv));
+
         if (type === 'attendance') {
             headers = [
             'Name', 'Surname', 'Email', 'Phone',
-            'Leader @1', 'Leader @12', 'Leader @144', 'CheckIn_Time'
+            ...leaderHeaders, 'CheckIn_Time'
             ];
             dataRows = filteredData.map(item => [
             item.name || '',
             item.surname || '',
             item.email || '',
             item.phone || '',
-            item.leader1 || '',
-            item.leader12 || '',
-            item.leader144 || '',
+            ...leaderCells(item),
             item.time || ''
             ]);
         } 
         else if (type === 'newPeople') {
             headers = [
             'Name', 'Surname', 'Email', 'Phone', 'Gender', 
-            'InvitedBy', 'Leader @1', 'Leader @12', 'Leader @144'
+            'InvitedBy', ...leaderHeaders
             ];
             dataRows = filteredData.map(item => [
             item.name || '',
@@ -123,15 +128,13 @@ const EventHistoryModal = React.memo(({
             item.phone || '',
             item.gender || '',
             item.invitedBy || '',
-            item.leader1 || '',
-            item.leader12 || '',
-            item.leader144 || ''
+            ...leaderCells(item)
             ]);
         } 
         else {  // consolidated / default
             headers = [
             'Name', 'Surname', 'Email', 'Phone',
-            'Leader @1', 'Leader @12', 'Leader @144',
+            ...leaderHeaders,
             'Decision_Type', 'Assigned_To', 'Status'
             ];
             dataRows = filteredData.map(item => [
@@ -139,9 +142,7 @@ const EventHistoryModal = React.memo(({
             item.surname || item.person_surname || '',
             item.email || item.person_email || '',
             item.phone || item.person_phone || '',
-            item.leader1 || '',
-            item.leader12 || '',
-            item.leader144 || '',
+            ...leaderCells(item),
             item.decision_type || item.consolidation_type || '',
             item.assigned_to || '',
             item.status || ''
@@ -233,19 +234,16 @@ const EventHistoryModal = React.memo(({
                         </Typography>
                     )}
 
-                    {(item.leader1 || item.leader12 || item.leader144) && (
+                    {(levelsUsed.some((lv) => leaderVal(item, lv))) && (
                         <>
                             <Divider sx={{ my: 0.5 }} />
                             <Stack direction="row" spacing={0.5} flexWrap="wrap" gap={0.5}>
-                                {item.leader1 && (
-                                    <Chip label={`@1: ${item.leader1}`} size="small" sx={{ fontSize: '0.6rem', height: 18 }} />
-                                )}
-                                {item.leader12 && (
-                                    <Chip label={`@12: ${item.leader12}`} size="small" sx={{ fontSize: '0.6rem', height: 18 }} />
-                                )}
-                                {item.leader144 && (
-                                    <Chip label={`@144: ${item.leader144}`} size="small" sx={{ fontSize: '0.6rem', height: 18 }} />
-                                )}
+                                {levelsUsed.map((lv) => {
+                                    const v = leaderVal(item, lv);
+                                    return v ? (
+                                        <Chip key={lv.key} label={`${lv.label}: ${v}`} size="small" sx={{ fontSize: '0.6rem', height: 18 }} />
+                                    ) : null;
+                                })}
                             </Stack>
                         </>
                     )}
@@ -287,9 +285,9 @@ const EventHistoryModal = React.memo(({
             </TableCell>
             <TableCell>{item.email || item.person_email || "—"}</TableCell>
             <TableCell>{item.phone || item.person_phone || "—"}</TableCell>
-            <TableCell>{item.leader1 || "—"}</TableCell>
-            <TableCell>{item.leader12 || "—"}</TableCell>
-            <TableCell>{item.leader144 || "—"}</TableCell>
+            {levelsUsed.map((lv) => (
+                <TableCell key={lv.key}>{leaderVal(item, lv) || "—"}</TableCell>
+            ))}
             {type === 'consolidated' && (
                 <>
                     <TableCell>
@@ -384,9 +382,9 @@ const EventHistoryModal = React.memo(({
                                         <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
                                         <TableCell sx={{ fontWeight: 600 }}>Email</TableCell>
                                         <TableCell sx={{ fontWeight: 600 }}>Phone</TableCell>
-                                        <TableCell sx={{ fontWeight: 600 }}>Leader @1</TableCell>
-                                        <TableCell sx={{ fontWeight: 600 }}>Leader @12</TableCell>
-                                        <TableCell sx={{ fontWeight: 600 }}>Leader @144</TableCell>
+                                        {levelsUsed.map((lv) => (
+                                            <TableCell key={lv.key} sx={{ fontWeight: 600 }}>{lv.label}</TableCell>
+                                        ))}
                                         {type === 'consolidated' && (
                                             <>
                                                 <TableCell sx={{ fontWeight: 600 }}>Decision Type</TableCell>

@@ -30,6 +30,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "react-toastify";
 import { Popper } from "@mui/material";
 import { useOrgConfig } from "../contexts/OrgConfigContext";
+import { getLeaderValue } from "../utils/hierarchy";
 function generateUUID() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
     const r = (Math.random() * 16) | 0;
@@ -105,8 +106,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
     eventLeader: "",
     eventLeaderEmail: "",
     description: "",
-    leader1: "",
-    leader12: "",
   });
 
   const [isRecurring, setIsRecurring] = useState(false);
@@ -341,18 +340,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   }, [selectedEventTypeObj, selectedEventType, eventTypes]);
 
   useEffect(() => {
-    console.log("Leader fields debug:", {
-      hasPersonSteps,
-      isGlobalEvent,
-      shouldShowLeaderFields: hasPersonSteps && !isGlobalEvent,
-      formData: {
-        leader1: formData.leader1,
-        leader12: formData.leader12,
-      },
-    });
-  }, [hasPersonSteps, isGlobalEvent, formData.leader1, formData.leader12]);
-
-  useEffect(() => {
     console.log("Price tier debug:", {
       isTicketedEvent,
       isGlobalEvent,
@@ -396,17 +383,27 @@ const fetchPeople = async (q) => {
     console.log("Results count:", data?.results?.length);
 
     const people = data?.results || [];
-    const formatted = people.map((p) => ({
-      id:            p._id,
-      fullName:      p.FullName || `${p.Name || ""} ${p.Surname || ""}`.trim(),
-      email:         p.Email || "",
-      leader1:       p["Leader @1"] || p.leader1 || "",
-      leader12:      p["Leader @12"] || p.leader12 || "",
-      leader144:     p["Leader @144"] || p.leader144 || "",
-      leaderValues:  {},
-      org:           "",
-      isDifferentOrg: false,
-    }));
+    const formatted = people.map((p) => {
+      const leaderValues = {};
+      getAllHierarchyLevels().forEach((h) => {
+        const v =
+          getLeaderValue(p, h.key) ||
+          getLeaderValue(p, h.field) ||
+          (h.label ? p[h.label] : "") ||
+          p[h.field] ||
+          p[h.key] ||
+          "";
+        if (v) leaderValues[h.key || h.field] = v;
+      });
+      return {
+        id:            p._id,
+        fullName:      p.FullName || `${p.Name || ""} ${p.Surname || ""}`.trim(),
+        email:         p.Email || "",
+        leaderValues,
+        org:           "",
+        isDifferentOrg: false,
+      };
+    });
 
     console.log("Formatted people:", formatted);
     console.log("Setting peopleData to:", formatted.length, "items");
@@ -563,8 +560,6 @@ const fetchPeople = async (q) => {
       eventLeader: "",
       eventLeaderEmail: "",
       description: "",
-      leader1: "",
-      leader12: "",
     });
     setPriceTiers([]);
     setErrors({});
@@ -614,15 +609,11 @@ const fetchPeople = async (q) => {
       }
 
       if (hasPersonSteps) {
-        const leaderDepth = [
-          formData.leader1,
-          formData.leader12,
-          formData.leader144,
-        ].filter(Boolean).length;
+        const filledDepth = getAllHierarchyLevels().filter((h) => formData[h.field]).length;
         getAllHierarchyLevels().forEach((h, idx) => {
           if (autoPopulatedFields.has(h.field)) return;
           if (formData[h.field]) return;
-          if (idx >= leaderDepth && leaderDepth > 0) return;
+          if (idx < filledDepth && filledDepth > 0) return;
           newErrors[h.field] = `${h.label} is required`;
         });
       }
@@ -691,12 +682,18 @@ const fetchPeople = async (q) => {
         dayValue = "Recurring";
       }
 
+      const hierarchyLeaders = {};
+      getAllHierarchyLevels().forEach((h) => {
+        if (formData[h.field]) hierarchyLeaders[h.key || h.field] = formData[h.field];
+      });
+
       const payload = {
         UUID: generateUUID(),
         eventTypeName: formData.eventType,
         eventName: formData.eventName,
         isTicketed: !!isTicketedEvent,
         isGlobal: !!isGlobalEvent,
+        hierarchy_leaders: hierarchyLeaders,
         hasPersonSteps: !!hasPersonSteps,
         location: formData.location,
         eventLeader: formData.eventLeader,
@@ -707,8 +704,6 @@ const fetchPeople = async (q) => {
         recurring_day: formData.recurringDays,
         day: dayValue,
         status: "open",
-        leader1: formData.leader1 || "",
-        leader12: formData.leader12 || "",
         isRecurring: isRecurring,
         recurringDays: isRecurring ? formData.recurringDays : [],
       };
@@ -744,11 +739,6 @@ const fetchPeople = async (q) => {
         payload.priceTiers = [];
       }
 
-      if (hasPersonSteps && !isGlobalEvent) {
-        payload.leader1 = formData.leader1 || "";
-        payload.leader12 = formData.leader12 || "";
-      }
-
       console.log("Final Payload:", payload);
 
       const token = localStorage.getItem("access_token");
@@ -756,6 +746,14 @@ const fetchPeople = async (q) => {
         Authorization: token ? `Bearer ${token}` : "",
         "Content-Type": "application/json",
       };
+      const editHierarchyLeaders = {};
+      getAllHierarchyLevels().forEach((h) => {
+        const v =
+          formData[h.field] ||
+          formData?.leaders?.[h.key || h.field] ||
+          "";
+        if (v) editHierarchyLeaders[h.key || h.field] = v;
+      });
       const response = eventId ?
         await authFetch(`${BACKEND_URL}/events/${eventId}`, {
           method: "PUT",
@@ -763,7 +761,7 @@ const fetchPeople = async (q) => {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(formData)
+          body: JSON.stringify({ ...formData, hierarchy_leaders: editHierarchyLeaders })
         })
         : await axios.post(
           `${BACKEND_URL.replace(/\/$/, "")}/events`,
@@ -1570,9 +1568,10 @@ const fetchPeople = async (q) => {
                       </Typography>
                       <Typography variant="body2" sx={{ color: "text.secondary", fontSize: "0.75rem" }}>
                         {person.email}
-                        {person.leader1 && ` • L@1: ${person.leader1}`}
-                        {person.leader12 && ` • L@12: ${person.leader12}`}
-                        {person.leader144 && ` • L@144: ${person.leader144}`}
+                        {getAllHierarchyLevels().map((h) => {
+                          const v = person.leaderValues?.[h.key] || person.leaderValues?.[h.field] || person[h.key] || person[h.field] || "";
+                          return v ? ` • ${h.label}: ${v}` : "";
+                        })}
                         {person.org && ` • Org: ${person.org}`}
                       </Typography>
                     </Box>

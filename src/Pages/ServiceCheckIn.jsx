@@ -37,19 +37,38 @@ import { AuthContext } from "../contexts/AuthContext";
 import * as XLSX from "xlsx";
 import { DeleteForever as DeleteForeverIcon } from "@mui/icons-material";
 import { useTaskUpdate } from "../contexts/TaskUpdateContext";
+import { useOrgConfig } from "../contexts/OrgConfigContext";
+import { getLevelsWithLabels, getLeaderValue, DEFAULT_HIERARCHY } from "../utils/hierarchy";
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 
 const CACHE_DURATION = 5 * 60 * 1000;
 
-function buildSearchableText(person) {
-  const leaderText = Array.isArray(person.leaders)
-    ? person.leaders.map((l) => l.name || "").join(" ")
-    : [
-      person.leader1 || person["Leader @1"] || "",
-      person.leader12 || person["Leader @12"] || "",
-      person.leader144 || person["Leader @144"] || "",
-    ].join(" ");
+function extractLeaderMap(p, entryOverride, levels) {
+  const entry = entryOverride || p || {};
+  const canonical = p?.leaders && typeof p.leaders === "object" && !Array.isArray(p.leaders) ? p.leaders : null;
+  const arrayLeaders = Array.isArray(p?.leaders) ? p.leaders : [];
+  const out = {};
+  for (const lv of levels) {
+    const fromArray = arrayLeaders.find((l) =>
+      String(l.level ?? l.Level ?? l.leader_level ?? l.leaderLevel) === String(lv.level) || l.key === lv.key
+    );
+    out[lv.key] =
+      canonical?.[lv.key] ||
+      fromArray?.name ||
+      getLeaderValue(entry, lv.key) ||
+      (lv.label ? entry[lv.label] : "") ||
+      entry[`Leader @${lv.level}`] ||
+      entry[`leaderAt${lv.level}`] ||
+      entry[`leader_at_${lv.level}`] ||
+      "";
+  }
+  return out;
+}
+
+function buildSearchableText(person, levels) {
+  const leaderMap = extractLeaderMap(person, null, levels);
+  const leaderText = Object.values(leaderMap).filter(Boolean).join(" ");
 
   return [
     person.name || person.Name || "",
@@ -64,8 +83,8 @@ function buildSearchableText(person) {
   ].join(" ").toLowerCase();
 }
 
-function matchesSearch(person, terms) {
-  const text = buildSearchableText(person);
+function matchesSearch(person, terms, levels) {
+  const text = buildSearchableText(person, levels);
   return terms.every((t) => text.includes(t));
 }
 
@@ -81,19 +100,8 @@ function isPriorityPerson(first, last) {
   );
 }
 
-function normalisePerson(p) {
-  let leader1 = "", leader12 = "", leader144 = "";
-
-  if (Array.isArray(p.leaders) && p.leaders.length) {
-    for (const l of p.leaders) {
-      if (l.level === 1 && !leader1) leader1 = l.name || "";
-      if (l.level === 12 && !leader12) leader12 = l.name || "";
-      if (l.level === 144 && !leader144) leader144 = l.name || "";
-    }
-  }
-  if (!leader1) leader1 = p["Leader @1"] || p.leader1 || "";
-  if (!leader12) leader12 = p["Leader @12"] || p.leader12 || "";
-  if (!leader144) leader144 = p["Leader @144"] || p.leader144 || "";
+function normalisePerson(p, levels) {
+  const leadersMap = extractLeaderMap(p, null, levels);
 
   const name = p.Name || p.name || "";
   const surname = p.Surname || p.surname || "";
@@ -104,7 +112,7 @@ function normalisePerson(p) {
     email: p.Email || p.email || "",
     phone: p.Number || p.number || p.phone || "",
     number: p.Number || p.number || p.phone || "",
-    leader1, leader12, leader144,
+    leadersMap,
     gender: p.Gender || p.gender || "",
     address: p.Address || p.address || "",
     birthday: p.Birthday || p.birthday || "",
@@ -128,7 +136,7 @@ function s2ab(s) {
 
 const emptyForm = {
   name: "", surname: "", email: "", phone: "", number: "", gender: "",
-  invitedBy: "", leader1: "", leader12: "", leader144: "",
+  invitedBy: "",
   stage: "Win", dob: "", address: "",
 };
 
@@ -150,12 +158,17 @@ const getCacheTimestamp = () => {
 function ServiceCheckIn() {
   const { authFetch, user } = useContext(AuthContext);
   const { notifyTaskUpdate } = useTaskUpdate();
+  const { orgConfig } = useOrgConfig();
+  const levelsUsed = useMemo(() => {
+    const levels = getLevelsWithLabels(orgConfig);
+    return levels.length ? levels : DEFAULT_HIERARCHY;
+  }, [orgConfig]);
 
   const [attendees, setAttendees] = useState(() => {
     const cache = getCachedPeople();
     const ts = getCacheTimestamp();
     if (cache && ts && (Date.now() - ts < CACHE_DURATION)) {
-      return cache.map(normalisePerson);
+      return cache.map(p => normalisePerson(p, levelsUsed));
     }
     return [];
   });
@@ -250,9 +263,7 @@ function ServiceCheckIn() {
         surname: entry.surname || entry.Surname || fp?.surname || "",
         email: entry.email || entry.Email || fp?.email || "",
         phone: entry.phone || entry.Number || fp?.phone || "",
-        leader1: fp?.leader1 || entry.leader1 || "",
-        leader12: fp?.leader12 || entry.leader12 || "",
-        leader144: fp?.leader144 || entry.leader144 || "",
+        leadersMap: extractLeaderMap(fp, entry, levelsUsed),
         id: id || Math.random().toString(36),
         _id: id,
         ...(isNew && { isNew: true }),
@@ -291,9 +302,7 @@ function ServiceCheckIn() {
               assigned_to: c.assigned_to || c.assignedTo || "",
               decision_type: c.decision_type || c.consolidation_type || "Commitment",
               status: c.status || "active",
-              leader1: fp?.leader1 || c.leader1 || "",
-              leader12: fp?.leader12 || c.leader12 || "",
-              leader144: fp?.leader144 || c.leader144 || "",
+              leadersMap: extractLeaderMap(fp, c, levelsUsed),
               id: id || Math.random().toString(36),
               _id: id,
             };
@@ -328,7 +337,7 @@ function ServiceCheckIn() {
         } catch { return null; }
       })
       .filter(Boolean);
-  }, []);
+  }, [levelsUsed]);
 
   const filterValidEvents = useCallback((all) =>
     all.filter(event => {
@@ -353,7 +362,7 @@ function ServiceCheckIn() {
           (Date.now() - getCacheTimestamp() < CACHE_DURATION);
 
         if (cacheHit) {
-          const normalisedPeople = getCachedPeople().map(normalisePerson);
+          const normalisedPeople = getCachedPeople().map(p => normalisePerson(p, levelsUsed));
           setAttendees(normalisedPeople);
           setHasDataLoaded(true);
           setIsLoadingPeople(false);
@@ -387,7 +396,7 @@ function ServiceCheckIn() {
           if (peopleRes.ok) {
             const pd = await peopleRes.json();
             if (pd.success && pd.cached_data) {
-              normalisedPeople = pd.cached_data.map(normalisePerson);
+              normalisedPeople = pd.cached_data.map(p => normalisePerson(p, levelsUsed));
               window.globalPeopleCache = pd.cached_data;
               window.globalCacheTimestamp = Date.now();
               setAttendees(normalisedPeople);
@@ -422,7 +431,7 @@ function ServiceCheckIn() {
         setIsLoadingHistory(false);
       }
     })();
-  }, [authFetch, filterValidEvents, transformEvents]);
+  }, [authFetch, filterValidEvents, transformEvents, levelsUsed]);
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -530,14 +539,14 @@ function ServiceCheckIn() {
   const filteredAttendees = useMemo(() => {
     if (!search.trim()) return attendeesWithStatus;
     const terms = search.toLowerCase().trim().split(/\s+/);
-    const filtered = attendeesWithStatus.filter(p => matchesSearch(p, terms));
+    const filtered = attendeesWithStatus.filter(p => matchesSearch(p, terms, levelsUsed));
     return [...filtered].sort((a, b) => {
       const sa = isPriorityPerson(a.name, a.surname) ? 1 : 0;
       const sb = isPriorityPerson(b.name, b.surname) ? 1 : 0;
       if (sa !== sb) return sb - sa;
       return `${a.name} ${a.surname}`.localeCompare(`${b.name} ${b.surname}`);
     });
-  }, [attendeesWithStatus, search]);
+  }, [attendeesWithStatus, search, levelsUsed]);
 
 const sortedFilteredAttendees = useMemo(() => {
     const result = [...filteredAttendees];
@@ -596,9 +605,7 @@ const sortedFilteredAttendees = useMemo(() => {
         email: fp.email || a.email || "",
         phone: fp.phone || fp.number || a.phone || "",
         number: fp.number || fp.phone || a.number || "",
-        leader1: fp.leader1 || a.leader1 || "",
-        leader12: fp.leader12 || a.leader12 || "",
-        leader144: fp.leader144 || a.leader144 || "",
+        leadersMap: extractLeaderMap(fp, a, levelsUsed),
         id: a.id || a._id,
         _id: a.id || a._id,
       };
@@ -608,8 +615,8 @@ const sortedFilteredAttendees = useMemo(() => {
     );
     if (!modalSearch.trim()) return sorted;
     const terms = modalSearch.toLowerCase().trim().split(/\s+/);
-    return sorted.filter(p => matchesSearch(p, terms));
-  }, [realTimeData, attendeeMap, modalSearch]);
+    return sorted.filter(p => matchesSearch(p, terms, levelsUsed));
+  }, [realTimeData, attendeeMap, modalSearch, levelsUsed]);
 
   const modalPaginatedAttendees = useMemo(
     () => modalFilteredAttendees.slice(
@@ -633,9 +640,7 @@ const sortedFilteredAttendees = useMemo(() => {
         number: fp.number || np.number || "",
         invitedBy: fp.invitedBy || np.invitedBy || "",
         gender: fp.gender || np.gender || "",
-        leader1: fp.leader1 || np.leader1 || "",
-        leader12: fp.leader12 || np.leader12 || "",
-        leader144: fp.leader144 || np.leader144 || "",
+        leadersMap: extractLeaderMap(fp, np, levelsUsed),
       };
     });
     const sorted = [...full].sort((a, b) =>
@@ -643,8 +648,8 @@ const sortedFilteredAttendees = useMemo(() => {
     );
     if (!newPeopleSearch.trim()) return sorted;
     const terms = newPeopleSearch.toLowerCase().trim().split(/\s+/);
-    return sorted.filter(p => matchesSearch(p, terms));
-  }, [realTimeData, attendeeMap, newPeopleSearch]);
+    return sorted.filter(p => matchesSearch(p, terms, levelsUsed));
+  }, [realTimeData, attendeeMap, newPeopleSearch, levelsUsed]);
 
   const newPeoplePaginatedList = useMemo(
     () => newPeopleFilteredList.slice(
@@ -713,8 +718,8 @@ const sortedFilteredAttendees = useMemo(() => {
     );
     if (!consolidatedSearch.trim()) return sorted;
     const terms = consolidatedSearch.toLowerCase().trim().split(/\s+/);
-    return sorted.filter(p => matchesSearch(p, terms));
-  }, [realTimeData, attendeeMap, attendees, consolidatedSearch]);
+    return sorted.filter(p => matchesSearch(p, terms, levelsUsed));
+  }, [realTimeData, attendeeMap, attendees, consolidatedSearch, levelsUsed]);
 
   const consolidatedPaginatedList = useMemo(
     () => filteredConsolidatedPeople.slice(
@@ -745,7 +750,7 @@ const sortedFilteredAttendees = useMemo(() => {
         if (cacheData.success && cacheData.cached_data) {
           window.globalPeopleCache = cacheData.cached_data;
           window.globalCacheTimestamp = Date.now();
-          setAttendees(cacheData.cached_data.map(normalisePerson));
+          setAttendees(cacheData.cached_data.map(p => normalisePerson(p, levelsUsed)));
         }
       }
       toast.success("Refresh complete!");
@@ -754,7 +759,7 @@ const sortedFilteredAttendees = useMemo(() => {
     } finally {
       setIsRefreshing(false);
     }
-  }, [currentEventId, authFetch, fetchRealTimeEventData]);
+  }, [currentEventId, authFetch, fetchRealTimeEventData, levelsUsed]);
 
   const handleRemoveConsolidation = useCallback(async (consolidation) => {
     if (!currentEventId) { toast.error("Please select an event first"); return; }
@@ -798,7 +803,7 @@ const sortedFilteredAttendees = useMemo(() => {
       id: personId, _id: personId,
       name: attendee.name, surname: attendee.surname, email: attendee.email,
       phone: attendee.phone || attendee.number || "",
-      leader1: attendee.leader1 || "", leader12: attendee.leader12 || "", leader144: attendee.leader144 || "",
+      leadersMap: attendee.leadersMap || extractLeaderMap(attendee, attendee, levelsUsed),
     };
 
     setRealTimeData(prev => {
@@ -821,7 +826,7 @@ const sortedFilteredAttendees = useMemo(() => {
           method: "POST",
           body: JSON.stringify({
             event_id: cleanEventId(currentEventId),
-            person_data: { id: personId, name: attendee.name, fullName, email: attendee.email, phone: attendee.phone, number: attendee.number, leader12: attendee.leader12 },
+            person_data: { id: personId, name: attendee.name, fullName, email: attendee.email, phone: attendee.phone, number: attendee.number, leaders: attendee.leadersMap || extractLeaderMap(attendee, attendee, levelsUsed) },
             type: "attendee",
           }),
         });
@@ -871,7 +876,7 @@ const sortedFilteredAttendees = useMemo(() => {
     } finally {
       setCheckInLoading(prev => { const s = new Set(prev); s.delete(personId); return s; });
     }
-  }, [currentEventId, checkInLoading, presentIds, authFetch, fetchRealTimeEventData]);
+  }, [currentEventId, checkInLoading, presentIds, authFetch, fetchRealTimeEventData, levelsUsed]);
 
   const normalizeLeaderValue = useCallback((value) => {
     if (value == null) return "";
@@ -895,20 +900,10 @@ const sortedFilteredAttendees = useMemo(() => {
       });
     }
 
-    const directFields = [
-      { level: 1, keys: ["leader1", "leaderAt1", "leader_at_1", "Leader @1", "Leader at 1"] },
-      { level: 12, keys: ["leader12", "leaderAt12", "leader_at_12", "Leader @12", "Leader at 12"] },
-      { level: 144, keys: ["leader144", "leaderAt144", "leader_at_144", "Leader @144", "Leader at 144"] },
-      { level: 1728, keys: ["leader1728", "leaderAt1728", "leader_at_1728", "Leader @1728", "Leader at 1728"] },
-    ];
-
-    directFields.forEach((group) => {
-      for (const key of group.keys) {
-        const value = person?.[key];
-        if (value) {
-          leaderEntries.push({ level: group.level, name: normalizeLeaderValue(value) });
-          break;
-        }
+    levelsUsed.forEach((lv) => {
+      const value = getLeaderValue(person, lv.key) || person?.[lv.label] || person?.[`Leader @${lv.level}`] || person?.[`leaderAt${lv.level}`] || person?.[`leader_at_${lv.level}`];
+      if (value) {
+        leaderEntries.push({ level: lv.level, name: normalizeLeaderValue(value) });
       }
     });
 
@@ -918,23 +913,22 @@ const sortedFilteredAttendees = useMemo(() => {
 
     leaderEntries.sort((a, b) => b.level - a.level);
     return { leader: leaderEntries[0].name, level: leaderEntries[0].level, hasLeader: true };
-  }, [normalizeLeaderValue]);
+  }, [normalizeLeaderValue, levelsUsed]);
 
   // Helper function to resolve leader email from person object
   const resolveLeaderEmail = useCallback((leaderName, person) => {
     if (!leaderName || !person) return "";
 
     const normalizedLeaderName = (leaderName || "").trim().toLowerCase();
-    const directFields = [
-      { name: person?.leader1, email: person?.leader1Email || person?.leader1_email || person?.leader1email },
-      { name: person?.leader12, email: person?.leader12Email || person?.leader12_email || person?.leader12email },
-      { name: person?.leader144, email: person?.leader144Email || person?.leader144_email || person?.leader144email },
-      { name: person?.leader1728, email: person?.leader1728Email || person?.leader1728_email || person?.leader1728email },
-      { name: person?.["Leader @1"], email: person?.["Leader @1 Email"] || person?.["Leader @1_email"] || person?.["Leader @1email"] },
-      { name: person?.["Leader @12"], email: person?.["Leader @12 Email"] || person?.["Leader @12_email"] || person?.["Leader @12email"] },
-      { name: person?.["Leader @144"], email: person?.["Leader @144 Email"] || person?.["Leader @144_email"] || person?.["Leader @144email"] },
-      { name: person?.["Leader @1728"], email: person?.["Leader @1728 Email"] || person?.["Leader @1728_email"] || person?.["Leader @1728email"] },
-    ];
+    const directFields = [];
+    levelsUsed.forEach((lv) => {
+      const name = getLeaderValue(person, lv.key) || person?.[lv.label] || person?.[`Leader @${lv.level}`] || person?.[`leaderAt${lv.level}`] || person?.[`leader_at_${lv.level}`] || "";
+      if (!name || name.trim().toLowerCase() !== normalizedLeaderName) return;
+      directFields.push({
+        name,
+        email: person?.[`${lv.key}Email`] || person?.[`${lv.key}_email`] || person?.[`${lv.key}email`] || person?.[`${lv.label} Email`] || "",
+      });
+    });
 
     for (const candidate of directFields) {
       if ((candidate.name || "").trim().toLowerCase() === normalizedLeaderName && candidate.email) {
@@ -952,7 +946,7 @@ const sortedFilteredAttendees = useMemo(() => {
       }
     }
     return "";
-  }, [normalizeLeaderValue]);
+  }, [normalizeLeaderValue, levelsUsed]);
 
   // Create task for leader when new person is added
   const createNewPersonTaskForLeader = useCallback(async ({
@@ -1024,7 +1018,7 @@ const sortedFilteredAttendees = useMemo(() => {
         const pid = editingPerson._id;
         toast.success(`${normalizedUpdate.name} ${normalizedUpdate.surname} updated successfully`);
         setAttendees(prev => prev.map(p =>
-          p._id === pid ? normalisePerson({ ...p, ...normalizedUpdate, _id: pid }) : p
+          p._id === pid ? normalisePerson({ ...p, ...normalizedUpdate, _id: pid }, levelsUsed) : p
         ));
         setRealTimeData(prev => {
           if (!prev) return prev;
@@ -1059,7 +1053,7 @@ const sortedFilteredAttendees = useMemo(() => {
         leaders: newPersonData.leaders || [],
         Stage: "First Time",
         isNew: true,
-      });
+      }, levelsUsed);
 
       setAttendees(prev => [newPersonForGrid, ...prev]);
       authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => {});
@@ -1083,7 +1077,7 @@ const sortedFilteredAttendees = useMemo(() => {
         console.error("Failed to create new person task:", taskErr);
       }
     } catch (error) { toast.error(error.message || "Failed to save person"); }
-  }, [currentEventId, editingPerson, formData, authFetch, fetchRealTimeEventData, createNewPersonTaskForLeader, getHighestAvailableLeader, resolveLeaderEmail]);
+  }, [currentEventId, editingPerson, formData, authFetch, fetchRealTimeEventData, createNewPersonTaskForLeader, getHighestAvailableLeader, resolveLeaderEmail, levelsUsed]);
 
   const handleFinishConsolidation = useCallback(async (task) => {
   if (!currentEventId) return;
@@ -1245,9 +1239,6 @@ const sortedFilteredAttendees = useMemo(() => {
       phone: person.phone || person.number || "",
       gender: person.gender || "",
       invitedBy: person.invitedBy || "",
-      leader1: person.leader1 || "",
-      leader12: person.leader12 || "",
-      leader144: person.leader144 || "",
       stage: person.stage || "Win",
     });
     setOpenDialog(true);
@@ -1290,7 +1281,7 @@ const sortedFilteredAttendees = useMemo(() => {
 
   const exportToExcel = useCallback((data, filename = "export") => {
     if (!data?.length) { toast.error("No data to export"); return; }
-    const headers = ["Name", "Surname", "Email", "Phone", "Leader @1", "Leader @12", "Leader @144", "CheckIn_Time", "Status"];
+    const headers = ["Name", "Surname", "Email", "Phone", ...levelsUsed.map((lv) => lv.label), "CheckIn_Time", "Status"];
     const worksheetData = data.map(row => { const o = {}; headers.forEach(h => (o[h] = row[h] ?? "")); return o; });
     const ws = XLSX.utils.json_to_sheet(worksheetData, { header: headers });
     ws["!cols"] = headers.map(h => {
@@ -1311,12 +1302,20 @@ const sortedFilteredAttendees = useMemo(() => {
       URL.revokeObjectURL(url);
       toast.success(`Exported ${data.length} records`);
     } catch { toast.error("Failed to create Excel file"); }
-  }, []);
+  }, [levelsUsed]);
 
   const handleAddPersonClick = useCallback(() => {
     if (!currentEventId) { toast.error("Please select an event first before adding people"); return; }
     setEditingPerson(null); setFormData(emptyForm); setOpenDialog(true);
   }, [currentEventId]);
+
+  const editLeaderValues = useMemo(() => {
+    if (!editingPerson) return {};
+    const map = extractLeaderMap(editingPerson, null, levelsUsed);
+    const out = {};
+    levelsUsed.forEach((lv) => { out[lv.key] = map[lv.key] || ""; });
+    return out;
+  }, [editingPerson, levelsUsed]);
 
   const handleViewEventDetails = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "attendance", data: data || [] }); }, []);
   const handleViewNewPeople = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "newPeople", data: data || [] }); }, []);
@@ -1349,18 +1348,15 @@ const sortedFilteredAttendees = useMemo(() => {
         field: "email", headerName: "Email", flex: 1, minWidth: 130, sortable: true,
         renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: "0.85rem" }}>{p.row.email || "—"}</Typography>
       }] : []),
-      {
-        field: "leader1", headerName: isSm ? "L@1" : "Leader @1", flex: 0.55, minWidth: isSm ? 38 : 80, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.65rem" : "0.85rem" }}>{p.row.leader1 || "—"}</Typography>
-      },
-      {
-        field: "leader12", headerName: isSm ? "L@12" : "Leader @12", flex: 0.55, minWidth: isSm ? 44 : 88, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.65rem" : "0.85rem" }}>{p.row.leader12 || "—"}</Typography>
-      },
-      ...(!isXs ? [{
-        field: "leader144", headerName: isSm ? "L@144" : "Leader @144", flex: 0.55, minWidth: isSm ? 50 : 96, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.65rem" : "0.85rem" }}>{p.row.leader144 || "—"}</Typography>
-      }] : []),
+      ...(() => {
+        const visibleLevels = isXs ? levelsUsed.slice(-2) : levelsUsed;
+        return visibleLevels.map((lv) => ({
+          field: lv.key, headerName: isSm ? lv.shortLabel || lv.label : lv.label, flex: 0.55,
+          minWidth: isSm ? 44 : 88, sortable: true,
+          valueGetter: (p) => p.row.leadersMap?.[lv.key] || "",
+          renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.65rem" : "0.85rem" }}>{p.row.leadersMap?.[lv.key] || "—"}</Typography>
+        }));
+      })(),
       {
         field: "actions", headerName: "", width: isSm ? 96 : 120, sortable: false, filterable: false,
         renderCell: (params) => {
@@ -1406,7 +1402,7 @@ const sortedFilteredAttendees = useMemo(() => {
       },
     ];
     return base;
-  }, [isXs, isSm, isMd, currentEventId, checkInLoading, handleEditClick, handleToggleCheckIn]);
+  }, [isXs, isSm, isMd, currentEventId, checkInLoading, handleEditClick, handleToggleCheckIn, levelsUsed]);
 
   const StatsCard = useCallback(({ title, count, icon, color = "primary", onClick, disabled = false }) => (
     <Paper variant="outlined" onClick={onClick} sx={{
@@ -1587,6 +1583,7 @@ const sortedFilteredAttendees = useMemo(() => {
         isEdit={Boolean(editingPerson)} personId={editingPerson?._id || null}
         currentEventId={currentEventId} preloadedPeople={attendees}
         editingPersonObject={editingPerson}
+        hierarchyLevels={levelsUsed} editLeaderValues={editLeaderValues}
       />
 
       {/* Present Attendees Modal */}
@@ -1612,9 +1609,9 @@ const sortedFilteredAttendees = useMemo(() => {
                           <TableCell sx={{ fontWeight: 700, minWidth: 120 }}>Name</TableCell>
                           {!isXs && <TableCell sx={{ fontWeight: 700 }}>Phone</TableCell>}
                           {!isSm && <TableCell sx={{ fontWeight: 700 }}>Email</TableCell>}
-                          <TableCell sx={{ fontWeight: 700 }}>Leader @1</TableCell>
-                          <TableCell sx={{ fontWeight: 700 }}>Leader @12</TableCell>
-                          {!isSm && <TableCell sx={{ fontWeight: 700 }}>Leader @144</TableCell>}
+                          {(isSm ? (levelsUsed.length > 1 ? levelsUsed.slice(0, levelsUsed.length - 1) : levelsUsed) : levelsUsed).map((lv) => (
+                            <TableCell key={lv.key} sx={{ fontWeight: 700 }}>{lv.label}</TableCell>
+                          ))}
                           <TableCell align="center" sx={{ fontWeight: 700, width: 56 }}>✕</TableCell>
                         </TableRow>
                       </TableHead>
@@ -1625,9 +1622,9 @@ const sortedFilteredAttendees = useMemo(() => {
                             <TableCell><Typography variant="body2" fontWeight={600} noWrap sx={{ fontSize: isSm ? "0.75rem" : "0.875rem" }}>{a.name} {a.surname}</Typography></TableCell>
                             {!isXs && <TableCell><Typography variant="body2" noWrap sx={{ fontSize: "0.8rem" }}>{a.phone || a.number || "—"}</Typography></TableCell>}
                             {!isSm && <TableCell><Typography variant="body2" noWrap sx={{ fontSize: "0.8rem" }}>{a.email || "—"}</Typography></TableCell>}
-                            <TableCell><Typography variant="body2" noWrap sx={{ fontSize: "0.78rem" }}>{a.leader1 || "—"}</Typography></TableCell>
-                            <TableCell><Typography variant="body2" noWrap sx={{ fontSize: "0.78rem" }}>{a.leader12 || "—"}</Typography></TableCell>
-                            {!isSm && <TableCell><Typography variant="body2" noWrap sx={{ fontSize: "0.78rem" }}>{a.leader144 || "—"}</Typography></TableCell>}
+                            {(isSm ? (levelsUsed.length > 1 ? levelsUsed.slice(0, levelsUsed.length - 1) : levelsUsed) : levelsUsed).map((lv) => (
+                              <TableCell key={lv.key}><Typography variant="body2" noWrap sx={{ fontSize: "0.78rem" }}>{a.leadersMap?.[lv.key] || "—"}</Typography></TableCell>
+                            ))}
                             <TableCell align="center">
                               <Tooltip title="Remove from check-in">
                                 <IconButton color="error" size="small"
@@ -1652,7 +1649,11 @@ const sortedFilteredAttendees = useMemo(() => {
         <DialogActions sx={{ p: isSm ? 1 : 1.5, gap: 1 }}>
           <Button variant="outlined" size="small" startIcon={<DownloadIcon />}
             onClick={() => exportToExcel(
-              modalFilteredAttendees.map(a => ({ Name: a.name, Surname: a.surname, Email: a.email, Phone: a.phone, "Leader @1": a.leader1, "Leader @12": a.leader12, "Leader @144": a.leader144, CheckIn_Time: a.time || "", Status: "Present" })),
+              modalFilteredAttendees.map(a => {
+                const leaderCells = {};
+                levelsUsed.forEach((lv) => { leaderCells[lv.label] = a.leadersMap?.[lv.key] || ""; });
+                return { Name: a.name, Surname: a.surname, Email: a.email, Phone: a.phone, ...leaderCells, CheckIn_Time: a.time || "", Status: "Present" };
+              }),
               `Present_Attendees_${cleanEventId(currentEventId)}`
             )}
             disabled={modalFilteredAttendees.length === 0}>
@@ -1687,7 +1688,9 @@ const sortedFilteredAttendees = useMemo(() => {
                           {!isSm && <TableCell sx={{ fontWeight: 700 }}>Email</TableCell>}
                           <TableCell sx={{ fontWeight: 700 }}>Gender</TableCell>
                           {!isSm && <TableCell sx={{ fontWeight: 700 }}>Invited By</TableCell>}
-                          {!isSm && <TableCell sx={{ fontWeight: 700 }}>Leader @12</TableCell>}
+                          {!isSm && levelsUsed.map((lv) => (
+                            <TableCell key={lv.key} sx={{ fontWeight: 700 }}>{lv.label}</TableCell>
+                          ))}
                           <TableCell sx={{ fontWeight: 700, width: 56 }}>Del</TableCell>
                         </TableRow>
                       </TableHead>
@@ -1700,7 +1703,9 @@ const sortedFilteredAttendees = useMemo(() => {
                             {!isSm && <TableCell sx={{ fontSize: "0.8rem" }}>{a.email || "—"}</TableCell>}
                             <TableCell sx={{ fontSize: "0.8rem" }}>{a.gender || "—"}</TableCell>
                             {!isSm && <TableCell sx={{ fontSize: "0.8rem" }}>{a.invitedBy || "—"}</TableCell>}
-                            {!isSm && <TableCell sx={{ fontSize: "0.8rem" }}>{a.leader12 || "—"}</TableCell>}
+                            {!isSm && levelsUsed.map((lv) => (
+                              <TableCell key={lv.key} sx={{ fontSize: "0.8rem" }}>{a.leadersMap?.[lv.key] || "—"}</TableCell>
+                            ))}
                             <TableCell>
                               <Tooltip title="Remove">
                                 <IconButton size="small" color="error" onClick={() => handleRemoveNewPerson(a)} sx={{ p: "3px" }}>

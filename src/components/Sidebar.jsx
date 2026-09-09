@@ -28,6 +28,7 @@ import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
 import { normalizeRole, SYSTEM_ROLES, ROLE_HIERARCHY } from '../utils/roleNormalizer';
 import logo from "../assets/active-teams.png"
+import { useCapabilities } from "../utils/capabilities";
 
 const allMenuItems = [
   { 
@@ -49,6 +50,7 @@ const allMenuItems = [
     path: '/people', 
     icon: Group, 
     roles: ['admin', 'leader', 'leaderat12'],
+    cap: 'view_people',
     level: 3
   },
   { 
@@ -56,6 +58,7 @@ const allMenuItems = [
     path: '/events', 
     icon: Event, 
     roles: ['admin', 'leader', 'leaderat12', 'user', 'registrant'],
+    cap: 'create_events',
     requiresCell: true,
     level: 1
   },
@@ -64,6 +67,7 @@ const allMenuItems = [
     path: '/stats', 
     icon: BarChart, 
     roles: ['admin', 'leader', 'leaderat12'],
+    cap: 'view_stats',
     level: 3
   },
   { 
@@ -71,6 +75,7 @@ const allMenuItems = [
     path: '/service-check-in', 
     icon: HowToReg, 
     roles: ['admin', 'registrant', 'leaderat12', 'leader'],
+    cap: 'checkin',
     level: 1
   },
   { 
@@ -85,6 +90,7 @@ const allMenuItems = [
     path: '/admin', 
     icon: AdminPanelSettings, 
     roles: ['admin'],
+    cap: 'admin',
     level: 5
   },
   { 
@@ -102,6 +108,7 @@ export default function Sidebar({ mode, setMode }) {
   const isMobile = useMediaQuery('(max-width:900px)');
   const location = useLocation();
   const { user } = useContext(AuthContext);
+  const { can } = useCapabilities();
   const [, setUserHasCell] = useState(true);
   const [menuItems, setMenuItems] = useState([]);
 
@@ -152,40 +159,37 @@ export default function Sidebar({ mode, setMode }) {
         setUserHasCell(true);
       }
       const filteredItems = allMenuItems.filter(item => {
+        if (item.path === '/events' && normalizedUserRole === 'user' && !hasCell) {
+          console.log(` ${item.label}: User has no cell`);
+          return false;
+        }
+
+        const capOk = item.cap ? can(item.cap) : false;
+
+        if (capOk) {
+          return true;
+        }
+
         if (isCustomRole) {
           const userLevel = ROLE_HIERARCHY['user'] || 2;
-                    if (item.level > userLevel) {
+          if (item.level > userLevel) {
             console.log(` ${item.label}: Custom role ${userRole} level ${userLevel} < required ${item.level}`);
             return false;
           }
-          
-          if (item.path === '/events' && userRole === 'user' && !hasCell) {
-            console.log(` ${item.label}: User has no cell`);
-            return false;
-          }
-          
           console.log(`${item.label}: Custom role ${userRole} granted access (level ${userLevel})`);
           return true;
-        } 
-        
-        else {
-          // Normalize both user role and item roles for comparison
-          const normalizedUserRole = normalizeRole(userRole);
-          const normalizedItemRoles = item.roles.map(normalizeRole);
-          
-          if (!normalizedItemRoles.includes(normalizedUserRole)) {
-            console.log(` ${item.label}: System role ${userRole} (normalized: ${normalizedUserRole}) not in ${item.roles} (normalized: ${normalizedItemRoles})`);
-            return false;
-          }
-          
-          if (item.path === '/events' && userRole === 'user' && !hasCell) {
-            console.log(` ${item.label}: User has no cell`);
-            return false;
-          }
-          
-          console.log(`${item.label}: System role ${userRole} granted access`);
-          return true;
         }
+
+        // Normalize both user role and item roles for comparison
+        const normalizedItemRoles = item.roles.map(normalizeRole);
+
+        if (!normalizedItemRoles.includes(normalizedUserRole)) {
+          console.log(` ${item.label}: System role ${userRole} (normalized: ${normalizedUserRole}) not in ${item.roles} (normalized: ${normalizedItemRoles})`);
+          return false;
+        }
+
+        console.log(`${item.label}: System role ${userRole} granted access`);
+        return true;
       });
 
       console.log(' Final menu items:', filteredItems.map(item => item.label));
@@ -193,7 +197,7 @@ export default function Sidebar({ mode, setMode }) {
     };
 
     checkUserAccess();
-  }, [user]);
+  }, [user, can]);
 
   const handleToggleMode = () => {
     setMode((prev) => {

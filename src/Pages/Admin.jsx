@@ -26,6 +26,10 @@ import {
   Coffee as CoffeeIcon
 } from '@mui/icons-material';
 import NewUserModal from '../components/NewUserModal';
+import RolesManager from '../components/RolesManager';
+import { useOrgConfig } from "../contexts/OrgConfigContext";
+import { useCapabilities, DEFAULT_ROLES } from "../utils/capabilities";
+import { toast } from "react-toastify";
 
 // ─── module-level cache ───────────────────────────────────────────────────────
 let globalUsersData = null;
@@ -41,6 +45,32 @@ export default function AdminDashboard() {
   const theme = useTheme();
   const { authFetch, user: currentUser } = useContext(AuthContext);
   const isSupremeAdmin = currentUser?.is_supreme_admin || currentUser?.email === SUPREME_ADMIN_EMAIL;
+  const { orgConfig, saveOrgConfig } = useOrgConfig();
+  const { can } = useCapabilities();
+
+  const [rolesEdit, setRolesEdit] = useState(() =>
+    Array.isArray(orgConfig?.roles) && orgConfig.roles.length
+      ? orgConfig.roles
+      : DEFAULT_ROLES.map((r) => ({ ...r, capabilities: [...r.capabilities] })),
+  );
+  const [savingRoles, setSavingRoles] = useState(false);
+  const [rolesSaveError, setRolesSaveError] = useState("");
+
+  const handleSaveRoles = async (roles) => {
+    setSavingRoles(true);
+    setRolesSaveError("");
+    try {
+      await saveOrgConfig({ roles });
+      setRolesEdit(roles);
+      addActivityLog('ROLES_UPDATED', `Updated roles & permissions for ${orgConfig?.org_name || 'my organisation'}`);
+      toast.success('Roles & permissions saved');
+    } catch (err) {
+      setRolesSaveError(err.message || 'Failed to save roles');
+      toast.error(err.message || 'Failed to save roles');
+    } finally {
+      setSavingRoles(false);
+    }
+  };
 
   const isXsDown = useMediaQuery(theme.breakpoints.down("xs"));
   const isSmDown = useMediaQuery(theme.breakpoints.down("sm"));
@@ -183,9 +213,7 @@ export default function AdminDashboard() {
       address: u.address || u.home_address,
       gender: u.gender,
       invitedBy: u.invitedBy || u.invited_by,
-      leader12: u.leader12,
-      leader144: u.leader144,
-      leader1728: u.leader1728,
+      leaders: u.leaders || {},
       stage: u.stage,
     }));
 
@@ -327,8 +355,7 @@ export default function AdminDashboard() {
           password: userData.password, phone_number: userData.phone_number,
           date_of_birth: userData.date_of_birth, address: userData.address,
           gender: userData.gender, invitedBy: userData.invitedBy,
-          leader12: userData.leader12, leader144: userData.leader144,
-          leader1728: userData.leader1728, stage: userData.stage || 'Win', role: userData.role
+          leaders: userData.leaders || {}, stage: userData.stage || 'Win', role: userData.role
         })
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed to create user'); }
@@ -765,6 +792,15 @@ export default function AdminDashboard() {
         {/* Roles tab */}
         {activeTab === 1 && (
           <Box sx={{ p: getResponsiveValue(1,2,3,3,3) }}>
+            {(() => {
+              const ownOrg = currentUser?.Organization || currentUser?.organization;
+              const canManageRolesHere = can('admin') && (!ownOrg || (selectedOrg && ownOrg.toLowerCase() === selectedOrg.toLowerCase()));
+              return canManageRolesHere ? (
+                <Box sx={{ mb: 4 }}>
+                  <RolesManager value={rolesEdit} onChange={setRolesEdit} onSave={handleSaveRoles} saving={savingRoles} saveError={rolesSaveError} />
+                </Box>
+              ) : null;
+            })()}
             <Alert severity="info" sx={{ mb: 3, boxShadow: 1, borderRadius: 2 }}>
               <AlertTitle>Role Distribution</AlertTitle>
               {uniqueRoles.length} unique roles in this organization

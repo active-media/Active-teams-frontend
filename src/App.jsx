@@ -5,6 +5,7 @@ import { createTheme, ThemeProvider, CssBaseline } from "@mui/material";
 
 import { AuthContext } from "./contexts/AuthContext";
 import { UserContext } from "./contexts/UserContext";
+import { useOrgConfig } from "./contexts/OrgConfigContext";
 
 import Sidebar from "./components/Sidebar";
 import TopbarProfile from "./components/TopbarProfile";
@@ -28,6 +29,7 @@ import SplashScreen from "./components/SplashScreen";
 
 import withAuthCheck from "./components/withAuthCheck";
 import Admin from "./Pages/Admin";
+import OrgSetup from "./Pages/OrgSetup";
 import NotFound from "./Pages/NotFound";
 
 // Wrap protected pages WITH ROLES - Updated with normalized roles (lowercase)
@@ -39,6 +41,7 @@ const ProtectedStats = withAuthCheck(Stats, ['admin','leaderat12']);
 const ProtectedCheckIn = withAuthCheck(ServiceCheckIn, ['admin', 'registrant', 'leaderat12']);
 const ProtectedDailyTasks = withAuthCheck(DailyTasks, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
 const ProtectedAdmin = withAuthCheck(Admin, ['admin']);
+const ProtectedOrgSetup = withAuthCheck(OrgSetup, ['admin']);
 const ProtectedCreateEvents = withAuthCheck(CreateEvents, ['admin', 'leader', 'leaderat12']);
 const ProtectedAttendance = withAuthCheck(AttendanceModal, ['admin', 'leader', 'leaderat12']);
 const ProtectedEventDetails = withAuthCheck(EventDetails, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
@@ -46,6 +49,7 @@ const ProtectedEventDetails = withAuthCheck(EventDetails, ['admin', 'leader', 'l
 function App() {
   const { user, loading, authFetch } = useContext(AuthContext);
   const { loadUserProfile, setUserProfile, setProfilePic } = useContext(UserContext);
+  const { configLoaded: orgConfigLoaded, isSetup: orgIsSetup } = useOrgConfig();
   const location = useLocation();
   const profileRefreshDone = useRef(false);
   const [mode, setMode] = useState(() => localStorage.getItem("themeMode") || "light");
@@ -166,6 +170,29 @@ function App() {
     );
   }
 
+  // Org setup gate: before a new organisation is configured, send its members
+  // to the setup wizard (only the wizard itself and auth pages are reachable).
+  const setupBypassPaths = [...noLayoutRoutes, "/org-setup"];
+  if (
+    user &&
+    orgConfigLoaded &&
+    !orgIsSetup &&
+    !setupBypassPaths.includes(location.pathname)
+  ) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <TopbarProfile />
+        <div style={{ display: "flex" }}>
+          <Sidebar mode={mode} setMode={setMode} />
+          <div style={{ flexGrow: 1, minWidth: 0 }}>
+            <Navigate to="/org-setup" replace />
+          </div>
+        </div>
+      </ThemeProvider>
+    );
+  }
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -202,6 +229,17 @@ function App() {
             <Route path="/reset-password" element={<ResetPassword mode={mode} />} />
 
             {/* Protected routes with role restrictions - normalized roles (lowercase) */}
+            <Route
+              path="/org-setup"
+              element={
+                orgConfigLoaded &&
+                orgIsSetup ? ( // already configured → don't show wizard
+                  <Navigate to="/" replace />
+                ) : (
+                  <ProtectedOrgSetup title="Org Setup" />
+                )
+              }
+            />
             <Route path="/" element={<ProtectedHome />} />
             <Route path="/admin" element={<ProtectedAdmin />} />
             <Route path="/profile" element={<ProtectedProfile title="Profile" />} />

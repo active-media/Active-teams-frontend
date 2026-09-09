@@ -18,6 +18,8 @@ import {
   VisibilityOff,
   Close
 } from '@mui/icons-material';
+import { useOrgConfig } from '../contexts/OrgConfigContext';
+import { getLevelsWithLabels, getLeaderValue } from '../utils/hierarchy';
 
 const NewUserModal = ({ 
   open, 
@@ -27,6 +29,9 @@ const NewUserModal = ({
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
+
+  const { orgConfig } = useOrgConfig();
+  const levels = getLevelsWithLabels(orgConfig);
   
   const [newUser, setNewUser] = useState({
     name: '',
@@ -38,9 +43,7 @@ const NewUserModal = ({
     address: '',
     gender: '',
     invitedBy: '',
-    leader12: '',
-    leader144: '',
-    leader1728: '',
+    leaders: {},
     stage: 'Win',
     role: 'user'
   });
@@ -79,9 +82,7 @@ const NewUserModal = ({
         address: '',
         gender: '',
         invitedBy: '',
-        leader12: '',
-        leader144: '',
-        leader1728: '',
+        leaders: {},
         stage: 'Win',
         role: 'user'
       });
@@ -114,9 +115,7 @@ const NewUserModal = ({
       setNewUser(prev => ({
         ...prev,
         invitedBy: '',
-        leader12: '',
-        leader144: '',
-        leader1728: ''
+        leaders: {},
       }));
       setFormErrors(prev => ({ ...prev, invitedBy: '' }));
       return;
@@ -127,12 +126,16 @@ const NewUserModal = ({
       p => `${p.Name || ""} ${p.Surname || ""}`.trim() === label.trim()
     );
 
+    const leaders = {};
+    for (const lv of levels) {
+      const name = getLeaderValue(person, lv.key);
+      if (name) leaders[lv.key] = name;
+    }
+
     setNewUser(prev => ({
       ...prev,
       invitedBy: label,
-      leader12: person?.["Leader @12"] || '',
-      leader144: person?.["Leader @144"] || '',
-      leader1728: person?.["Leader @ 1728"] || ''
+      leaders,
     }));
     setFormErrors(prev => ({ ...prev, invitedBy: '' }));
   };

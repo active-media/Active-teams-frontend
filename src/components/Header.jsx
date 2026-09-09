@@ -5,10 +5,10 @@ export default function Home() {
 
 
   const sections = [
-    { image: "/imagenumberone.jpeg" },
-    { image: "/imagenumbertwo.jpeg" },
-    { image: "/imagenumberthree.jpeg" },
-    { image: "/imagenumberfour.jpeg" },
+    { image: "/public/image1.PNG" },
+    { image: "public/3.png" },
+    { image: "public/2.png" },
+    { image: "public/1.png" },
     // { image: "/newimage.jpg" }, 
   ];
 

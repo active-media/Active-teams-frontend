@@ -1,6 +1,44 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useOrgConfig } from "../contexts/OrgConfigContext";
+import { DEFAULT_HIERARCHY } from "../utils/hierarchy";
 
 const DEFAULT_API = import.meta.env.VITE_BACKEND_URL;
+
+function orgLevels(hierarchy) {
+  const src = Array.isArray(hierarchy) && hierarchy.length > 0 ? hierarchy : DEFAULT_HIERARCHY;
+  return [...src]
+    .sort((a, b) => (a.level ?? 0) - (b.level ?? 0))
+    .map((lv) => ({
+      key: lv.key || lv.field || "",
+      label: lv.label || lv.key || lv.field || "",
+      level: lv.level,
+    }))
+    .filter((lv) => lv.key);
+}
+
+function csvCell(v) {
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function downloadTemplate(levels, topLeaders) {
+  const headers = ["Name", "Surname", "Phone", "Email", "Gender", "DOB", "Address", "InvitedBy", ...levels.map((l) => l.label)];
+  const topName = topLeaders?.male || topLeaders?.female || "Top Leader";
+  const levelColsFor = (name) => levels.map((l, i) => (i === 0 ? name : ""));
+  const rows = [
+    ["John", "Doe", "+27123456789", "john@example.com", "Male", "1990-01-01", "1 Main Street", topName, ...levelColsFor(topName)],
+    ["Jane", "Smith", "+27876543210", "jane@example.com", "Female", "1995-06-15", "2 Main Street", "John Doe", ...levelColsFor("John Doe")],
+  ];
+  const csv = "\uFEFF" + [headers, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "people-import-template.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 let _styleEl = null;
 
@@ -41,6 +79,10 @@ export default function PeopleImportFAB({
   themeMode = "dark",         
 }) {
   const isDark = themeMode !== "light";
+
+  const { orgConfig, topLeaders } = useOrgConfig();
+  const levels = orgLevels(orgConfig?.hierarchy);
+  const hierarchyBody = JSON.stringify(levels.map((l) => ({ level: l.level, key: l.key, label: l.label })));
 
   useEffect(() => {
     syncStyles(isDark);
@@ -113,6 +155,7 @@ export default function PeopleImportFAB({
     try {
       const form = new FormData();
       form.append("file", file);
+      form.append("hierarchy", hierarchyBody);
       const res  = await fetch(`${apiBase}/people/import/preview-columns`, {
         method: "POST", headers: authH, body: form,
       });
@@ -130,6 +173,7 @@ export default function PeopleImportFAB({
     try {
       const form   = new FormData();
       form.append("file", file);
+      form.append("hierarchy", hierarchyBody);
       const params = new URLSearchParams();
       if (org)    params.set("organization", org);
       if (dryRun) params.set("dry_run", "true");
@@ -246,6 +290,23 @@ export default function PeopleImportFAB({
                         <span key={c} className="pifab-chip">{c}</span>
                       ))}
                     </div>
+                  </div>
+
+                  <div className="pifab-alert pifab-alert--info">
+                    Expected leader columns: <strong>{levels.map(l => l.label).join(", ")}</strong>
+                    {levels[0] && <> — fill the first column; deeper levels resolve from <strong>InvitedBy</strong> ancestry.</>}
+                  </div>
+
+                  <div className="pifab-field">
+                    <label>No spreadsheet handy?</label>
+                    <button
+                      type="button"
+                      className="pifab-btn-secondary"
+                      onClick={() => downloadTemplate(levels, topLeaders)}
+                      style={{ width: "100%", padding: "12px", justifyContent: "center" }}
+                    >
+                      ⬇ Download template for your church
+                    </button>
                   </div>
 
                   {file && (
