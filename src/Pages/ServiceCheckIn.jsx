@@ -1037,6 +1037,9 @@ const sortedFilteredAttendees = useMemo(() => {
         });
         setOpenDialog(false); setEditingPerson(null); setFormData(emptyForm);
         fetchRealTimeEventData(currentEventId).then(fd => { if (fd) setRealTimeData(fd); });
+        // Invalidate client-side cache so other components get fresh data
+        window.globalPeopleCache = null;
+        window.globalCacheTimestamp = null;
         authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => { });
         return;
       }
@@ -1062,6 +1065,9 @@ const sortedFilteredAttendees = useMemo(() => {
       });
 
       setAttendees(prev => [newPersonForGrid, ...prev]);
+      // Invalidate client-side cache so other components get fresh data
+      window.globalPeopleCache = null;
+      window.globalCacheTimestamp = null;
       authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => {});
       fetchRealTimeEventData(cleanEventId(currentEventId)).then(fd => { if (fd) setRealTimeData(fd); });
 
@@ -1266,11 +1272,16 @@ const sortedFilteredAttendees = useMemo(() => {
         const newPeople = (prev.new_people || []).filter(filterFn);
         return { ...prev, present_attendees: newPresent, new_people: newPeople, present_count: newPresent.length, new_people_count: newPeople.length };
       });
+      // Invalidate client-side cache so other components get fresh data
+      window.globalPeopleCache = null;
+      window.globalCacheTimestamp = null;
       authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => {});
+      // Re-fetch real-time data to ensure consistency
+      fetchRealTimeEventData(currentEventId).then(fd => { if (fd) setRealTimeData(fd); });
       toast.success(`"${personName}" deleted successfully`);
     } catch { toast.error("An error occurred while deleting the person"); }
     finally { setIsDeleting(false); setDeleteConfirmation({ open: false, personId: null, personName: "" }); }
-  }, [authFetch]);
+  }, [authFetch, currentEventId, fetchRealTimeEventData]);
 
   const handleRemoveNewPerson = useCallback(async (person) => {
     if (!currentEventId) { toast.error("Please select an event first"); return; }

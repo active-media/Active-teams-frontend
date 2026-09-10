@@ -12,7 +12,7 @@ import { AuthContext } from "../contexts/AuthContext";
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
-const CACHE_DURATION = 30 * 60 * 1000;
+const CACHE_DURATION = 5 * 60 * 1000;
 
 const initialFormState = {
   name: "", surname: "", dob: "", address: "", email: "",
@@ -41,7 +41,7 @@ const peopleStore = {
 const mapPerson = (raw) => {
   const name    = (raw.Name    || raw.name    || "").toString().trim();
   const surname = (raw.Surname || raw.surname || "").toString().trim();
-  const fullName = `${name} ${surname}`.trim();
+  const fullName = (raw.FullName || raw.fullName || `${name} ${surname}`).trim();
   const email   = (raw.Email   || raw.email   || "").toString().trim();
   const phone   = (raw.Number  || raw.phone   || raw.Phone || "").toString().trim();
 

@@ -137,7 +137,7 @@ function mapRawPerson(raw) {
   ).trim();
   const leaderMap = getLeadersByLevel(raw);
   const leadersCombined = Object.values(leaderMap).join(" ");
-  const fullName = `${name} ${surname}`.trim();
+  const fullName = (raw.FullName || raw.fullName || `${name} ${surname}`).trim();
   return {
     _id: safeStr(raw._id || raw.id || ""),
     name,

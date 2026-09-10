@@ -109,6 +109,32 @@ export default function DailyTasks() {
   const [typeMenuOpen, setTypeMenuOpen] = useState(false);
   const [selectedTypeToManage, setSelectedTypeToManage] = useState(null);
   const isAdmin = user?.role?.toLowerCase() === "admin";
+  const isLeader = user?.role?.toLowerCase() === "leader";
+  const isLeaderAt12 = user?.role?.toLowerCase() === "leaderat12";
+  const isLeaderRole = isLeader || isLeaderAt12;
+  const canViewTeam = isAdmin || isLeaderRole;
+
+  // View filter: "personal" | "all" (admin only) | "team" (leader only)
+  const [viewFilter, setViewFilter] = useState(() => {
+    if (isAdmin) return "all";
+    if (isLeaderRole) return "personal";
+    return "personal";
+  });
+
+  // Person filter for team view
+  const [selectedPeople, setSelectedPeople] = useState([]);
+  const [personSearch, setPersonSearch] = useState("");
+  const [personSearchResults, setPersonSearchResults] = useState([]);
+  const [showPersonDropdown, setShowPersonDropdown] = useState(false);
+
+  // Custom date range
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+
+  // Multi-select for bulk actions
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const [deletingTaskType, setDeletingTaskType] = useState(false);
   const API_URL = `${import.meta.env.VITE_BACKEND_URL}`;
@@ -220,6 +246,95 @@ export default function DailyTasks() {
     const minutes = String(date.getMinutes()).padStart(2, "0");
     return `${year}-${month}-${day}T${hours}:${minutes}`;
   };
+
+  // ── Team filtering helpers ──────────────────────────────────────────────────
+  const getTeamMemberEmails = useCallback(() => {
+    if (!user?.email || !canViewTeam) return [];
+    const leaderEmail = user.email.toLowerCase().trim();
+    const people = window.globalPeopleCache || allPeople || [];
+    const teamEmails = new Set();
+
+    people.forEach((person) => {
+      const pEmail = (person.email || "").toLowerCase().trim();
+      if (!pEmail) return;
+
+      // Check all leader hierarchy levels
+      const leader1Email = (person.leader1Email || person.leader1_email || person.leader1email || "").toLowerCase().trim();
+      const leader12Email = (person.leader12Email || person.leader12_email || person.leader12email || "").toLowerCase().trim();
+      const leader144Email = (person.leader144Email || person.leader144_email || person.leader144email || "").toLowerCase().trim();
+      const leader1728Email = (person.leader1728Email || person.leader1728_email || person.leader1728email || "").toLowerCase().trim();
+
+      if (
+        leader1Email === leaderEmail ||
+        leader12Email === leaderEmail ||
+        leader144Email === leaderEmail ||
+        leader1728Email === leaderEmail
+      ) {
+        teamEmails.add(pEmail);
+      }
+    });
+
+    return Array.from(teamEmails);
+  }, [user, canViewTeam, allPeople]);
+
+  const getSubordinateEmails = useCallback((personEmail) => {
+    if (!personEmail) return [];
+    const email = personEmail.toLowerCase().trim();
+    const people = window.globalPeopleCache || allPeople || [];
+    const subEmails = new Set([email]);
+    let found = true;
+
+    // Recursively find all subordinates
+    while (found) {
+      found = false;
+      people.forEach((person) => {
+        const pEmail = (person.email || "").toLowerCase().trim();
+        if (subEmails.has(pEmail)) return;
+
+        const leader1Email = (person.leader1Email || person.leader1_email || person.leader1email || "").toLowerCase().trim();
+        const leader12Email = (person.leader12Email || person.leader12_email || person.leader12email || "").toLowerCase().trim();
+        const leader144Email = (person.leader144Email || person.leader144_email || person.leader144email || "").toLowerCase().trim();
+        const leader1728Email = (person.leader1728Email || person.leader1728_email || person.leader1728email || "").toLowerCase().trim();
+
+        if (
+          subEmails.has(leader1Email) ||
+          subEmails.has(leader12Email) ||
+          subEmails.has(leader144Email) ||
+          subEmails.has(leader1728Email)
+        ) {
+          subEmails.add(pEmail);
+          found = true;
+        }
+      });
+    }
+
+    return Array.from(subEmails);
+  }, [allPeople]);
+
+  const searchTeamPeople = useCallback((query) => {
+    if (!query || query.length < 1) {
+      setPersonSearchResults([]);
+      return;
+    }
+    const q = query.toLowerCase().trim();
+    const people = window.globalPeopleCache || allPeople || [];
+    const teamEmails = getTeamMemberEmails();
+
+    const results = people
+      .filter((p) => {
+        const pEmail = (p.email || "").toLowerCase().trim();
+        if (!teamEmails.includes(pEmail)) return false;
+        const name = `${p.name || ""} ${p.surname || ""}`.toLowerCase().trim();
+        return name.includes(q) || pEmail.includes(q);
+      })
+      .slice(0, 10)
+      .map((p) => ({
+        email: (p.email || "").toLowerCase().trim(),
+        name: `${p.name || ""} ${p.surname || ""}`.trim(),
+      }));
+
+    setPersonSearchResults(results);
+  }, [allPeople, getTeamMemberEmails]);
 
   const fetchTaskTypes = async () => {
     try {
@@ -371,33 +486,65 @@ export default function DailyTasks() {
       setLoading(true);
       const normalizedEmail = (user.email || "").trim().toLowerCase();
 
-      // Fetch regular tasks and special tasks in parallel
-      const [regularRes, specialRes] = await Promise.all([
-        authFetch(
-          `${API_URL}/tasks?email=${encodeURIComponent(normalizedEmail)}`,
-          { signal },
-        ),
-        authFetch(`${API_URL}/tasks/my-special-tasks`, { signal }),
-      ]);
+      // Determine which emails to fetch tasks for based on viewFilter
+      let targetEmails = [normalizedEmail];
 
-      const regularData = regularRes.ok ? await regularRes.json() : {};
-      const specialData = specialRes.ok ? await specialRes.json() : {};
+      if (viewFilter === "team" && canViewTeam) {
+        // Team view: fetch tasks for team members
+        if (selectedPeople.length > 0) {
+          // Specific people selected: get their subordinates too
+          const allEmails = new Set();
+          selectedPeople.forEach((person) => {
+            getSubordinateEmails(person.email).forEach((email) => allEmails.add(email));
+          });
+          targetEmails = Array.from(allEmails);
+        } else {
+          // All team members
+          targetEmails = getTeamMemberEmails();
+          // Always include self
+          if (!targetEmails.includes(normalizedEmail)) {
+            targetEmails.push(normalizedEmail);
+          }
+        }
+      }
+      // For "all" view (admin), we fetch all tasks - TODO: use backend endpoint when available
 
-      const regularTasks = Array.isArray(regularData)
-        ? regularData
-        : regularData.tasks || [];
+      // Fetch tasks for each target email (client-side mock for now)
+      const allTasksMap = new Map();
 
-      const specialTasks = Array.isArray(specialData)
-        ? specialData
-        : specialData.tasks || [];
+      // Fetch tasks in parallel for all target emails
+      const fetchPromises = targetEmails.map(async (email) => {
+        try {
+          const [regularRes, specialRes] = await Promise.all([
+            authFetch(
+              `${API_URL}/tasks?email=${encodeURIComponent(email)}`,
+              { signal }
+            ),
+            authFetch(`${API_URL}/tasks/my-special-tasks`, { signal }),
+          ]);
 
-      // Merge and deduplicate by _id / id
-      const tasksMap = new Map();
+          const regularData = regularRes.ok ? await regularRes.json() : {};
+          const specialData = specialRes.ok ? await specialRes.json() : {};
 
-      [...regularTasks, ...specialTasks].forEach((task) => {
+          const regularTasks = Array.isArray(regularData)
+            ? regularData
+            : regularData.tasks || [];
+          const specialTasks = Array.isArray(specialData)
+            ? specialData
+            : specialData.tasks || [];
+
+          return [...regularTasks, ...specialTasks];
+        } catch (err) {
+          console.error(`Error fetching tasks for ${email}:`, err.message);
+          return [];
+        }
+      });
+
+      const results = await Promise.all(fetchPromises);
+      results.flat().forEach((task) => {
         const key = String(task._id || task.id || task.taskId || "");
-        if (key && !tasksMap.has(key)) {
-          tasksMap.set(key, task);
+        if (key && !allTasksMap.has(key)) {
+          allTasksMap.set(key, task);
         }
       });
 
@@ -469,18 +616,17 @@ export default function DailyTasks() {
         };
       };
 
-      const normalizedTasks = Array.from(tasksMap.values()).map(normalizeTask);
+      const normalizedTasks = Array.from(allTasksMap.values()).map(normalizeTask);
 
       // Filter: regular tasks by assignedfor/assigned_to_email
-      // Special tasks already scoped by backend — just ensure they belong to user
       const myTasks = normalizedTasks.filter((task) => {
         const assignedFor = (task.assignedfor || "").trim().toLowerCase();
-        const assignedTo = (task.assigned_to_email || "").trim().toLowerCase();
+        const assignedToEmail = (task.assigned_to_email || "").trim().toLowerCase();
         const leaderEmail = (task.leader_assigned || "").trim().toLowerCase();
 
         return (
           assignedFor === normalizedEmail ||
-          assignedTo === normalizedEmail ||
+          assignedToEmail === normalizedEmail ||
           leaderEmail === normalizedEmail
         );
       });
@@ -495,7 +641,7 @@ export default function DailyTasks() {
     }
 
     return () => controller.abort();
-  }, [user, authFetch, API_URL]);
+  }, [user, authFetch, API_URL, viewFilter, canViewTeam, selectedPeople, getTeamMemberEmails, getSubordinateEmails]);
 
   const pollIntervalRef = useRef(null);
 
@@ -849,6 +995,13 @@ export default function DailyTasks() {
     }
   }, [user]);
 
+  // Refetch tasks when viewFilter or selectedPerson changes
+  useEffect(() => {
+    if (user) {
+      fetchUserTasks();
+    }
+  }, [viewFilter, selectedPeople]);
+
   const handleOpen = (type) => {
     setFormType(type);
     setIsModalOpen(true);
@@ -974,6 +1127,55 @@ export default function DailyTasks() {
     } catch (err) {
       console.error("Error updating task:", err.message);
       toast.error("Failed to update task: " + err.message);
+    }
+  };
+
+  const toggleTaskSelection = (taskId) => {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedTaskIds.size === filteredTasks.length) {
+      setSelectedTaskIds(new Set());
+    } else {
+      setSelectedTaskIds(new Set(filteredTasks.map((t) => t._id)));
+    }
+  };
+
+  const bulkMarkComplete = async () => {
+    if (selectedTaskIds.size === 0) return;
+    setBulkDeleting(true);
+    try {
+      const ids = Array.from(selectedTaskIds);
+      await Promise.all(
+        ids.map((taskId) =>
+          authFetch(`${API_URL}/tasks/${taskId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              status: "completed",
+              completedAt: new Date().toISOString(),
+            }),
+          })
+        )
+      );
+      toast.success(`${ids.length} task(s) marked as completed`);
+      setSelectedTaskIds(new Set());
+      setSelectionMode(false);
+      await fetchUserTasks();
+    } catch (err) {
+      console.error("Bulk complete error:", err);
+      toast.error("Failed to complete some tasks");
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -1300,6 +1502,15 @@ export default function DailyTasks() {
         getStartOfMonth(lastMonthDate),
         getEndOfMonth(lastMonthDate)
       );
+    }
+
+    case "custom": {
+      if (!customStartDate || !customEndDate) return true;
+      const start = new Date(customStartDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(customEndDate);
+      end.setHours(23, 59, 59, 999);
+      return isDateInRange(dateToCheck, start, end);
     }
 
     default:
@@ -1664,8 +1875,47 @@ export default function DailyTasks() {
               <option value="thisMonth">This Month</option>
               <option value="previousWeek">Previous Week</option>
               <option value="previousMonth">Previous Month</option>
+              <option value="custom">Custom Range</option>
             </select>
           </div>
+
+          {/* Custom date range pickers */}
+          {dateRange === "custom" && (
+            <div style={{ marginTop: "12px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={(e) => setCustomStartDate(e.target.value)}
+                style={{
+                  flex: "1 1 120px",
+                  padding: "10px 12px",
+                  borderRadius: "10px",
+                  border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                  backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
+                  color: isDarkMode ? "#fff" : "#1a1a24",
+                  fontSize: "13px",
+                  fontWeight: "500",
+                  outline: "none",
+                }}
+              />
+              <input
+                type="date"
+                value={customEndDate}
+                onChange={(e) => setCustomEndDate(e.target.value)}
+                style={{
+                  flex: "1 1 120px",
+                  padding: "10px 12px",
+                  borderRadius: "10px",
+                  border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                  backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
+                  color: isDarkMode ? "#fff" : "#1a1a24",
+                  fontSize: "13px",
+                  fontWeight: "500",
+                  outline: "none",
+                }}
+              />
+            </div>
+          )}
 
           <div style={{ marginTop: "12px" }}>
             <button
@@ -1695,6 +1945,264 @@ export default function DailyTasks() {
             </button>
           </div>
         </div>
+
+        {/* View Filter for Admin/Leader */}
+        {canViewTeam && (
+          <div style={{ marginTop: "16px" }}>
+            <div style={{
+              display: "flex",
+              justifyContent: "center",
+              gap: "6px",
+              flexWrap: "wrap",
+            }}>
+              {isAdmin && (
+                <button
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: "20px",
+                    border: viewFilter === "all"
+                      ? "none"
+                      : `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    backgroundColor: viewFilter === "all"
+                      ? isDarkMode ? "#fff" : "#000"
+                      : isDarkMode ? "#2d2d2d" : "#ffffff",
+                    color: viewFilter === "all"
+                      ? isDarkMode ? "#000" : "#fff"
+                      : isDarkMode ? "#fff" : "#1a1a24",
+                    fontSize: "13px",
+                    boxShadow: viewFilter === "all"
+                      ? isDarkMode ? "0 2px 8px rgba(255,255,255,0.1)" : "0 4px 24px rgba(0, 0, 0, 0.08)"
+                      : "none",
+                    whiteSpace: "nowrap",
+                  }}
+                  onClick={() => { setViewFilter("all"); setSelectedPeople([]); setPersonSearch(""); }}
+                >
+                  All Tasks
+                </button>
+              )}
+              {isLeaderRole && (
+                <button
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: "20px",
+                    border: viewFilter === "team"
+                      ? "none"
+                      : `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    backgroundColor: viewFilter === "team"
+                      ? isDarkMode ? "#fff" : "#000"
+                      : isDarkMode ? "#2d2d2d" : "#ffffff",
+                    color: viewFilter === "team"
+                      ? isDarkMode ? "#000" : "#fff"
+                      : isDarkMode ? "#fff" : "#1a1a24",
+                    fontSize: "13px",
+                    boxShadow: viewFilter === "team"
+                      ? isDarkMode ? "0 2px 8px rgba(255,255,255,0.1)" : "0 4px 24px rgba(0, 0, 0, 0.08)"
+                      : "none",
+                    whiteSpace: "nowrap",
+                  }}
+                  onClick={() => { setViewFilter("team"); setSelectedPeople([]); setPersonSearch(""); }}
+                >
+                  My Team
+                </button>
+              )}
+              <button
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "20px",
+                  border: viewFilter === "personal"
+                    ? "none"
+                    : `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                  fontWeight: "600",
+                  cursor: "pointer",
+                  backgroundColor: viewFilter === "personal"
+                    ? isDarkMode ? "#fff" : "#000"
+                    : isDarkMode ? "#2d2d2d" : "#ffffff",
+                  color: viewFilter === "personal"
+                    ? isDarkMode ? "#000" : "#fff"
+                    : isDarkMode ? "#fff" : "#1a1a24",
+                  fontSize: "13px",
+                  boxShadow: viewFilter === "personal"
+                    ? isDarkMode ? "0 2px 8px rgba(255,255,255,0.1)" : "0 4px 24px rgba(0, 0, 0, 0.08)"
+                    : "none",
+                  whiteSpace: "nowrap",
+                }}
+                onClick={() => { setViewFilter("personal"); setSelectedPeople([]); setPersonSearch(""); }}
+              >
+                Personal
+              </button>
+            </div>
+
+            {/* Person search for team view */}
+            {viewFilter === "team" && (
+              <div style={{ marginTop: "12px", maxWidth: "280px", margin: "12px auto 0" }}>
+                {/* Selected people chips */}
+                {selectedPeople.length > 0 && (
+                  <div style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "6px",
+                    marginBottom: "8px",
+                  }}>
+                    {selectedPeople.map((person) => (
+                      <span
+                        key={person.email}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          padding: "4px 10px",
+                          borderRadius: "16px",
+                          backgroundColor: isDarkMode ? "#fff" : "#000",
+                          color: isDarkMode ? "#000" : "#fff",
+                          fontSize: "12px",
+                          fontWeight: "600",
+                        }}
+                      >
+                        {person.name}
+                        <button
+                          onClick={() => {
+                            setSelectedPeople(selectedPeople.filter(p => p.email !== person.email));
+                          }}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: isDarkMode ? "#000" : "#fff",
+                            cursor: "pointer",
+                            padding: 0,
+                            fontSize: "14px",
+                            lineHeight: 1,
+                          }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    <button
+                      onClick={() => { setSelectedPeople([]); setPersonSearch(""); }}
+                      style={{
+                        background: "none",
+                        border: `1px solid ${isDarkMode ? "#666" : "#ccc"}`,
+                        borderRadius: "16px",
+                        padding: "4px 10px",
+                        fontSize: "11px",
+                        color: isDarkMode ? "#aaa" : "#666",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                )}
+
+                {/* Search input */}
+                <div style={{ position: "relative" }}>
+                  <input
+                    type="text"
+                    placeholder={selectedPeople.length > 0 ? "Add more people..." : "Search people..."}
+                    value={personSearch}
+                    onChange={(e) => {
+                      setPersonSearch(e.target.value);
+                      searchTeamPeople(e.target.value);
+                      setShowPersonDropdown(true);
+                    }}
+                    onFocus={() => {
+                      setShowPersonDropdown(true);
+                      if (personSearch) searchTeamPeople(personSearch);
+                    }}
+                    onBlur={() => setTimeout(() => setShowPersonDropdown(false), 200)}
+                    style={{
+                      width: "100%",
+                      padding: "10px 16px",
+                      borderRadius: "10px",
+                      border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                      backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
+                      color: isDarkMode ? "#fff" : "#1a1a24",
+                      fontSize: "14px",
+                      fontWeight: "500",
+                      outline: "none",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  {showPersonDropdown && personSearchResults.length > 0 && (
+                    <div style={{
+                      position: "absolute",
+                      top: "100%",
+                      left: 0,
+                      right: 0,
+                      backgroundColor: isDarkMode ? "#2d2d2d" : "#fff",
+                      border: `1px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                      borderRadius: "10px",
+                      marginTop: "4px",
+                      maxHeight: "200px",
+                      overflowY: "auto",
+                      zIndex: 100,
+                      boxShadow: isDarkMode
+                        ? "0 4px 12px rgba(0,0,0,0.3)"
+                        : "0 4px 12px rgba(0,0,0,0.1)",
+                    }}>
+                      {personSearchResults.map((person) => {
+                        const isSelected = selectedPeople.some(p => p.email === person.email);
+                        return (
+                          <div
+                            key={person.email}
+                            onClick={() => {
+                              if (isSelected) {
+                                setSelectedPeople(selectedPeople.filter(p => p.email !== person.email));
+                              } else {
+                                setSelectedPeople([...selectedPeople, person]);
+                              }
+                              setPersonSearch("");
+                            }}
+                            style={{
+                              padding: "10px 16px",
+                              cursor: "pointer",
+                              borderBottom: `1px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                              color: isDarkMode ? "#fff" : "#1a1a24",
+                              fontSize: "14px",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "10px",
+                              backgroundColor: isSelected
+                                ? (isDarkMode ? "#3a3a3a" : "#f3f4f6")
+                                : "transparent",
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isSelected) e.currentTarget.style.backgroundColor = isDarkMode ? "#3a3a3a" : "#f3f4f6";
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) e.currentTarget.style.backgroundColor = "transparent";
+                            }}
+                          >
+                            <div style={{
+                              width: "18px",
+                              height: "18px",
+                              borderRadius: "4px",
+                              border: `2px solid ${isSelected ? (isDarkMode ? "#fff" : "#000") : (isDarkMode ? "#666" : "#ccc")}`,
+                              backgroundColor: isSelected ? (isDarkMode ? "#fff" : "#000") : "transparent",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              flexShrink: 0,
+                            }}>
+                              {isSelected && (
+                                <span style={{ color: isDarkMode ? "#000" : "#fff", fontSize: "12px", fontWeight: "bold" }}>✓</span>
+                              )}
+                            </div>
+                            {person.name}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div
           style={{
@@ -1753,6 +2261,97 @@ export default function DailyTasks() {
             </button>
           ))}
         </div>
+
+        {/* Selection mode controls */}
+        {filteredTasks.length > 0 && (
+          <div style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: "12px",
+            marginTop: "16px",
+            flexWrap: "wrap",
+          }}>
+            {selectionMode ? (
+              <>
+                <button
+                  onClick={toggleSelectAll}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: "20px",
+                    border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    backgroundColor: isDarkMode ? "#2d2d2d" : "#ffffff",
+                    color: isDarkMode ? "#fff" : "#1a1a24",
+                    fontSize: "13px",
+                  }}
+                >
+                  {selectedTaskIds.size === filteredTasks.length ? "Deselect All" : "Select All"}
+                </button>
+                <span style={{
+                  fontSize: "13px",
+                  color: isDarkMode ? "#aaa" : "#6b7280",
+                  fontWeight: "500",
+                }}>
+                  {selectedTaskIds.size} selected
+                </span>
+                <button
+                  onClick={bulkMarkComplete}
+                  disabled={selectedTaskIds.size === 0 || bulkDeleting}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: "20px",
+                    border: "none",
+                    fontWeight: "600",
+                    cursor: selectedTaskIds.size === 0 ? "not-allowed" : "pointer",
+                    backgroundColor: selectedTaskIds.size === 0
+                      ? (isDarkMode ? "#3a3a3a" : "#e5e5e5")
+                      : (isDarkMode ? "#fff" : "#000"),
+                    color: selectedTaskIds.size === 0
+                      ? (isDarkMode ? "#666" : "#aaa")
+                      : (isDarkMode ? "#000" : "#fff"),
+                    fontSize: "13px",
+                    opacity: bulkDeleting ? 0.7 : 1,
+                  }}
+                >
+                  {bulkDeleting ? "Completing..." : "Mark Complete"}
+                </button>
+                <button
+                  onClick={() => { setSelectionMode(false); setSelectedTaskIds(new Set()); }}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: "20px",
+                    border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    backgroundColor: isDarkMode ? "#2d2d2d" : "#ffffff",
+                    color: isDarkMode ? "#fff" : "#1a1a24",
+                    fontSize: "13px",
+                  }}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setSelectionMode(true)}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "20px",
+                  border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                  fontWeight: "600",
+                  cursor: "pointer",
+                  backgroundColor: isDarkMode ? "#2d2d2d" : "#ffffff",
+                  color: isDarkMode ? "#fff" : "#1a1a24",
+                  fontSize: "13px",
+                }}
+              >
+                Select Tasks
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Task list container */}
@@ -1817,6 +2416,7 @@ export default function DailyTasks() {
 
               const assignedDisplay = task.assignedTo || "";
               const sourceDisplay = task.source_display || "Manual";
+              const isSelected = selectedTaskIds.has(task._id);
 
               return (
                 <div
@@ -1828,21 +2428,50 @@ export default function DailyTasks() {
                     backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
                     padding: "16px",
                     borderRadius: "12px",
-                    border: `1px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                    border: selectionMode
+                      ? `2px solid ${isSelected ? (isDarkMode ? "#fff" : "#000") : (isDarkMode ? "#444" : "#e5e7eb")}`
+                      : `1px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
                     marginBottom: "10px",
-                    cursor: "pointer",
-                    boxShadow: isDarkMode
-                      ? "0 2px 8px rgba(255,255,255,0.1)"
-                      : "0 4px 24px rgba(0, 0, 0, 0.08)",
+                    cursor: selectionMode ? "pointer" : "pointer",
+                    boxShadow: isSelected
+                      ? (isDarkMode ? "0 2px 12px rgba(255,255,255,0.2)" : "0 4px 24px rgba(0, 0, 0, 0.15)")
+                      : isDarkMode
+                        ? "0 2px 8px rgba(255,255,255,0.1)"
+                        : "0 4px 24px rgba(0, 0, 0, 0.08)",
+                    opacity: selectionMode && !isSelected ? 0.6 : 1,
+                  }}
+                  onClick={() => {
+                    if (selectionMode) {
+                      toggleTaskSelection(task._id);
+                    } else {
+                      handleEdit(task);
+                    }
                   }}
                 >
+                  {selectionMode && (
+                    <div style={{
+                      width: "22px",
+                      height: "22px",
+                      borderRadius: "6px",
+                      border: `2px solid ${isSelected ? (isDarkMode ? "#000" : "#fff") : (isDarkMode ? "#666" : "#ccc")}`,
+                      backgroundColor: isSelected ? (isDarkMode ? "#fff" : "#000") : "transparent",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                      marginRight: "12px",
+                    }}>
+                      {isSelected && (
+                        <span style={{ color: isDarkMode ? "#000" : "#fff", fontSize: "14px", fontWeight: "bold" }}>✓</span>
+                      )}
+                    </div>
+                  )}
                   <div
                     style={{
                       cursor: "pointer",
                       flex: 1,
                       minWidth: 0,
                     }}
-                    onClick={() => handleEdit(task)}
                   >
                     {(() => {
                       const chipInfo = getTaskChipInfo(task);
