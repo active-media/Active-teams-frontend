@@ -104,7 +104,7 @@ export default function SplashScreen({ onFinish }) {
         </div>
       </div>
 
-      <style jsx>{`
+      <style jsx="true">{`
         .splash-container {
           display: flex;
           justify-content: center;

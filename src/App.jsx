@@ -14,6 +14,9 @@ import Profile from "./Pages/Profile";
 import { PeopleSection as People } from "./Pages/People";
 import Events from "./Pages/Events";
 import Stats from "./Pages/Stats";
+import Reports from "./Pages/Reports";
+import ScheduledReports from "./Pages/ScheduledReports";
+import ReportingDashboard from "./Pages/ReportingDashboard";
 import ServiceCheckIn from "./Pages/ServiceCheckIn";
 import DailyTasks from "./Pages/DailyTasks";
 import CreateEvents from "./Pages/CreateEvents";
@@ -36,6 +39,9 @@ const ProtectedProfile = withAuthCheck(Profile, ['admin', 'leader', 'leaderAt12'
 const ProtectedPeople = withAuthCheck(People, ['admin', 'leader', 'leaderAt12']);
 const ProtectedEvents = withAuthCheck(Events, ['admin', 'leader', 'leaderAt12', 'registrant'], true); 
 const ProtectedStats = withAuthCheck(Stats, ['admin','leaderAt12']);
+const ProtectedReports = withAuthCheck(Reports, ['admin', 'leaderAt12']);
+const ProtectedScheduledReports = withAuthCheck(ScheduledReports, ['admin', 'leaderAt12']);
+const ProtectedReportingDashboard = withAuthCheck(ReportingDashboard, ['admin', 'leaderAt12']);
 const ProtectedCheckIn = withAuthCheck(ServiceCheckIn, ['admin', 'registrant', 'leaderAt12']);
 const ProtectedDailyTasks = withAuthCheck(DailyTasks, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
 const ProtectedAdmin = withAuthCheck(Admin, ['admin']);
@@ -209,6 +215,9 @@ function App() {
             <Route path="/people" element={<ProtectedPeople title="People" />} />
             <Route path="/events" element={<ProtectedEvents title="Events" />} />
             <Route path="/stats" element={<ProtectedStats title="Stats" />} />
+            <Route path="/reports" element={<ProtectedReports title="Reports" />} />
+            <Route path="/reporting/scheduled" element={<ProtectedScheduledReports title="Scheduled Reports" />} />
+            <Route path="/reporting/dashboard" element={<ProtectedReportingDashboard title="Reporting Dashboard" />} />
             <Route path="/create-events" element={<ProtectedCreateEvents title="Create Events" />} />
             <Route path="/edit-event/:id" element={<ProtectedCreateEvents title="Create Events Edit" />} />
             <Route path="/attendance" element={<ProtectedAttendance title="Attendance Modal" />} />
