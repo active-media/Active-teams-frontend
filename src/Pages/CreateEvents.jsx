@@ -254,12 +254,22 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
     });
     const determineEventType = () => {
       if (selectedEventTypeObj) {
+        const objName = selectedEventTypeObj.name || selectedEventTypeObj.displayName || "";
+        const matchedFromList = eventTypes.find((et) => {
+          const etName = et.name || et.displayName || "";
+          return (
+            etName.toLowerCase() === objName.toLowerCase() ||
+            et._id === selectedEventTypeObj._id
+          );
+        });
+        const source = matchedFromList || selectedEventTypeObj;
+        console.log("Using event type source:", matchedFromList ? "eventTypes list" : "selectedEventTypeObj", source);
         return {
           eventType:
-            selectedEventTypeObj.name || selectedEventTypeObj.displayName || "",
-          isGlobal: !!selectedEventTypeObj.isGlobal,
-          isTicketed: !!selectedEventTypeObj.isTicketed,
-          hasPersonSteps: !!selectedEventTypeObj.hasPersonSteps,
+            objName,
+          isGlobal: !!source.isGlobal,
+          isTicketed: !!source.isTicketed,
+          hasPersonSteps: !!source.hasPersonSteps,
         };
       }
       if (selectedEventType) {
