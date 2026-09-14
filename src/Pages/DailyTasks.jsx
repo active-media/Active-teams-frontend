@@ -93,12 +93,21 @@ export default function DailyTasks() {
   const [tasks, setTasks] = useState([]);
   const [taskTypes, setTaskTypes] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [batchSize, setBatchSize] = useState(() => {
+    const saved = Number(localStorage.getItem("dt_batch_size") || 50);
+    return [25, 50, 100, 200, 500].includes(saved) ? saved : 50;
+  });
+  const [hasMoreTasks, setHasMoreTasks] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [totalTasks, setTotalTasks] = useState(0);
+  const pageRef = useRef(1);
   const [selectedTask, setSelectedTask] = useState({});
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAddTypeModalOpen, setIsAddTypeModalOpen] = useState(false);
   const [formType, setFormType] = useState("");
   const [dateRange, setDateRange] = useState("today");
   const [filterType, setFilterType] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [newTaskTypeName, setNewTaskTypeName] = useState("");
   const [addingTaskType, setAddingTaskType] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -277,40 +286,6 @@ export default function DailyTasks() {
     return Array.from(teamEmails);
   }, [user, canViewTeam, allPeople]);
 
-  const getSubordinateEmails = useCallback((personEmail) => {
-    if (!personEmail) return [];
-    const email = personEmail.toLowerCase().trim();
-    const people = window.globalPeopleCache || allPeople || [];
-    const subEmails = new Set([email]);
-    let found = true;
-
-    // Recursively find all subordinates
-    while (found) {
-      found = false;
-      people.forEach((person) => {
-        const pEmail = (person.email || "").toLowerCase().trim();
-        if (subEmails.has(pEmail)) return;
-
-        const leader1Email = (person.leader1Email || person.leader1_email || person.leader1email || "").toLowerCase().trim();
-        const leader12Email = (person.leader12Email || person.leader12_email || person.leader12email || "").toLowerCase().trim();
-        const leader144Email = (person.leader144Email || person.leader144_email || person.leader144email || "").toLowerCase().trim();
-        const leader1728Email = (person.leader1728Email || person.leader1728_email || person.leader1728email || "").toLowerCase().trim();
-
-        if (
-          subEmails.has(leader1Email) ||
-          subEmails.has(leader12Email) ||
-          subEmails.has(leader144Email) ||
-          subEmails.has(leader1728Email)
-        ) {
-          subEmails.add(pEmail);
-          found = true;
-        }
-      });
-    }
-
-    return Array.from(subEmails);
-  }, [allPeople]);
-
   const searchTeamPeople = useCallback((query) => {
     if (!query || query.length < 1) {
       setPersonSearchResults([]);
@@ -477,27 +452,37 @@ export default function DailyTasks() {
     }
   };
 
-  const fetchUserTasks = useCallback(async () => {
+  const fetchUserTasks = useCallback(async (options = {}) => {
+    const { page = 1, append = false } = options;
     if (!user?.email) return;
     const controller = new AbortController();
     const signal = controller.signal;
 
     try {
-      setLoading(true);
+      if (!append) setLoading(true);
+      pageRef.current = page;
       const normalizedEmail = (user.email || "").trim().toLowerCase();
 
       // Determine which emails to fetch tasks for based on viewFilter
       let targetEmails = [normalizedEmail];
+      let isAllView = false;
 
-      if (viewFilter === "team" && canViewTeam) {
+      if (viewFilter === "all" && (user?.role === "admin" || user?.role === "leaderat12")) {
+        // Admin "All" view: backend returns every org task in a SINGLE
+        // paginated call (view_all=true).
+        isAllView = true;
+      } else if (viewFilter === "team" && canViewTeam) {
         // Team view: fetch tasks for team members
         if (selectedPeople.length > 0) {
-          // Specific people selected: get their subordinates too
-          const allEmails = new Set();
-          selectedPeople.forEach((person) => {
-            getSubordinateEmails(person.email).forEach((email) => allEmails.add(email));
-          });
-          targetEmails = Array.from(allEmails);
+          // Specific people selected: fetch ONLY those people's tasks,
+          // not subordinates or the rest of the team
+          targetEmails = Array.from(
+            new Set(
+              selectedPeople
+                .map((person) => (person.email || "").trim().toLowerCase())
+                .filter(Boolean),
+            ),
+          );
         } else {
           // All team members
           targetEmails = getTeamMemberEmails();
@@ -507,46 +492,105 @@ export default function DailyTasks() {
           }
         }
       }
-      // For "all" view (admin), we fetch all tasks - TODO: use backend endpoint when available
 
-      // Fetch tasks for each target email (client-side mock for now)
+      // Fetch tasks for each target email, paginated with our batch size
       const allTasksMap = new Map();
 
-      // Fetch tasks in parallel for all target emails
-      const fetchPromises = targetEmails.map(async (email) => {
-        try {
-          const [regularRes, specialRes] = await Promise.all([
-            authFetch(
-              `${API_URL}/tasks?email=${encodeURIComponent(email)}`,
-              { signal }
-            ),
-            authFetch(`${API_URL}/tasks/my-special-tasks`, { signal }),
-          ]);
+      const addTasksToMap = (tasks) => {
+        (tasks || []).forEach((task) => {
+          const key = String(task._id || task.id || task.taskId || "");
+          if (key && !allTasksMap.has(key)) {
+            allTasksMap.set(key, task);
+          }
+        });
+      };
 
-          const regularData = regularRes.ok ? await regularRes.json() : {};
-          const specialData = specialRes.ok ? await specialRes.json() : {};
+      let hasMore = false;
+      let grandTotal = 0;
 
-          const regularTasks = Array.isArray(regularData)
-            ? regularData
-            : regularData.tasks || [];
-          const specialTasks = Array.isArray(specialData)
-            ? specialData
-            : specialData.tasks || [];
+      // For admin "All" view, use a single paginated org-wide call.
+      // Avoids fanning out one request per person (ERR_INSUFFICIENT_RESOURCES).
+      if (isAllView) {
+        const [viewAllData, specialData] = await Promise.all([
+          authFetch(`${API_URL}/tasks?view_all=true&page=${page}&limit=${batchSize}`, { signal })
+            .then(async (res) => {
+              if (!res.ok) return null;
+              const data = await res.json();
+              return {
+                tasks: Array.isArray(data) ? data : data.tasks || [],
+                has_more: data.has_more === true,
+                total: data.total_tasks ?? 0,
+              };
+            })
+            .catch(() => null),
+          authFetch(`${API_URL}/tasks/my-special-tasks?page=${page}&limit=${batchSize}`, { signal })
+            .then(async (res) => {
+              if (!res.ok) return { tasks: [], has_more: false, total: 0 };
+              const data = await res.json();
+              return {
+                tasks: Array.isArray(data) ? data : data.tasks || [],
+                has_more: data.has_more === true,
+                total: data.total ?? 0,
+              };
+            })
+            .catch(() => ({ tasks: [], has_more: false, total: 0 })),
+        ]);
 
-          return [...regularTasks, ...specialTasks];
-        } catch (err) {
-          console.error(`Error fetching tasks for ${email}:`, err.message);
-          return [];
+        addTasksToMap(specialData.tasks);
+        addTasksToMap(viewAllData?.tasks || []);
+        hasMore = viewAllData?.has_more === true || specialData.has_more === true;
+        grandTotal = viewAllData?.total ?? 0;
+      } else {
+        // Fetch tasks for all target emails, but in small batches so we never
+        // open too many concurrent connections (ERR_INSUFFICIENT_RESOURCES).
+        const fetchTasksForEmail = async (email) => {
+          try {
+            const [regularRes, specialRes] = await Promise.all([
+              authFetch(
+                `${API_URL}/tasks?email=${encodeURIComponent(email)}&page=${page}&limit=${batchSize}`,
+                { signal },
+              ),
+              authFetch(
+                `${API_URL}/tasks/my-special-tasks?email=${encodeURIComponent(email)}&page=${page}&limit=${batchSize}`,
+                { signal },
+              ),
+            ]);
+
+            const regularData = regularRes.ok ? await regularRes.json() : {};
+            const specialData = specialRes.ok ? await specialRes.json() : {};
+
+            const regularTasks = Array.isArray(regularData)
+              ? regularData
+              : regularData.tasks || [];
+            const specialTasks = Array.isArray(specialData)
+              ? specialData
+              : specialData.tasks || [];
+
+            return {
+              tasks: [...regularTasks, ...specialTasks],
+              hasMore:
+                regularData.has_more === true || specialData.has_more === true,
+              total: (regularData.total_tasks ?? 0) + (specialData.total ?? 0),
+            };
+          } catch (err) {
+            console.error(`Error fetching tasks for ${email}:`, err.message);
+            return { tasks: [], hasMore: false, total: 0 };
+          }
+        };
+
+        const CONCURRENCY = 5;
+        const results = [];
+        for (let i = 0; i < targetEmails.length; i += CONCURRENCY) {
+          const batch = targetEmails.slice(i, i + CONCURRENCY);
+          const batchResults = await Promise.all(batch.map(fetchTasksForEmail));
+          batchResults.forEach((r) => {
+            results.push(r);
+            if (r.hasMore) hasMore = true;
+            grandTotal += r.total;
+          });
         }
-      });
-
-      const results = await Promise.all(fetchPromises);
-      results.flat().forEach((task) => {
-        const key = String(task._id || task.id || task.taskId || "");
-        if (key && !allTasksMap.has(key)) {
-          allTasksMap.set(key, task);
-        }
-      });
+        results.forEach((r) => addTasksToMap(r.tasks));
+      }
 
       const normalizeTask = (task) => {
         const taskId = task._id || task.id || task.taskId || "";
@@ -618,30 +662,66 @@ export default function DailyTasks() {
 
       const normalizedTasks = Array.from(allTasksMap.values()).map(normalizeTask);
 
-      // Filter: regular tasks by assignedfor/assigned_to_email
+      // Filter: keep tasks assigned to anyone in the target set
+      // (all-view keeps everything; team keeps team members' tasks;
+      //  personal keeps only the current user's)
+      const targetSet = new Set(targetEmails.map((e) => e.toLowerCase()));
+
       const myTasks = normalizedTasks.filter((task) => {
         const assignedFor = (task.assignedfor || "").trim().toLowerCase();
         const assignedToEmail = (task.assigned_to_email || "").trim().toLowerCase();
         const leaderEmail = (task.leader_assigned || "").trim().toLowerCase();
 
-        return (
-          assignedFor === normalizedEmail ||
-          assignedToEmail === normalizedEmail ||
-          leaderEmail === normalizedEmail
-        );
+        // Only apply the ownership filter for non-admin/all views
+        if (!isAllView) {
+          return (
+            assignedFor !== "" && targetSet.has(assignedFor) ||
+            assignedToEmail !== "" && targetSet.has(assignedToEmail) ||
+            leaderEmail !== "" && targetSet.has(leaderEmail)
+          );
+        }
+
+        // For the "All" view, keep every task fetched
+        return true;
       });
 
-      setTasks(myTasks);
+      setTasks((prevTasks) => {
+        if (!append) return myTasks;
+        // Append mode: merge by id, preserving loaded tasks
+        const map = new Map();
+        prevTasks.forEach((t) => map.set(String(t._id || t.id || ""), t));
+        myTasks.forEach((t) => map.set(String(t._id || t.id || ""), t));
+        return Array.from(map.values());
+      });
+      setHasMoreTasks(hasMore);
+      setTotalTasks(grandTotal);
     } catch (err) {
       if (err.name !== "AbortError") {
         console.error("Error fetching user tasks:", err.message);
       }
     } finally {
-      if (!signal.aborted) setLoading(false);
+      if (!signal.aborted) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
 
     return () => controller.abort();
-  }, [user, authFetch, API_URL, viewFilter, canViewTeam, selectedPeople, getTeamMemberEmails, getSubordinateEmails]);
+  }, [user, authFetch, API_URL, viewFilter, canViewTeam, selectedPeople, getTeamMemberEmails, batchSize]);
+
+  const loadMoreTasks = useCallback(() => {
+    if (loadingMore || !hasMoreTasks || loading) return;
+    const nextPage = pageRef.current + 1;
+    setLoadingMore(true);
+    fetchUserTasks({ page: nextPage, append: true });
+  }, [fetchUserTasks, hasMoreTasks, loadingMore, loading]);
+
+  const changeBatchSize = useCallback((size) => {
+    localStorage.setItem("dt_batch_size", String(size));
+    setBatchSize(size);
+    pageRef.current = 1;
+    setHasMoreTasks(false);
+  }, []);
 
   const pollIntervalRef = useRef(null);
 
@@ -995,12 +1075,12 @@ export default function DailyTasks() {
     }
   }, [user]);
 
-  // Refetch tasks when viewFilter or selectedPerson changes
+  // Refetch tasks when viewFilter, selectedPerson, or batch size changes
   useEffect(() => {
     if (user) {
       fetchUserTasks();
     }
-  }, [viewFilter, selectedPeople]);
+  }, [viewFilter, selectedPeople, batchSize]);
 
   const handleOpen = (type) => {
     setFormType(type);
@@ -1433,9 +1513,18 @@ export default function DailyTasks() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  const taskFollowupDate = parseDate(task.followup_date || task.date);
+  const isOverdue =
+    !isCompleted && taskFollowupDate && taskFollowupDate < today;
+
+  // Status filter (All / Open / Completed / Overdue)
+  if (statusFilter === "completed" && !isCompleted) return false;
+  if (statusFilter === "open" && isCompleted) return false;
+  if (statusFilter === "overdue" && !isOverdue) return false;
+
   // OPEN tasks: overdue ones always show, future/today ones show normally
   if (!isCompleted) {
-    const followupDate = parseDate(task.followup_date || task.date);
+    const followupDate = taskFollowupDate;
     // No date at all — show open consolidation/followup, hide others
     if (!followupDate) return isConsolidationOrFollowUp;
     // Overdue open tasks always show regardless of date filter
@@ -1525,21 +1614,35 @@ export default function DailyTasks() {
         return;
       }
 
-      const formattedTasks = filteredTasks.map((task) => ({
-        "Member ID": task.memberID || user.id || "",
-        Name: task.name || user.name || "",
-        "Task Type": task.taskType || "",
-        "Contact Person": task.contacted_person?.name || "",
-        "Contact Phone":
-          task.contacted_person?.phone || task.contacted_person?.Number || "",
-        "Contact Email": task.contacted_person?.email || "",
-        "Follow-up Date": task.followup_date
-          ? new Date(task.followup_date).toLocaleString()
-          : "",
-        Status: task.status || "",
-        Type: task.type || "",
-        "Assigned For": task.assignedfor || user.email || "",
-      }));
+      const formattedTasks = filteredTasks.map((task) => {
+        const taskIsCompleted = (task.status || "").toLowerCase() === "completed";
+        const followupDate = parseDate(task.followup_date || task.date);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const taskIsOverdue =
+          !taskIsCompleted && followupDate && followupDate < today;
+        const isConsolidationOrFollowUp =
+          task.is_consolidation_task === true || task.is_new_person_task === true;
+
+        return {
+          "Member ID": task.memberID || user.id || "",
+          Name: task.name || user.name || "",
+          "Task Type": task.taskType || "",
+          "Contact Person": task.contacted_person?.name || "",
+          "Contact Phone":
+            task.contacted_person?.phone || task.contacted_person?.Number || "",
+          "Contact Email": task.contacted_person?.email || "",
+          "Follow-up Date": task.followup_date
+            ? new Date(task.followup_date).toLocaleString()
+            : "",
+          Status: task.status || "",
+          Type: task.type || "",
+          "Assigned For": task.assignedfor || user.email || "",
+          Completed: taskIsCompleted ? "Yes" : "No",
+          Overdue: taskIsOverdue ? "Yes" : "No",
+          "Consolidation": isConsolidationOrFollowUp ? "Yes" : "No",
+        };
+      });
 
       const headers = Object.keys(formattedTasks[0]);
 
@@ -1703,10 +1806,8 @@ export default function DailyTasks() {
   return (
     <div
       style={{
-        height: "100vh",
-        overflow: "hidden",
-        display: "flex",
-        flexDirection: "column",
+        minHeight: "100vh",
+        overflowY: "auto",
         backgroundColor: isDarkMode ? "#1e1e1e" : "#f8f9fa",
         paddingTop: "5rem",
       }}
@@ -1718,7 +1819,6 @@ export default function DailyTasks() {
           margin: "0 auto",
           padding: "16px 16px 0 16px",
           width: "100%",
-          flexShrink: 0,
           boxSizing: "border-box",
         }}
       >
@@ -1876,6 +1976,32 @@ export default function DailyTasks() {
               <option value="previousWeek">Previous Week</option>
               <option value="previousMonth">Previous Month</option>
               <option value="custom">Custom Range</option>
+            </select>
+          </div>
+
+          <div style={{ marginTop: "12px" }}>
+            <select
+              value={batchSize}
+              onChange={(e) => changeBatchSize(Number(e.target.value))}
+              style={{
+                padding: "10px 16px",
+                borderRadius: "10px",
+                border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
+                color: isDarkMode ? "#fff" : "#1a1a24",
+                fontSize: "14px",
+                cursor: "pointer",
+                fontWeight: "500",
+                outline: "none",
+                width: "100%",
+                maxWidth: "280px",
+              }}
+            >
+              <option value={25}>25 per page</option>
+              <option value={50}>50 per page</option>
+              <option value={100}>100 per page</option>
+              <option value={200}>200 per page</option>
+              <option value={500}>500 per page</option>
             </select>
           </div>
 
@@ -2262,6 +2388,68 @@ export default function DailyTasks() {
           ))}
         </div>
 
+        {/* Status filter: All / Open / Completed / Overdue */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            gap: "8px",
+            marginTop: "12px",
+            flexWrap: "wrap",
+            overflowX: "auto",
+            paddingBottom: "8px",
+          }}
+        >
+          {[
+            { key: "all", label: "All Statuses" },
+            { key: "open", label: "Open" },
+            { key: "completed", label: "Completed" },
+            { key: "overdue", label: "Overdue" },
+          ].map((status) => (
+            <button
+              key={status.key}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "20px",
+                border:
+                  statusFilter === status.key
+                    ? "none"
+                    : `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                fontWeight: "600",
+                cursor: "pointer",
+                backgroundColor:
+                  statusFilter === status.key
+                    ? isDarkMode
+                      ? "#fff"
+                      : "#000"
+                    : isDarkMode
+                      ? "#2d2d2d"
+                      : "#ffffff",
+                color:
+                  statusFilter === status.key
+                    ? isDarkMode
+                      ? "#000"
+                      : "#fff"
+                    : isDarkMode
+                      ? "#fff"
+                      : "#1a1a24",
+                fontSize: "13px",
+                boxShadow:
+                  statusFilter === status.key
+                    ? isDarkMode
+                      ? "0 2px 8px rgba(255,255,255,0.1)"
+                      : "0 4px 24px rgba(0, 0, 0, 0.08)"
+                    : "none",
+                whiteSpace: "nowrap",
+                flexShrink: 0,
+              }}
+              onClick={() => setStatusFilter(status.key)}
+            >
+              {status.label}
+            </button>
+          ))}
+        </div>
+
         {/* Selection mode controls */}
         {filteredTasks.length > 0 && (
           <div style={{
@@ -2357,8 +2545,6 @@ export default function DailyTasks() {
       {/* Task list container */}
       <div
         style={{
-          flex: 1,
-          overflowY: "auto",
           maxWidth: "1200px",
           margin: "0 auto",
           padding: "0 16px 16px 16px",
@@ -2647,6 +2833,64 @@ export default function DailyTasks() {
                 </div>
               );
             })
+          )}
+
+          {/* Load more / pagination footer */}
+          {!loading && !loadingMore && filteredTasks.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "8px",
+                marginTop: "20px",
+                paddingBottom: "20px",
+              }}
+            >
+              {totalTasks > 0 && (
+                <span
+                  style={{
+                    fontSize: "12px",
+                    color: isDarkMode ? "#aaa" : "#6b7280",
+                  }}
+                >
+                  Showing {filteredTasks.length} of {tasks.length} loaded
+                  {totalTasks > 0 ? ` (${totalTasks} total in view)` : ""}
+                </span>
+              )}
+              {hasMoreTasks && (
+                <button
+                  onClick={loadMoreTasks}
+                  disabled={loadingMore}
+                  style={{
+                    padding: "10px 24px",
+                    borderRadius: "20px",
+                    border: "none",
+                    fontWeight: "600",
+                    cursor: loadingMore ? "not-allowed" : "pointer",
+                    backgroundColor: isDarkMode ? "#fff" : "#000",
+                    color: isDarkMode ? "#000" : "#fff",
+                    fontSize: "13px",
+                    opacity: loadingMore ? 0.7 : 1,
+                  }}
+                >
+                  Load More Task
+                </button>
+              )}
+            </div>
+          )}
+
+          {loadingMore && (
+            <p
+              style={{
+                textAlign: "center",
+                color: isDarkMode ? "#aaa" : "#6b7280",
+                fontStyle: "italic",
+                padding: "20px",
+              }}
+            >
+              Loading more tasks...
+            </p>
           )}
         </div>
       </div>

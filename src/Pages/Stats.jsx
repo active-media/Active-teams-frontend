@@ -41,6 +41,7 @@ import {
   Tab,
   Container,
   CircularProgress,
+  Switch,
 } from "@mui/material";
 import Collapse from "@mui/material/Collapse";
 import ExpandMore from "@mui/icons-material/ExpandMore";
@@ -258,6 +259,8 @@ const StatsDashboard = () => {
     allTasks: [],
     allUsers: [],
     groupedTasks: [],
+    taskTypesFound: [],
+    taskTypeStats: [],
     loading: false,
     error: null,
     dateRange: { start: "", end: "" },
@@ -337,9 +340,17 @@ const StatsDashboard = () => {
     { value: "today", label: "Today" },
     { value: "thisWeek", label: "This Week" },
     { value: "thisMonth", label: "This Month" },
+    { value: "previous7", label: "Previous 7 Days" },
     { value: "previousWeek", label: "Previous Week" },
     { value: "previousMonth", label: "Previous Month" },
+    { value: "custom", label: "Custom Range" },
   ];
+
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [taskTypeFilter, setTaskTypeFilter] = useState("");
+  const [consolidationOnly, setConsolidationOnly] = useState(false);
 
   useEffect(() => {
     if (cells.length > 0) {
@@ -391,6 +402,44 @@ const StatsDashboard = () => {
     }
   }, [authFetch]);
 
+  const getPeriodStartDate = useCallback(
+    (periodType) => {
+      const now = new Date();
+      const iso = (d) =>
+        d.toLocaleDateString("en-CA", { timeZone: "Africa/Johannesburg" });
+      switch (periodType) {
+        case "today":
+          return iso(now);
+        case "thisWeek": {
+          const day = (now.getDay() + 6) % 7;
+          const monday = new Date(now);
+          monday.setDate(now.getDate() - day);
+          return iso(monday);
+        }
+        case "thisMonth":
+          return iso(new Date(now.getFullYear(), now.getMonth(), 1));
+        case "previous7": {
+          const d = new Date(now);
+          d.setDate(now.getDate() - 6);
+          return iso(d);
+        }
+        case "previousWeek": {
+          const day = (now.getDay() + 6) % 7;
+          const lastMonday = new Date(now);
+          lastMonday.setDate(now.getDate() - day - 7);
+          return iso(lastMonday);
+        }
+        case "previousMonth":
+          return iso(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+        case "custom":
+          return customStartDate || iso(now);
+        default:
+          return iso(now);
+      }
+    },
+    [customStartDate],
+  );
+
   const fetchOverdueCells = useCallback(
     async (forceRefresh = false) => {
       /** CHANGE:
@@ -407,14 +456,8 @@ const StatsDashboard = () => {
       setCellsLoading(true);
       setCellsError(null);
 
-      console.log("→ Starting fetchOverdueCells", {
-        forceRefresh,
-        period,
-        startDate: "2026-01-22",
-      });
-
       try {
-        const startDate = "2026-01-22"; // adjust as needed
+        const startDate = getPeriodStartDate(period);
 
         let allEvents = [];
         let page = 1;
@@ -524,7 +567,7 @@ const StatsDashboard = () => {
         console.log("fetchOverdueCells finished / released lock");
       }
     },
-    [authFetch],
+    [authFetch, period, getPeriodStartDate],
   );
   const isOverdue = useCallback((cell) => {
     if (!cell) return false;
@@ -563,10 +606,23 @@ const StatsDashboard = () => {
       setStats((prev) => ({ ...prev, loading: true, error: null }));
 
       try {
-        const response = await authFetch(
+        const url = new URL(
           `${BACKEND_URL}/stats/dashboard-comprehensive?period=${period}`,
-          { retryOnAuthFailure: true, maxRetries: 1 },
         );
+        if (period === "custom") {
+          if (customStartDate) url.searchParams.set("start_date", customStartDate);
+          if (customEndDate) url.searchParams.set("end_date", customEndDate);
+        }
+        if (statusFilter && statusFilter !== "all")
+          url.searchParams.set("status", statusFilter);
+        if (taskTypeFilter) url.searchParams.set("task_type", taskTypeFilter);
+        if (consolidationOnly)
+          url.searchParams.set("consolidation_only", "true");
+
+        const response = await authFetch(url.toString(), {
+          retryOnAuthFailure: true,
+          maxRetries: 1,
+        });
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -590,6 +646,8 @@ const StatsDashboard = () => {
           allTasks: data.allTasks || [],
           allUsers: data.allUsers || [],
           groupedTasks: data.groupedTasks || [],
+          taskTypesFound: data.task_types_found || [],
+          taskTypeStats: data.task_type_stats || [],
           dateRange: data.date_range || { start: "", end: "" },
           loading: false,
           error: null,
@@ -604,15 +662,10 @@ const StatsDashboard = () => {
         releaseFetchLock(statsLockRef);
       }
     },
-    [period, authFetch],
+    [period, customStartDate, customEndDate, statusFilter, taskTypeFilter, consolidationOnly, authFetch],
   );
 
   const handlePeriodChange = (e) => {
-    /** CHANGE:
-     * Before, period changes were blocked during fetch.
-     * Now, period changes are safe.
-     */
-
     setPeriod(e.target.value);
   };
 
@@ -629,7 +682,7 @@ const StatsDashboard = () => {
 
     fetchOverdueCells(false);
     fetchStats(false);
-  }, [period, fetchOverdueCells, fetchStats]);
+  }, [period, customStartDate, customEndDate, statusFilter, taskTypeFilter, consolidationOnly, fetchOverdueCells, fetchStats]);
 
   const filteredOverdueCells = useMemo(() => {
     return [...cells].sort((a, b) => {
@@ -654,10 +707,16 @@ const StatsDashboard = () => {
         return "This Week";
       case "thisMonth":
         return "This Month";
+      case "previous7":
+        return "Previous 7 Days";
       case "previousWeek":
         return "Previous Week";
       case "previousMonth":
         return "Previous Month";
+      case "custom":
+        if (customStartDate && customEndDate)
+          return `${customStartDate} → ${customEndDate}`;
+        return "Custom Range";
       default:
         return periodType;
     }
@@ -747,6 +806,10 @@ const StatsDashboard = () => {
             : "",
           Status: task.status || "pending",
           "Task Stage": task.taskStage || "",
+          Completed: task.is_completed ? "Yes" : "No",
+          "Completed In Period": task.completed_in_period ? "Yes" : "No",
+          Overdue: task.is_overdue ? "Yes" : "No",
+          "Consolidation Task": task.is_consolidation_ish ? "Yes" : "No",
           "Created At": task.created_at
             ? formatDateForExcel(task.created_at)
             : "",
@@ -1525,6 +1588,92 @@ const StatsDashboard = () => {
         </Box>
       </Box>
 
+      {/* Custom date range pickers */}
+      {period === "custom" && (
+        <Box
+          display="flex"
+          gap={1.5}
+          flexWrap="wrap"
+          alignItems="center"
+          mb={2}
+          p={1.5}
+          sx={{ backgroundColor: "action.hover", borderRadius: 1 }}
+        >
+          <TextField
+            label="Start Date"
+            type="date"
+            size="small"
+            value={customStartDate}
+            onChange={(e) => setCustomStartDate(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+          />
+          <TextField
+            label="End Date"
+            type="date"
+            size="small"
+            value={customEndDate}
+            onChange={(e) => setCustomEndDate(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ min: customStartDate || undefined }}
+          />
+          <Typography variant="body2" color="text.secondary">
+            Reports & downloads will match this range.
+          </Typography>
+        </Box>
+      )}
+
+      {/* Task filter bar (shown on Tasks tab) */}
+      {activeTab === 1 && (
+        <Box
+          display="flex"
+          gap={1.5}
+          flexWrap="wrap"
+          alignItems="center"
+          mb={2}
+        >
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel>Status</InputLabel>
+            <Select
+              value={statusFilter}
+              label="Status"
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <MenuItem value="all">All Statuses</MenuItem>
+              <MenuItem value="completed">Completed</MenuItem>
+              <MenuItem value="incomplete">Incomplete</MenuItem>
+              <MenuItem value="overdue">Overdue</MenuItem>
+            </Select>
+          </FormControl>
+
+          <FormControl size="small" sx={{ minWidth: 170 }}>
+            <InputLabel>Task Type</InputLabel>
+            <Select
+              value={taskTypeFilter}
+              label="Task Type"
+              onChange={(e) => setTaskTypeFilter(e.target.value)}
+            >
+              <MenuItem value="">All Task Types</MenuItem>
+              {(stats.taskTypesFound || []).map((type) => (
+                <MenuItem key={type} value={type}>
+                  {type}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                checked={consolidationOnly}
+                onChange={(e) => setConsolidationOnly(e.target.checked)}
+              />
+            }
+            label="Consolidations Only"
+          />
+        </Box>
+      )}
+
       {(stats.loading || cellsLoading) && <LinearProgress sx={{ mb: 3 }} />}
 
       {/* Stat Cards */}
@@ -1860,6 +2009,45 @@ const StatsDashboard = () => {
                 variant="outlined"
               />
             </Box>
+
+            {stats.taskTypeStats.length > 0 && (
+              <Box
+                sx={{
+                  display: "flex",
+                  gap: 1,
+                  flexWrap: "wrap",
+                  mb: 2,
+                  flexShrink: 0,
+                }}
+              >
+                <Chip
+                  size="small"
+                  variant={taskTypeFilter === "" ? "filled" : "outlined"}
+                  color={taskTypeFilter === "" ? "primary" : "default"}
+                  onClick={() => setTaskTypeFilter("")}
+                  label={`All types · ${filteredTasks.length}`}
+                />
+                {Object.entries(stats.taskTypeStats).map(([taskTypeName, typeStat]) => {
+                  const active = taskTypeFilter === taskTypeName;
+                  return (
+                    <Tooltip
+                      key={taskTypeName}
+                      title={`${typeStat.completed || 0} completed / ${typeStat.total || 0} total`}
+                    >
+                      <Chip
+                        size="small"
+                        variant={active ? "filled" : "outlined"}
+                        color={active ? "primary" : "default"}
+                        onClick={() =>
+                          setTaskTypeFilter(active ? "" : taskTypeName)
+                        }
+                        label={`${taskTypeName} · ${typeStat.completed || 0}/${typeStat.total || 0}`}
+                      />
+                    </Tooltip>
+                  );
+                })}
+              </Box>
+            )}
 
             <Box
               sx={{
