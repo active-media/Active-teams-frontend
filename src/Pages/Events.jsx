@@ -42,6 +42,7 @@ import EditEventModal from "./EditEventModal";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { AuthContext } from "../contexts/AuthContext";
+import { normalizeEventAttendance } from "../utils/attendanceLogic";
 
 const formatRecurringDays = (recurringDays) => {
   if (!recurringDays || recurringDays.length === 0) {
@@ -797,99 +798,6 @@ ${xmlCols}
     }, 100);
   };
 
-const normalizeEventAttendance = (event, eventTypes = []) => {
-  if (!event) return [];
-  const eventDate = event.date;
-
-  // 👇 Add this temporarily to see exact field names your API returns
-  console.log("FULL EVENT FIELDS:", JSON.stringify(event, null, 2));
-
-  const eventTypeName = event.eventType || event.event_type || event.type || "";
-  const eventTypeObj = findEventTypeByName(eventTypeName, eventTypes);
-  const isTicketed =
-    eventTypeObj?.isTicketed === true ||
-    event.isTicketed === true ||
-    event.is_ticketed === true ||
-    event.ticketed === true;
-
-  const peopleMap = new Map();
-
-  const addPeople = (list, checkedIn) => {
-    if (!Array.isArray(list)) return;
-    list.forEach((person) => {
-      const key = person.email || person.fullName || person.name || Math.random();
-      if (!peopleMap.has(key)) {
-        peopleMap.set(key, { ...person, checkedIn });
-      } else if (checkedIn) {
-        peopleMap.set(key, { ...peopleMap.get(key), checkedIn: true });
-      }
-    });
-  };
-
-  if (event.attendance && typeof event.attendance === "object") {
-    const dateAttendance = event.attendance[eventDate];
-    if (dateAttendance?.attendees) addPeople(dateAttendance.attendees, true);
-  }
-
-  addPeople(event.attendees, true);
-  addPeople(event.registrants, false);
-  addPeople(event.registered, false);
-  addPeople(event.invited, false);
-  addPeople(event.members, false);
-  addPeople(event.persistent_attendees, false);
-
-  if (event.attendance_data) {
-    addPeople(event.attendance_data.attendees, true);
-    addPeople(event.attendance_data.registrants, false);
-    addPeople(event.attendance_data.registered, false);
-  }
-
-  if (peopleMap.size === 0) return [];
-
-  const leaderKeys = Object.keys(event).filter(k =>
-    k.toLowerCase().includes("leader") || k.toLowerCase().includes("at1") || k.toLowerCase().includes("144")
-  );
-  console.log("LEADER  FIELDS:", leaderKeys.reduce((acc, k) => ({ ...acc, [k]: event[k] }), {}));
-
-  
-  const leaderAt12  = event.leader12 || event.leaderAt12 || event.leader_at_12 || "";
-  const leaderAt1   = event.leader1  || event.leaderAt1  || event.leader_at_1  || event.leaderAt1Name  || "";
-  const leaderAt144 = event.leader144 || event.leaderAt144 || event.leader_at_144 || event.leaderAt144Name || "";
-
-  const hasLeaderHierarchy = leaderAt1 || leaderAt12 || leaderAt144;
-
-  return Array.from(peopleMap.values()).map((person) => {
-    const row = {
-      "Event Name":        event.eventName || event["Event Name"] || "",
-      "Event Type":        eventTypeName,
-      "Is Ticketed":       isTicketed ? "Yes" : "No",
-      "Event Date":        eventDate,
-      "Checked In":        person.checkedIn ? "Yes" : "No",
-      "Name":              person.fullName || person.name || "",
-      "Email":             person.email || "",
-      "Phone":             person.phone || "",
-      "Decision":          person.decision || person.Decision || "",
-      "Event Leader Name": event.eventLeaderName || event.Leader || "",
-    };
-
-    if (hasLeaderHierarchy) {
-      if (leaderAt1)   row["Leader @1"]   = leaderAt1;
-      if (leaderAt12)  row["Leader @12"]  = leaderAt12;
-      if (leaderAt144) row["Leader @144"] = leaderAt144;
-    }
-
-    if (isTicketed) {
-      row["Price Tier"]     = person.priceTier || person.price_tier || person.PriceTier || "";
-      row["Payment Method"] = person.paymentMethod || person.payment_method || "";
-      row["Price"]          = person.price  !== undefined ? `R${Number(person.price).toFixed(2)}`  : "";
-      row["Paid"]           = person.paid   !== undefined ? `R${Number(person.paid).toFixed(2)}`   : "";
-      row["Owing"]          = person.owing  !== undefined ? `R${Number(person.owing).toFixed(2)}`  : "";
-    }
-
-    return row;
-  });
-};
-
   const fetchEventFull = async (event) => {
 
     try {
@@ -918,7 +826,9 @@ const normalizeEventAttendance = (event, eventTypes = []) => {
 
     const fullEvent = await fetchEventFull(event); // Always fetch full event
 
-    const rows = normalizeEventAttendance(fullEvent, eventTypes);
+    const rows = normalizeEventAttendance(fullEvent, {
+      getEventType: findEventTypeByName,
+    });
 
     if (!rows || rows.length === 0) {
       toast.dismiss(TOAST_ID);
@@ -1324,7 +1234,9 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
 
     const fullEvent = await fetchEventFull(event); // Always fetch full event
 
-    const rows = normalizeEventAttendance(fullEvent);
+    const rows = normalizeEventAttendance(fullEvent, {
+      getEventType: findEventTypeByName,
+    });
 
     if (!rows || rows.length === 0) {
       toast.dismiss(TOAST_ID);
@@ -1344,101 +1256,6 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
     toast.dismiss(TOAST_ID);
     toast.error("Failed to download event attendance");
   }
-};
-
-const normalizeEventAttendance = (event) => {
-  if (!event) return [];
-  const eventDate = event.date;
-
-  // Determine if this is a ticketed event
-  const eventTypeName = event.eventType || event.event_type || event.type || "";
-  const eventTypeObj = findEventTypeByName(eventTypeName);
-  const isTicketed = 
-    eventTypeObj?.isTicketed === true ||
-    event.isTicketed === true ||
-    event.is_ticketed === true ||
-    event.ticketed === true;
-
-  const peopleMap = new Map();
-
-  const addPeople = (list, checkedIn) => {
-    if (!Array.isArray(list)) return;
-    list.forEach((person) => {
-      const key = person.email || person.fullName || person.name || Math.random();
-      if (!peopleMap.has(key)) {
-        peopleMap.set(key, { ...person, checkedIn });
-      } else if (checkedIn) {
-        peopleMap.set(key, { ...peopleMap.get(key), checkedIn: true });
-      }
-    });
-  };
-
-  // 1. Attendance by date (checked-in)
-  if (event.attendance && typeof event.attendance === "object") {
-    const dateAttendance = event.attendance[eventDate];
-    if (dateAttendance?.attendees) addPeople(dateAttendance.attendees, true);
-  }
-
-  // 2. Top-level attendees (checked-in)
-  addPeople(event.attendees, true);
-
-  // 3. Registered/invited (not necessarily checked in)
-  addPeople(event.registrants, false);
-  addPeople(event.registered, false);
-  addPeople(event.invited, false);
-  addPeople(event.members, false);
-  addPeople(event.persistent_attendees, false);
-
-  // 4. attendance_data block
-  if (event.attendance_data) {
-    addPeople(event.attendance_data.attendees, true);
-    addPeople(event.attendance_data.registrants, false);
-    addPeople(event.attendance_data.registered, false);
-  }
-
-  if (peopleMap.size === 0) return [];
-
-  // Resolve leader hierarchy from the event itself
-  // Adjust these field names to match whatever your API actually returns
-  const leaderAt1   = event.leaderAt1   || event.leader_at_1   || event.leaderAt1Name   || "";
-  const leaderAt12  = event.leaderAt12  || event.leader_at_12  || event.leaderAt12Name  || event.leader12 || "";
-  const leaderAt144 = event.leaderAt144 || event.leader_at_144 || event.leaderAt144Name || "";
-
-  const hasLeaderHierarchy = leaderAt1 || leaderAt12 || leaderAt144;
-
-  return Array.from(peopleMap.values()).map((person) => {
-    // Base row — always present
-    const row = {
-      "Event Name":        event.eventName || event["Event Name"] || "",
-      "Event Type":        eventTypeName,
-      "Is Ticketed":       isTicketed ? "Yes" : "No",
-      "Event Date":        eventDate,
-      "Checked In":        person.checkedIn ? "Yes" : "No",
-      "Name":              person.fullName || person.name || "",
-      "Email":             person.email || "",
-      "Phone":             person.phone || "",
-      "Decision":          person.decision || person.Decision || "",
-      "Price Tier":        person.priceTier || person.price_tier || person.PriceTier || "",
-      "Event Leader Name": event.eventLeaderName || event.Leader || "",
-    };
-
-    // Leader hierarchy columns — only if the event has them
-    if (hasLeaderHierarchy) {
-      row["Leader @1"]   = leaderAt1;
-      row["Leader @12"]  = leaderAt12;
-      row["Leader @144"] = leaderAt144;
-    }
-
-    // Ticketed-only columns
-    if (isTicketed) {
-      row["Payment Method"] = person.paymentMethod || person.payment_method || "";
-      row["Price"]  = person.price  !== undefined ? `R${Number(person.price).toFixed(2)}`  : "";
-      row["Paid"]   = person.paid   !== undefined ? `R${Number(person.paid).toFixed(2)}`   : "";
-      row["Owing"]  = person.owing  !== undefined ? `R${Number(person.owing).toFixed(2)}`  : "";
-    }
-
-    return row;
-  });
 };
 
   const fetchEventFull = async (event) => {
@@ -1549,7 +1366,9 @@ const normalizeEventAttendance = (event) => {
 
       const allRows = [];
       for (const ev of fullEvents) {
-        const rows = normalizeEventAttendance(ev);
+        const rows = normalizeEventAttendance(ev, {
+          getEventType: findEventTypeByName,
+        });
         if (rows && rows.length > 0) {
           // For did_not_meet events, mark all rows as Did Not Meet
           if (status === "did_not_meet") {

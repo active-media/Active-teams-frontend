@@ -8,6 +8,12 @@ import {
 } from "react";
 import { toast } from "react-toastify";
 import {
+  shouldSyncServiceCheckIn,
+  presetHeadcountValue,
+  resolveDownloadHeadcount,
+  numericFieldSum,
+} from "../utils/attendanceLogic";
+import {
   ArrowLeft,
   UserPlus,
   Search,
@@ -1466,11 +1472,20 @@ const AttendanceModal = ({
   const ticketSaveTimers = useRef({});
   const pendingTicketSaveIds = useRef(new Set());
   const persistentAttendeesRef = useRef([]);
+  const headcountEditedRef = useRef(false);
+
+  const handleHeadcountChange = (e) => {
+    headcountEditedRef.current = true;
+    setManualHeadcount(e.target.value);
+  };
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
 
   const isTicketedEvent =
     event?.isTicketed === true || event?.isTicketed === "true" || false;
+  // Only sync to Service Check-In for events that actually appear there:
+  // ticketed events and global events (services). Never cells, training, etc.
+  const syncsServiceCheckIn = shouldSyncServiceCheckIn(event);
   const eventPriceTiers =
     event?.priceTiers ||
     event?.formData?.priceTiers ||
@@ -1753,6 +1768,8 @@ const AttendanceModal = ({
   };
 
   const syncServiceCheckIn = async (person, isCheckedIn) => {
+    if (!syncsServiceCheckIn) return;
+
     const baseId = cleanEventId(getAttendanceEventId(event));
     if (!baseId || !person?.id) return;
 
@@ -2046,11 +2063,11 @@ const AttendanceModal = ({
         },
       });
 
-      if (headcount > 0) {
-        setManualHeadcount(headcount.toString());
-      } else {
-        setManualHeadcount("0");
-      }
+      // Headcount defaults to the number checked in, but keeps a previously
+      // saved headcount if one exists (it was intentionally set differently).
+      const presetHeadcount = presetHeadcountValue(headcount, attendeesCount);
+      setManualHeadcount(presetHeadcount);
+      headcountEditedRef.current = headcount > 0;
       window.__lastLoadedAttendance = weekAttendance;
     } catch (error) {
       console.error("Error loading event statistics:", error);
@@ -2894,6 +2911,14 @@ const AttendanceModal = ({
     (id) => checkedIn[id],
   ).length;
   console.log("Attendees checked in:", attendeesCount);
+
+  // Keep the headcount in sync with the checked-in count until the user
+  // explicitly edits it. Headcount defaults to the attendees number.
+  useEffect(() => {
+    if (!headcountEditedRef.current) {
+      setManualHeadcount(String(attendeesCount));
+    }
+  }, [attendeesCount]);
   const decisionsCount = Object.keys(decisions).filter(
     (id) => decisions[id],
   ).length;
@@ -3185,8 +3210,13 @@ const AttendanceModal = ({
   const downloadAttendanceData = () => {
     try {
       const allPeople = getAllCommonAttendees();
-      const checkedInAttendees = Object.keys(checkedIn)
-        .filter((id) => checkedIn[id])
+      const checkedInIds = Object.keys(checkedIn).filter((id) => checkedIn[id]);
+      const finalHeadcountExport = resolveDownloadHeadcount(
+        manualHeadcount,
+        checkedInIds.length,
+      );
+
+      const checkedInAttendees = checkedInIds
         .map((id) => {
           const person = allPeople.find((p) => p && p.id === id);
           if (!person) return null;
@@ -3203,6 +3233,7 @@ const AttendanceModal = ({
             Phone: person.phone || "N/A",
             Decision: decisionTypes[id] || "N/A",
             Status: didNotMeet ? "Did Not Meet" : "Complete",
+            Headcount: finalHeadcountExport,
             ...(isTicketedEvent && {
               "Price Name":
                 attendeeTicketInfo[id]?.priceName || person.priceName || "N/A",
@@ -3235,6 +3266,7 @@ const AttendanceModal = ({
               Phone: "",
               Decision: "",
               Status: "Did Not Meet",
+              Headcount: finalHeadcountExport,
               ...(isTicketedEvent && {
                 "Price Name": "N/A",
                 "Price (R)": "N/A",
@@ -3254,6 +3286,33 @@ const AttendanceModal = ({
       if (checkedInAttendees.length === 0) {
         toast.info("No attendance data to download");
         return;
+      }
+
+      if (isTicketedEvent) {
+        const totalPrice = numericFieldSum(checkedInAttendees, "Price (R)");
+        const totalPaid = numericFieldSum(checkedInAttendees, "Paid (R)");
+        const totalOwing = numericFieldSum(checkedInAttendees, "Owing (R)");
+        const totalChange = numericFieldSum(checkedInAttendees, "Change (R)");
+
+        checkedInAttendees.push({
+          "Event Name": event?.eventName || "N/A",
+          "Event Date": event?.date || "N/A",
+          Name: "TOTAL",
+          Email: "",
+          "Leader @12": "",
+          "Leader @144": "",
+          Phone: "",
+          Decision: "",
+          Status: "",
+          Headcount: finalHeadcountExport,
+          "Price Name": "",
+          "Price (R)": totalPrice.toFixed(2),
+          "Age Group": "",
+          "Payment Method": "",
+          "Paid (R)": totalPaid.toFixed(2),
+          "Owing (R)": totalOwing.toFixed(2),
+          "Change (R)": totalChange.toFixed(2),
+        });
       }
 
       buildXlsFromRows(
@@ -3332,6 +3391,7 @@ const AttendanceModal = ({
     setCheckedIn({});
     setDecisions({});
     setManualHeadcount("");
+    headcountEditedRef.current = false;
     setAttendeeTicketInfo({});
 
     const eventId = getAttendanceEventId(event);
@@ -4709,6 +4769,17 @@ const AttendanceModal = ({
                       }
                     </div>
                     <div style={styles.statLabel}>Attendees</div>
+                  </div>
+                  <div style={styles.statBoxInput}>
+                    <input
+                      type="number"
+                      min="0"
+                      value={manualHeadcount}
+                      onChange={handleHeadcountChange}
+                      style={styles.headcountInput}
+                      aria-label="Headcount"
+                    />
+                    <div style={styles.statLabel}>Headcount</div>
                   </div>
                   {!isTicketedEvent && (
                     <div style={styles.statBox}>
