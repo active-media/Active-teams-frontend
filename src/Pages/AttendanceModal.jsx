@@ -12,6 +12,8 @@ import {
   presetHeadcountValue,
   resolveDownloadHeadcount,
   numericFieldSum,
+  computeTicketSubtotals,
+  pickDownloadPeople,
 } from "../utils/attendanceLogic";
 import {
   ArrowLeft,
@@ -2205,12 +2207,15 @@ const AttendanceModal = ({
       if (data.attendance_status === "did_not_meet") {
         setDidNotMeet(true);
         setManualHeadcount("0");
+        headcountEditedRef.current = false;
       } else if (isCompleted && data.total_headcounts > 0) {
         setDidNotMeet(false);
         setManualHeadcount(data.total_headcounts.toString());
+        headcountEditedRef.current = true;
       } else {
         setDidNotMeet(false);
         setManualHeadcount("0");
+        headcountEditedRef.current = false;
       }
     } catch (error) {
       console.error("Error loading persistent attendees:", error);
@@ -2345,6 +2350,7 @@ const AttendanceModal = ({
       setDecisionTypes({});
       setAttendeeTicketInfo({});
       setManualHeadcount("0");
+      headcountEditedRef.current = false;
       setDidNotMeet(false);
       setPersistentCommonAttendees([]);
       setCheckedIn({});
@@ -2938,6 +2944,19 @@ const AttendanceModal = ({
       person.email.toLowerCase().includes(searchName.toLowerCase()),
   );
 
+  const subtotals = isTicketedEvent
+    ? computeTicketSubtotals(filteredCommonAttendees, (person) => {
+        const savedTicket = attendeeTicketInfo[person.id] || {};
+        return {
+          price:
+            savedTicket?.price != null && savedTicket?.price !== ""
+              ? savedTicket.price
+              : person.price,
+          paidAmount: savedTicket?.paidAmount ?? person.paidAmount ?? 0,
+        };
+      })
+    : null;
+
   const handleSave = async () => {
     if (isSaving) return;
     setIsSaving(true);
@@ -3216,12 +3235,28 @@ const AttendanceModal = ({
         checkedInIds.length,
       );
 
-      const checkedInAttendees = checkedInIds
+      // For ticketed events every ticket holder is exported too (a person may
+      // pay for a ticket but not show up — that money still counts). For other
+      // events only the people checked in are exported.
+      const hasTicketInfo = (person) => {
+        if (!person || !person.id) return false;
+        const t = attendeeTicketInfo[person.id] || {};
+        const price = t.price ?? person.price ?? 0;
+        const paid = t.paidAmount ?? person.paidAmount ?? 0;
+        return (Number(price) || 0) > 0 || (Number(paid) || 0) > 0;
+      };
+      const exportIds = pickDownloadPeople(allPeople, checkedInIds, {
+        isTicketedEvent,
+        hasTicketInfo,
+      }).map((p) => p.id);
+
+      const rowsToExport = exportIds
         .map((id) => {
           const person = allPeople.find((p) => p && p.id === id);
           if (!person) return null;
 
           const financials = isTicketedEvent ? calculateFinancials(id) : null;
+          const isCheckedIn = !!checkedIn[id];
 
           return {
             "Event Name": event?.eventName || "N/A",
@@ -3232,7 +3267,11 @@ const AttendanceModal = ({
             "Leader @144": person.leader144 || "N/A",
             Phone: person.phone || "N/A",
             Decision: decisionTypes[id] || "N/A",
-            Status: didNotMeet ? "Did Not Meet" : "Complete",
+            Status: didNotMeet
+              ? "Did Not Meet"
+              : isCheckedIn
+                ? "Complete"
+                : "Not Checked In",
             Headcount: finalHeadcountExport,
             ...(isTicketedEvent && {
               "Price Name":
@@ -3253,7 +3292,7 @@ const AttendanceModal = ({
         })
         .filter((att) => att !== null);
 
-      if (checkedInAttendees.length === 0 && didNotMeet) {
+      if (rowsToExport.length === 0 && didNotMeet) {
         buildXlsFromRows(
           [
             {
@@ -3283,18 +3322,18 @@ const AttendanceModal = ({
         return;
       }
 
-      if (checkedInAttendees.length === 0) {
+      if (rowsToExport.length === 0) {
         toast.info("No attendance data to download");
         return;
       }
 
       if (isTicketedEvent) {
-        const totalPrice = numericFieldSum(checkedInAttendees, "Price (R)");
-        const totalPaid = numericFieldSum(checkedInAttendees, "Paid (R)");
-        const totalOwing = numericFieldSum(checkedInAttendees, "Owing (R)");
-        const totalChange = numericFieldSum(checkedInAttendees, "Change (R)");
+        const totalPrice = numericFieldSum(rowsToExport, "Price (R)");
+        const totalPaid = numericFieldSum(rowsToExport, "Paid (R)");
+        const totalOwing = numericFieldSum(rowsToExport, "Owing (R)");
+        const totalChange = numericFieldSum(rowsToExport, "Change (R)");
 
-        checkedInAttendees.push({
+        rowsToExport.push({
           "Event Name": event?.eventName || "N/A",
           "Event Date": event?.date || "N/A",
           Name: "TOTAL",
@@ -3316,12 +3355,12 @@ const AttendanceModal = ({
       }
 
       buildXlsFromRows(
-        checkedInAttendees,
+        rowsToExport,
         `attendance_${(event?.eventName || "event").replace(/\s/g, "_")}_${didNotMeet ? "did_not_meet" : "complete"}`,
       );
 
       toast.success(
-        `Downloaded ${checkedInAttendees.length} attendance records`,
+        `Downloaded ${rowsToExport.length} attendance records`,
       );
     } catch (err) {
       console.error("Download failed:", err);
@@ -4048,6 +4087,41 @@ const AttendanceModal = ({
       textTransform: "uppercase",
       fontWeight: 600,
     },
+    subtotalRow: {
+      background: "rgba(128, 128, 128, 0.08)",
+      borderTop: `2px solid ${theme.palette.divider}`,
+    },
+    subtotalLabel: {
+      fontWeight: 700,
+      fontSize: 13,
+      textTransform: "uppercase",
+      letterSpacing: "0.5px",
+      color: theme.palette.text.primary,
+    },
+    subtotalCell: {
+      padding: "8px 12px",
+      fontWeight: 700,
+      fontSize: 13,
+    },
+    subtotalAmount: {
+      fontWeight: 700,
+      color: theme.palette.text.primary,
+    },
+    mobileSubtotal: {
+      marginTop: 12,
+      padding: "12px 16px",
+      borderRadius: 8,
+      background: "rgba(128, 128, 128, 0.08)",
+      border: `1px solid ${theme.palette.divider}`,
+    },
+    mobileSubtotalLine: {
+      display: "flex",
+      justifyContent: "space-between",
+      fontSize: 13,
+      fontWeight: 700,
+      marginTop: 4,
+      color: theme.palette.text.secondary,
+    },
     decisionBreakdown: {
       fontSize: 14,
       color: theme.palette.text.secondary,
@@ -4331,6 +4405,35 @@ const AttendanceModal = ({
                 {isMobile ? (
                   <div>
                     {filteredCommonAttendees.map(renderMobileAttendeeCard)}
+                    {isTicketedEvent && subtotals && (
+                      <div style={styles.mobileSubtotal}>
+                        <span style={styles.subtotalLabel}>Total</span>
+                        <div style={styles.mobileSubtotalLine}>
+                          <span>Price</span>
+                          <span style={styles.subtotalAmount}>
+                            R{subtotals.totalPrice.toFixed(2)}
+                          </span>
+                        </div>
+                        <div style={styles.mobileSubtotalLine}>
+                          <span>Paid</span>
+                          <span style={styles.subtotalAmount}>
+                            R{subtotals.totalPaid.toFixed(2)}
+                          </span>
+                        </div>
+                        <div style={styles.mobileSubtotalLine}>
+                          <span>Owing</span>
+                          <span style={styles.subtotalAmount}>
+                            R{subtotals.totalOwing.toFixed(2)}
+                          </span>
+                        </div>
+                        <div style={styles.mobileSubtotalLine}>
+                          <span>Change</span>
+                          <span style={styles.subtotalAmount}>
+                            R{subtotals.totalChange.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div style={styles.tableContainer}>
@@ -4739,6 +4842,37 @@ const AttendanceModal = ({
                             </tr>
                           );
                         })}
+                        {isTicketedEvent && subtotals && (
+                          <tr style={styles.subtotalRow}>
+                            <td colSpan={isActiveTeams ? 6 : 5}>
+                              <span style={styles.subtotalLabel}>Subtotal</span>
+                            </td>
+                            <td style={styles.subtotalCell} />
+                            <td style={styles.subtotalCell}>
+                              <span style={styles.subtotalAmount}>
+                                R{subtotals.totalPrice.toFixed(2)}
+                              </span>
+                            </td>
+                            <td style={styles.subtotalCell} />
+                            <td style={styles.subtotalCell} />
+                            <td style={styles.subtotalCell}>
+                              <span style={styles.subtotalAmount}>
+                                R{subtotals.totalPaid.toFixed(2)}
+                              </span>
+                            </td>
+                            <td style={styles.subtotalCell}>
+                              <span style={styles.subtotalAmount}>
+                                R{subtotals.totalOwing.toFixed(2)}
+                              </span>
+                            </td>
+                            <td style={styles.subtotalCell}>
+                              <span style={styles.subtotalAmount}>
+                                R{subtotals.totalChange.toFixed(2)}
+                              </span>
+                            </td>
+                            <td colSpan={2} />
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>

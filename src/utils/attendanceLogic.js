@@ -238,3 +238,58 @@ export const resolveDownloadHeadcount = (manualHeadcount, checkedInCount) => {
   }
   return checkedInCount;
 };
+
+/**
+ * Invoice-style subtotals for a ticketed event: sums the per-person financials
+ * (price, paid, owing, change) the same way calculateFinancials does per row,
+ * so the single subtotal row matches the numbers shown above it.
+ * @param {object[]} people - People to total (e.g. the visible table rows).
+ * @param {(person) => {price: any, paidAmount: any}} [getTicketInfo] - Resolves
+ *   the ticket price + amount already paid for a person.
+ * @returns {{ totalPrice: number, totalPaid: number, totalOwing: number, totalChange: number }}
+ */
+export const computeTicketSubtotals = (people, getTicketInfo) => {
+  const toNumber = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const totals = { totalPrice: 0, totalPaid: 0, totalOwing: 0, totalChange: 0 };
+  (people || []).forEach((person) => {
+    const ticket = getTicketInfo ? getTicketInfo(person) || {} : person || {};
+    const price = toNumber(ticket.price);
+    const paidAmount = toNumber(ticket.paidAmount);
+    totals.totalPrice += price;
+    totals.totalPaid += paidAmount;
+    if (paidAmount >= price) {
+      totals.totalChange += paidAmount - price;
+    } else if (paidAmount > 0) {
+      totals.totalOwing += price - paidAmount;
+    } else {
+      totals.totalOwing += price;
+    }
+  });
+  return totals;
+};
+
+/**
+ * Picks which people appear in the exported attendance file:
+ * - Non-ticketed events export the people who were checked in.
+ * - Ticketed events also include every ticket holder — a person may pay for a
+ *   ticket but not show up, and that money still counts.
+ * @param {object[]} people - All associated people.
+ * @param {string[]} checkedInIds - People currently checked in.
+ * @param {{ isTicketedEvent: boolean, hasTicketInfo: (person) => boolean }} opts
+ * @returns {object[]}
+ */
+export const pickDownloadPeople = (
+  people,
+  checkedInIds,
+  { isTicketedEvent = false, hasTicketInfo = () => false } = {},
+) => {
+  const checked = new Set(checkedInIds || []);
+  return (people || []).filter((person) => {
+    if (!person || person.id == null) return false;
+    if (!isTicketedEvent) return checked.has(person.id);
+    return checked.has(person.id) || hasTicketInfo(person);
+  });
+};

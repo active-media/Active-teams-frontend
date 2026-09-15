@@ -4,6 +4,8 @@ import {
   normalizeEventAttendance,
   resolveHeadcount,
   numericFieldSum,
+  computeTicketSubtotals,
+  pickDownloadPeople,
   shouldSyncServiceCheckIn,
   presetHeadcountValue,
   resolveDownloadHeadcount,
@@ -244,6 +246,82 @@ describe("headcount helpers", () => {
     assert.equal(resolveDownloadHeadcount("7", 5), 7);
     assert.equal(resolveDownloadHeadcount(0, 5), 0);
     assert.equal(resolveDownloadHeadcount("abc", 5), 0);
+  });
+});
+
+// ── computeTicketSubtotals ─────────────────────────────────────────────────
+
+describe("computeTicketSubtotals", () => {
+  const people = [
+    { id: 1, price: 150, paidAmount: 150 },
+    { id: 2, price: 350, paidAmount: 100 },
+    { id: 3, price: 250, paidAmount: 250 }, // fully paid
+    { id: 4, price: 100 }, // unpaid -> owing the full price
+    { id: 5, price: 80, paidAmount: 100 }, // over-paid -> change 20
+  ];
+
+  test("sums price/paid/owing/change across people like an invoice subtotal", () => {
+    const totals = computeTicketSubtotals(people, (p) => ({
+      price: p.price,
+      paidAmount: p.paidAmount ?? 0,
+    }));
+    assert.equal(totals.totalPrice, 930); // 150+350+250+100+80
+    assert.equal(totals.totalPaid, 600); // 150+100+250+0+100
+    assert.equal(totals.totalOwing, 350); // 0+250+0+100+0
+    assert.equal(totals.totalChange, 20); // 0+0+0+0+20
+  });
+
+  test("uses the row object directly when no getter is provided", () => {
+    const totals = computeTicketSubtotals([
+      { price: "100", paidAmount: "40" },
+      { price: 50 },
+    ]);
+    assert.equal(totals.totalPrice, 150);
+    assert.equal(totals.totalPaid, 40);
+    assert.equal(totals.totalOwing, 110); // 60 + 50
+    assert.equal(totals.totalChange, 0);
+  });
+
+  test("handles empty input", () => {
+    assert.deepEqual(computeTicketSubtotals([], () => ({})), {
+      totalPrice: 0,
+      totalPaid: 0,
+      totalOwing: 0,
+      totalChange: 0,
+    });
+  });
+});
+
+// ── pickDownloadPeople ─────────────────────────────────────────────────────
+
+describe("pickDownloadPeople", () => {
+  const people = [
+    { id: "a", name: "Checked in" },
+    { id: "b", name: "Paid, no-show" },
+    { id: "c", name: "Free, no ticket" },
+    null,
+  ];
+  const checkedInIds = ["a"];
+  const hasTicketInfo = (p) => p && p.id === "b";
+
+  test("non-ticketed: only checked-in people are exported", () => {
+    const picked = pickDownloadPeople(people, checkedInIds, {
+      isTicketedEvent: false,
+      hasTicketInfo,
+    });
+    assert.deepEqual(picked.map((p) => p.id), ["a"]);
+  });
+
+  test("ticketed: checked-in + every ticket holder (paid but no-show) exported", () => {
+    const picked = pickDownloadPeople(people, checkedInIds, {
+      isTicketedEvent: true,
+      hasTicketInfo,
+    });
+    assert.deepEqual(picked.map((p) => p.id), ["a", "b"]);
+  });
+
+  test("empty input is safe", () => {
+    assert.deepEqual(pickDownloadPeople([], [], { isTicketedEvent: true }), []);
   });
 });
 
