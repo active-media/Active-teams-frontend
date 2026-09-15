@@ -443,6 +443,8 @@ export const AuthProvider = ({ children }) => {
     persistLeadersData(leadersData, leaderStatus);
   };
 
+  
+
   // ── Context value ──────────────────────────────────────────────────────────
   return (
     <AuthContext.Provider value={{
