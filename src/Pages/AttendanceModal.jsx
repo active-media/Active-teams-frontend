@@ -1444,7 +1444,20 @@ const AttendanceModal = ({
   isActiveTeams,
 }) => {
   const { authFetch } = useContext(AuthContext);
-  const { getHierarchyLabel } = useOrgConfig();
+  const { getAllHierarchyLevels } = useOrgConfig();
+  const leaderFieldLabel = (field) => {
+    const entry = (getAllHierarchyLevels() || []).find(
+      (h) => h && h.field === field,
+    );
+    return (
+      entry?.label ||
+      (field === "leader12"
+        ? "Leader at 12"
+        : field === "leader144"
+          ? "Leader at 144"
+          : field)
+    );
+  };
   const [searchName, setSearchName] = useState("");
   const [activeTab, setActiveTab] = useState(0);
   const [checkedIn, setCheckedIn] = useState({});
@@ -1475,10 +1488,45 @@ const AttendanceModal = ({
   const pendingTicketSaveIds = useRef(new Set());
   const persistentAttendeesRef = useRef([]);
   const headcountEditedRef = useRef(false);
+  const headcountSaveTimerRef = useRef(null);
+  const lastAutoSyncCountRef = useRef(null);
+  const persistHeadcount = useCallback(
+    (value) => {
+      const parsed = parseInt(value, 10);
+      const headcount = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+      if (headcountSaveTimerRef.current)
+        clearTimeout(headcountSaveTimerRef.current);
+      headcountSaveTimerRef.current = setTimeout(async () => {
+        headcountSaveTimerRef.current = null;
+        const token = localStorage.getItem("token");
+        const eventId = getAttendanceEventId(event);
+        if (!eventId || eventId === "undefined") return;
+        try {
+          const res = await authFetch(
+            `${BACKEND_URL}/events/${eventId}/headcount`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ headcount }),
+            },
+          );
+          if (!res.ok) throw new Error(`Headcount save failed: ${res.status}`);
+          console.log("Headcount auto-saved:", headcount);
+        } catch (err) {
+          console.error("Failed to auto-save headcount:", err);
+        }
+      }, 600);
+    },
+    [event],
+  );
 
   const handleHeadcountChange = (e) => {
     headcountEditedRef.current = true;
     setManualHeadcount(e.target.value);
+    persistHeadcount(e.target.value);
   };
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
@@ -2069,7 +2117,7 @@ const AttendanceModal = ({
       // saved headcount if one exists (it was intentionally set differently).
       const presetHeadcount = presetHeadcountValue(headcount, attendeesCount);
       setManualHeadcount(presetHeadcount);
-      headcountEditedRef.current = headcount > 0;
+      headcountEditedRef.current = false;
       window.__lastLoadedAttendance = weekAttendance;
     } catch (error) {
       console.error("Error loading event statistics:", error);
@@ -2113,10 +2161,6 @@ const AttendanceModal = ({
         : data.checked_in_attendees || [];
 
       setPersistentCommonAttendees(persistentList);
-
-      const isCompleted =
-        data.attendance_status === "complete" ||
-        data.attendance_status === "did_not_meet";
 
       const newCheckedIn = {};
       persistentList.forEach((att) => {
@@ -2204,18 +2248,23 @@ const AttendanceModal = ({
         return merged;
       });
 
+      const userEditingHeadcount = headcountEditedRef.current;
+
       if (data.attendance_status === "did_not_meet") {
         setDidNotMeet(true);
-        setManualHeadcount("0");
-        headcountEditedRef.current = false;
-      } else if (isCompleted && data.total_headcounts > 0) {
+        if (!userEditingHeadcount) {
+          setManualHeadcount("0");
+          headcountEditedRef.current = false;
+        }
+      } else if (data.total_headcounts > 0) {
         setDidNotMeet(false);
         setManualHeadcount(data.total_headcounts.toString());
-        headcountEditedRef.current = true;
       } else {
         setDidNotMeet(false);
-        setManualHeadcount("0");
-        headcountEditedRef.current = false;
+        if (!userEditingHeadcount) {
+          setManualHeadcount("0");
+          headcountEditedRef.current = false;
+        }
       }
     } catch (error) {
       console.error("Error loading persistent attendees:", error);
@@ -2617,6 +2666,25 @@ const AttendanceModal = ({
       return newState;
     });
     const isNowChecked = !checkedIn[id];
+    const nextChecked = { ...checkedIn, [id]: isNowChecked };
+    const checkedInSnapshots = (persistentAttendeesRef.current || [])
+      .filter((p) => p.id && nextChecked[p.id])
+      .map((p) => ({
+        id: p.id,
+        name: p.name || p.fullName || "",
+        surname: p.surname || "",
+        fullName: p.fullName || p.name || "",
+        email: p.email || "",
+        phone: p.phone || "",
+        leader12: p.leader12 || "",
+        leader144: p.leader144 || "",
+        decision: decisions[p.id] ? decisionTypes[p.id] || "" : "",
+        priceName: p.priceName || "",
+        price: p.price || 0,
+        ageGroup: p.ageGroup || "",
+        paymentMethod: p.paymentMethod || "",
+        paid: p.paidAmount ?? p.paid ?? 0,
+      }));
     if (isNowChecked) {
       if (isTicketedEvent) {
         setAttendeeTicketInfo((prevTicket) => {
@@ -2645,9 +2713,12 @@ const AttendanceModal = ({
       };
       syncServiceCheckIn(personData, true)
         .then(() =>
-          saveAllAttendees(persistentAttendeesRef.current || [], null, true).catch(
-            () => {},
-          ),
+          saveAllAttendees(
+            persistentAttendeesRef.current || [],
+            null,
+            true,
+            checkedInSnapshots,
+          ).catch(() => {}),
         )
         .catch((error) => {
           console.error("Failed to persist check-in:", error);
@@ -2663,6 +2734,12 @@ const AttendanceModal = ({
         console.error("Failed to persist un-check:", error);
         toast.error(error.message || "Failed to save check-in");
       });
+      saveAllAttendees(
+        persistentAttendeesRef.current || [],
+        null,
+        true,
+        checkedInSnapshots,
+      ).catch(() => {});
       toast.warning("Person unchecked for this week");
     }
   };
@@ -2677,6 +2754,7 @@ const AttendanceModal = ({
     attendees,
     ticketInfoOverride = null,
     skipRefresh = false,
+    checkedInOverride = null,
   ) => {
     if (!event) return false;
 
@@ -2723,7 +2801,12 @@ const AttendanceModal = ({
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ persistent_attendees: enriched }),
+          body: JSON.stringify({
+            persistent_attendees: enriched,
+            ...(checkedInOverride !== null && {
+              checked_in_attendees: checkedInOverride,
+            }),
+          }),
         },
       );
       if (!response.ok) {
@@ -2919,12 +3002,22 @@ const AttendanceModal = ({
   console.log("Attendees checked in:", attendeesCount);
 
   // Keep the headcount in sync with the checked-in count until the user
-  // explicitly edits it. Headcount defaults to the attendees number.
+  // explicitly edits it. Headcount defaults to the attendees number and
+  // auto-persists, mirroring how ticket/money edits save immediately.
+  // A stored headcount is the starting value; it resyncs only when the
+  // checked-in count actually changes in this session (never on first render).
   useEffect(() => {
-    if (!headcountEditedRef.current) {
-      setManualHeadcount(String(attendeesCount));
+    if (headcountEditedRef.current) return;
+    if (lastAutoSyncCountRef.current === null) {
+      lastAutoSyncCountRef.current = attendeesCount;
+      return;
     }
-  }, [attendeesCount]);
+    if (attendeesCount !== lastAutoSyncCountRef.current) {
+      lastAutoSyncCountRef.current = attendeesCount;
+      setManualHeadcount(String(attendeesCount));
+      if (attendeesCount > 0) persistHeadcount(String(attendeesCount));
+    }
+  }, [attendeesCount, persistHeadcount]);
   const decisionsCount = Object.keys(decisions).filter(
     (id) => decisions[id],
   ).length;
@@ -4446,10 +4539,10 @@ const AttendanceModal = ({
                           {isActiveTeams ? (
                             <>
                               <th style={styles.th}>
-                                Attendees {getHierarchyLabel(2)}
+                                Attendees {leaderFieldLabel("leader12")}
                               </th>
                               <th style={styles.th}>
-                                Attendees {getHierarchyLabel(3)}
+                                Attendees {leaderFieldLabel("leader144")}
                               </th>
                             </>
                           ) : (
@@ -5007,7 +5100,7 @@ const AttendanceModal = ({
                                         color: theme.palette.text.secondary,
                                       }}
                                     >
-                                      {getHierarchyLabel(2)}:{" "}
+                                      {leaderFieldLabel("leader12")}:{" "}
                                       {person.leader12 || "—"}
                                     </div>
                                     <div
@@ -5016,7 +5109,7 @@ const AttendanceModal = ({
                                         color: theme.palette.text.secondary,
                                       }}
                                     >
-                                      {getHierarchyLabel(3)}:{" "}
+                                      {leaderFieldLabel("leader144")}:{" "}
                                       {person.leader144 || "—"}
                                     </div>
                                   </>
@@ -5075,10 +5168,10 @@ const AttendanceModal = ({
                           {isActiveTeams ? (
                             <>
                               <th style={styles.th}>
-                                {getHierarchyLabel(2) || "Leader @12"}
+                                {leaderFieldLabel("leader12")}
                               </th>
                               <th style={styles.th}>
-                                {getHierarchyLabel(3) || "Leader @144"}
+                                {leaderFieldLabel("leader144")}
                               </th>
                             </>
                           ) : (

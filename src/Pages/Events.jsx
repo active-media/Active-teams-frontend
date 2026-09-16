@@ -1072,6 +1072,29 @@ const Events = () => {
   }, [isLeaderAt12, isRegularUser, isRegistrant, isAdmin]);
 
   const [viewFilter, setViewFilter] = useState(initialViewFilter);
+
+  // Live refs so delayed/auto refreshes always use the CURRENT view scope
+  // instead of the scope that was active when the request was scheduled.
+  const viewFilterRef = useRef(initialViewFilter);
+  useEffect(() => {
+    viewFilterRef.current = viewFilter;
+  }, [viewFilter]);
+  const roleFlagsRef = useRef({
+    isAdmin,
+    isRegistrant,
+    isRegularUser,
+    isLeaderAt12,
+    isLeader,
+  });
+  useEffect(() => {
+    roleFlagsRef.current = {
+      isAdmin,
+      isRegistrant,
+      isRegularUser,
+      isLeaderAt12,
+      isLeader,
+    };
+  }, [isAdmin, isRegistrant, isRegularUser, isLeaderAt12, isLeader]);
   const [filterOptions, setFilterOptions] = useState({
     leader: "",
     day: "all",
@@ -1463,11 +1486,14 @@ const fetchEventsFilters = (filters) => {
     params.firstName = userFirstName;
     params.userSurname = userSurname;
 
-    if (isLeaderAt12) {
+    const flags = roleFlagsRef.current;
+    const currentView = viewFilterRef.current;
+
+    if (flags.isLeaderAt12) {
       params.leader_at_12_view = true;
       params.isLeaderAt12 = true;
 
-      if (viewFilter === "personal") {
+      if (currentView === "personal") {
         params.personal = true;
         params.show_personal_cells = true;
       } else {
@@ -1475,8 +1501,8 @@ const fetchEventsFilters = (filters) => {
         params.include_subordinate_cells = true;
         params.show_all_authorized = true;
       }
-    } else if (isAdmin) {
-      if (viewFilter === "personal") params.personal = true;
+    } else if (flags.isAdmin) {
+      if (currentView === "personal") params.personal = true;
     } else {
       // For regular users, registrants, leaders - show personal cells only
       params.personal = true;
@@ -2289,7 +2315,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     if (isSearching === null) return events;
     if (!debouncedSearchTerm.trim()) return events;
     return handleSearchSubmit(debouncedSearchTerm) || [];
-  }, [allCurrentEvents, debouncedSearchTerm, selectedStatus]);
+  }, [allCurrentEvents, debouncedSearchTerm, selectedStatus, isSearching]);
   console.log(
     "issearching",
     isSearching,
@@ -3749,6 +3775,11 @@ const getFilteredEventTypes = (allEventTypes) => {
     const handleViewFilterChange = (newViewFilter) => {
       setViewFilter(newViewFilter);
       setCurrentPage(1);
+      eventsCache.current = {};
+      if (cacheRef.current) {
+        cacheRef.current.data.clear();
+        cacheRef.current.timestamp.clear();
+      }
     };
 
     const getAllLabel = () => {
