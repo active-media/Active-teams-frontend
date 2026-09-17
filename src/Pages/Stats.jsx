@@ -54,9 +54,13 @@ import {
   Visibility,
   ChevronLeft,
   ChevronRight,
+  KeyboardArrowDown,
   Save,
   Event,
   Download,
+  CheckCircle,
+  CalendarMonth,
+  MoreVert,
 } from "@mui/icons-material";
 import { toast } from "react-toastify";
 import * as XLSX from "xlsx";
@@ -292,6 +296,7 @@ const StatsDashboard = () => {
 
   const [createEventModalOpen, setCreateEventModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
+  const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
   const [expandedUsers, setExpandedUsers] = useState([]);
   const [newEventData, setNewEventData] = useState({
     eventName: "",
@@ -606,15 +611,6 @@ const StatsDashboard = () => {
     },
     [period, authFetch],
   );
-
-  const handlePeriodChange = (e) => {
-    /** CHANGE:
-     * Before, period changes were blocked during fetch.
-     * Now, period changes are safe.
-     */
-
-    setPeriod(e.target.value);
-  };
 
   /**
    * CHANGE:
@@ -1445,6 +1441,161 @@ const StatsDashboard = () => {
 
   const eventsOnSelectedDate = getEventsForDate(selectedDate);
 
+  const isDarkMode = theme.palette.mode === "dark";
+  const userProfile = JSON.parse(
+    localStorage.getItem("userProfile") || "{}",
+  );
+  const userInitials =
+    [userProfile.name, userProfile.surname]
+      .filter(Boolean)
+      .map((part) => String(part).trim()[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2) || "U";
+
+  const styles = {
+    topbarTitle: {
+      fontWeight: 700,
+      fontSize: 22,
+      lineHeight: 1.2,
+    },
+    topbarSubtitle: {
+      fontSize: 12,
+      color: theme.palette.text.secondary,
+      mt: 0.25,
+    },
+    periodPill: {
+      textTransform: "none",
+      borderRadius: "8px",
+      border: `1px solid ${theme.palette.divider}`,
+      color: theme.palette.text.secondary,
+      gap: 1,
+      minWidth: 0,
+      px: 1.5,
+      py: 0.6,
+      bgcolor: "background.paper",
+      "&:hover": { borderColor: theme.palette.action.active },
+    },
+    periodMenu: {
+      position: "absolute",
+      top: "calc(100% + 6px)",
+      right: 0,
+      zIndex: 1300,
+      minWidth: 180,
+      bgcolor: "background.paper",
+      border: `1px solid ${theme.palette.divider}`,
+      borderRadius: "10px",
+      boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+      py: 0.75,
+      overflow: "hidden",
+    },
+    periodMenuItem: {
+      display: "block",
+      width: "100%",
+      textAlign: "left",
+      px: 2,
+      py: 0.9,
+      fontSize: 13,
+      fontFamily: "inherit",
+      border: "none",
+      cursor: "pointer",
+      bgcolor: "transparent",
+      color: "text.primary",
+      "&:hover": { bgcolor: theme.palette.action.hover },
+    },
+    iconButton: {
+      border: `1px solid ${theme.palette.divider}`,
+      borderRadius: "8px",
+      bgcolor: "background.paper",
+      color: "text.secondary",
+    },
+    downloadButton: {
+      borderRadius: "8px",
+      textTransform: "uppercase",
+      fontWeight: 700,
+      fontSize: 11,
+      letterSpacing: "0.04em",
+      px: 1.75,
+      py: 0.9,
+      color: "#fff",
+      background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+      boxShadow: "0 2px 6px rgba(109,40,217,0.35)",
+      "&:hover": { background: "linear-gradient(135deg, #7c3aed, #5b21b6)" },
+      "&.Mui-disabled": {
+        background: isDarkMode ? "#3b3355" : "#ddd1f0",
+        color: isDarkMode ? "#9a94b8" : "#8a7fb0",
+      },
+    },
+    avatar: {
+      width: 30,
+      height: 30,
+      borderRadius: "50%",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontWeight: 700,
+      fontSize: 11,
+      color: "#fff",
+      background: "linear-gradient(135deg, #10b981, #0d9488)",
+      flexShrink: 0,
+    },
+    summaryCard: {
+      flex: "1 1 0",
+      minWidth: { xs: "100%", sm: 200 },
+      bgcolor: "background.paper",
+      borderRadius: "14px",
+      border: `1px solid ${theme.palette.divider}`,
+      p: 2.5,
+      display: "flex",
+      flexDirection: "column",
+      gap: 0.75,
+      boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+    },
+    summaryIconWrap: {
+      width: 30,
+      height: 30,
+      borderRadius: "8px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    summaryValue: {
+      fontWeight: 800,
+      fontSize: 26,
+      lineHeight: 1,
+    },
+    summaryLabel: {
+      fontSize: 12.5,
+      fontWeight: 600,
+    },
+    summarySubLabel: {
+      fontSize: 11,
+      opacity: 0.6,
+    },
+    mainTab: {
+      borderRadius: "8px",
+      px: 2,
+      py: 1,
+      textTransform: "uppercase",
+      fontSize: 12,
+      fontWeight: 700,
+      letterSpacing: "0.03em",
+      whiteSpace: "nowrap",
+      color: "text.secondary",
+      border: `1px solid ${theme.palette.divider}`,
+      bgcolor: "background.paper",
+      "&:hover": { bgcolor: theme.palette.action.hover },
+    },
+    mainTabActive: {
+      color: "#8b5cf6",
+      border: "1px solid rgba(139,92,246,0.45)",
+      bgcolor: isDarkMode
+        ? "rgba(139,92,246,0.16)"
+        : "rgba(139,92,246,0.10)",
+      boxShadow: "0 1px 4px rgba(139,92,246,0.18)",
+    },
+  };
+
   return (
     <Container
       maxWidth="xl"
@@ -1453,7 +1604,7 @@ const StatsDashboard = () => {
         mt: { xs: 4, md: 6 },
       }}
     >
-      {/* Header */}
+      {/* ─── Topbar ─── */}
       <Box
         display="flex"
         justifyContent="space-between"
@@ -1461,55 +1612,105 @@ const StatsDashboard = () => {
         mb={3}
         flexDirection={isXsDown ? "column" : "row"}
         gap={2}
+        flexWrap="wrap"
       >
         <Box>
-          <Typography variant="h5" fontWeight="medium">
-            Dashboard
+          <Typography variant="h5" sx={styles.topbarTitle}>
+            Stats Dashboard
           </Typography>
           {stats.dateRange.start && stats.dateRange.end && (
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" sx={styles.topbarSubtitle}>
               {formatDate(stats.dateRange.start)} –{" "}
               {formatDate(stats.dateRange.end)}
             </Typography>
           )}
         </Box>
 
-        <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
-          <FormControl size="small" sx={{ minWidth: 140 }}>
-            <InputLabel>Period</InputLabel>
-            <Select
-              value={period}
-              label="Period"
-              onChange={handlePeriodChange}
-              disabled={stats.loading}
+        <Box display="flex" gap={1.5} alignItems="center" flexWrap="wrap">
+          {/* Period pill + dropdown */}
+          <Box sx={{ position: "relative" }}>
+            <Button
+              size="small"
+              onClick={() => setPeriodMenuOpen((v) => !v)}
+              sx={styles.periodPill}
+              aria-haspopup="menu"
+              aria-expanded={periodMenuOpen}
             >
-              {periodOptions.map((opt) => (
-                <MenuItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+              <CalendarMonth sx={{ fontSize: 13, opacity: 0.7 }} />
+              <Box
+                component="span"
+                sx={{
+                  fontSize: 9,
+                  letterSpacing: "0.08em",
+                  fontWeight: 700,
+                  opacity: 0.55,
+                }}
+              >
+                PERIOD
+              </Box>
+              <Box component="b" sx={{ fontWeight: 700 }}>
+                {getPeriodDisplayText(period)}
+              </Box>
+              <KeyboardArrowDown
+                sx={{
+                  fontSize: 14,
+                  color: "text.secondary",
+                  transform: periodMenuOpen ? "rotate(180deg)" : "none",
+                  transition: "transform 0.15s ease",
+                }}
+              />
+            </Button>
+            {periodMenuOpen && (
+              <Box sx={styles.periodMenu} role="menu">
+                {periodOptions.map((opt) => {
+                  const isSelected = opt.value === period;
+                  return (
+                    <Box
+                      key={opt.value}
+                      component="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setPeriod(opt.value);
+                        setPeriodMenuOpen(false);
+                      }}
+                      sx={{
+                        ...styles.periodMenuItem,
+                        fontWeight: isSelected ? 700 : 400,
+                        color: isSelected
+                          ? "#8b5cf6"
+                          : theme.palette.text.primary,
+                        bgcolor: isSelected
+                          ? theme.palette.action.selected
+                          : "transparent",
+                      }}
+                    >
+                      {opt.label}
+                    </Box>
+                  );
+                })}
+              </Box>
+            )}
+          </Box>
 
-          {/* CHANGE: Refresh should refresh BOTH stats & cells */}
+          {/* Refresh (refreshes BOTH stats & cells) */}
           <Tooltip title="Refresh">
             <IconButton
+              size="small"
               onClick={() => {
-                //CHANGE: forceRefresh=true so both fetches run even if a previous call is mid-flight.
                 fetchStats(true);
                 fetchOverdueCells(true);
               }}
               disabled={stats.loading || cellsLoading}
+              sx={styles.iconButton}
             >
-              <Refresh />
+              <Refresh sx={{ fontSize: 16 }} />
             </IconButton>
-          </Tooltip> 
-          {/* Download button should download based  */}
+          </Tooltip>
+
+          {/* Download */}
           <Button
             size="small"
             onClick={downloadFilteredStats}
-            startIcon={ <Download />}
-            variant="outlined"
             disabled={
               stats.loading ||
               cellsLoading ||
@@ -1519,49 +1720,82 @@ const StatsDashboard = () => {
                 ? filteredTasks.length === 0
                 : filteredEvents.length === 0)
             }
+            sx={styles.downloadButton}
           >
-            {isDownloading ? "Downloading..." : "Download"}
+            {isDownloading ? (
+              <CircularProgress size={12} color="inherit" sx={{ mr: 0.75 }} />
+            ) : (
+              <Download sx={{ fontSize: 13, mr: 0.75 }} />
+            )}
+            {isDownloading ? "Downloading..." : "DOWNLOAD"}
           </Button>
+
+          {/* Avatar */}
+          <Box sx={styles.avatar} aria-label="Profile">
+            {userInitials}
+          </Box>
+
+          {/* Kebab */}
+          <MoreVert sx={{ fontSize: 18, color: "text.secondary" }} />
         </Box>
       </Box>
 
       {(stats.loading || cellsLoading) && <LinearProgress sx={{ mb: 3 }} />}
 
-      {/* Stat Cards */}
-      <Grid container spacing={3} mb={4}>
-        <Grid item xs={12} sm={6} md={4}>
-          <StatCard
-            title="Overdue Cells"
-            color="warning"
-            subtitle={getPeriodDisplayText(period)}
-            value={filteredOverdueCells.length}
-            icon={<Warning />}
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={4}>
-          <StatCard
-            title="Tasks Due"
-            subtitle={getPeriodDisplayText(period)}
-            color="secondary"
-            value={stats.overview?.tasks_due_in_period || 0}
-            icon={<Task />}
-          />
-        </Grid>
-      </Grid>
+      {/* ─── Summary cards ─── */}
+      <Box display="flex" gap={2} flexWrap="wrap" mb={3}>
+        <Box sx={styles.summaryCard}>
+          <Box
+            sx={{ ...styles.summaryIconWrap, bgcolor: "rgba(245,158,11,0.15)" }}
+          >
+            <Warning sx={{ fontSize: 17, color: "#f59e0b" }} />
+          </Box>
+          <Box sx={{ ...styles.summaryValue, color: "#f59e0b" }}>
+            {filteredOverdueCells.length}
+          </Box>
+          <Box sx={styles.summaryLabel}>Overdue Cells</Box>
+          <Box sx={styles.summarySubLabel}>{getPeriodDisplayText(period)}</Box>
+        </Box>
+        <Box sx={styles.summaryCard}>
+          <Box
+            sx={{ ...styles.summaryIconWrap, bgcolor: "rgba(16,185,129,0.15)" }}
+          >
+            <CheckCircle sx={{ fontSize: 17, color: "#10b981" }} />
+          </Box>
+          <Box sx={{ ...styles.summaryValue, color: "#10b981" }}>
+            {stats.overview?.tasks_due_in_period || 0}
+          </Box>
+          <Box sx={styles.summaryLabel}>Tasks Due</Box>
+          <Box sx={styles.summarySubLabel}>{getPeriodDisplayText(period)}</Box>
+        </Box>
+      </Box>
 
-      {/* Tabs */}
-      <Paper variant="outlined" sx={{ mb: 2 }}>
-        <Tabs
-          variant={isSmDown ? "scrollable" : "standard"}
-          centered
-          value={activeTab}
-          onChange={(_, v) => setActiveTab(v)}
-        >
-          <Tab label={`Overdue Cells (${filteredOverdueCells.length})`} />
-          <Tab label={`Tasks (${filteredTasks.length})`} />
-          <Tab label={`Calendar (${calendarEvents.length} events)`} />
-        </Tabs>
-      </Paper>
+      {/* ─── Main tabs ─── */}
+      <Box
+        component="nav"
+        aria-label="Dashboard views"
+        sx={{ display: "flex", gap: 1, mb: 2.5, overflowX: "auto" }}
+      >
+        {[
+          { value: 0, label: `Overdue Cells (${filteredOverdueCells.length})` },
+          { value: 1, label: `Tasks (${filteredTasks.length})` },
+          { value: 2, label: `Calendar (${calendarEvents.length} events)` },
+        ].map((tab) => {
+          const isActive = activeTab === tab.value;
+          return (
+            <Button
+              key={tab.value}
+              onClick={() => setActiveTab(tab.value)}
+              sx={{
+                ...styles.mainTab,
+                ...(isActive ? styles.mainTabActive : {}),
+              }}
+            >
+              {tab.label}
+            </Button>
+          );
+        })}
+      </Box>
 
       {/* Tab Content */}
       <Box sx={{ minHeight: "0px" }}>
@@ -1573,46 +1807,52 @@ const StatsDashboard = () => {
               height: "calc(100vh - 380px)",
               display: "flex",
               flexDirection: "column",
-              borderRadius: 2,
+              borderRadius: 3,
               boxShadow: 1,
             }}
           >
-            <Box
-              display="flex"
-              justifyContent="space-between"
-              alignItems="center"
-              mb={2.5}
-              flexWrap="wrap"
-              gap={2}
-            >
-              <Box>
-                <Typography variant="h6" component="div" fontWeight={600}>
-                  Overdue Cells
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {getPeriodDisplayText(period)} • {filteredOverdueCells.length}{" "}
-                  found
-                </Typography>
-              </Box>
-              <Box display="flex" gap={1.5} alignItems="center">
-                <Chip
-                  label={getPeriodDisplayText(period)}
-                  color="warning"
-                  size="small"
-                  variant="outlined"
-                />
-                <Button
-                  color="warning"
-                  variant="outlined"
-                  size="small"
-                  disabled={filteredOverdueCells.length === 0}
-                  onClick={() => setOverdueModalOpen(true)}
-                  startIcon={<Visibility fontSize="small" />}
+<Box
+                  display="flex"
+                  justifyContent="space-between"
+                  alignItems="center"
+                  mb={2.5}
+                  flexWrap="wrap"
+                  gap={2}
                 >
-                  View All
-                </Button>
-              </Box>
-            </Box>
+                  <Box>
+                    <Typography
+                      variant="h6"
+                      component="div"
+                      sx={{ fontWeight: 700 }}
+                    >
+                      Overdue Cells
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {getPeriodDisplayText(period)} •{" "}
+                      {filteredOverdueCells.length} found
+                    </Typography>
+                  </Box>
+                  <Box display="flex" gap={1.5} alignItems="center">
+                    <Chip
+                      label={getPeriodDisplayText(period)}
+                      color="warning"
+                      size="small"
+                      variant="outlined"
+                      sx={{ fontWeight: 600 }}
+                    />
+                    <Button
+                      color="warning"
+                      variant="outlined"
+                      size="small"
+                      disabled={filteredOverdueCells.length === 0}
+                      onClick={() => setOverdueModalOpen(true)}
+                      startIcon={<Visibility fontSize="small" />}
+                      sx={{ textTransform: "uppercase", fontWeight: 700 }}
+                    >
+                      View All
+                    </Button>
+                  </Box>
+                </Box>
 
             {cellsLoading ? (
               <Box
@@ -1834,6 +2074,7 @@ const StatsDashboard = () => {
               height: "calc(100vh - 320px)",
               display: "flex",
               flexDirection: "column",
+              borderRadius: 3,
             }}
           >
             <Box
@@ -1844,11 +2085,24 @@ const StatsDashboard = () => {
                 mb: { xs: 2.5, md: 3 },
                 flexShrink: 0,
                 flexDirection: isXsDown ? "column" : "row",
-                gap: isXsDown ? 1 : 0,
+                gap: isXsDown ? 1.5 : 0,
+                flexWrap: "wrap",
               }}
             >
               <Box>
-                <Typography variant="subtitle1" gutterBottom>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{
+                    fontWeight: 700,
+                    letterSpacing: "0.08em",
+                    fontSize: 10.5,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  All Contacts
+                </Typography>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                   All Tasks by Person ({stats.groupedTasks.length} people •{" "}
                   {filteredTasks.length} total)
                 </Typography>
@@ -1858,6 +2112,7 @@ const StatsDashboard = () => {
                 color="secondary"
                 size="small"
                 variant="outlined"
+                sx={{ fontWeight: 600 }}
               />
             </Box>
 
@@ -1924,7 +2179,7 @@ const StatsDashboard = () => {
                 display: "flex",
                 flexDirection: "column",
                 overflow: "hidden",
-                borderRadius: 2,
+                borderRadius: 3,
                 boxShadow: 1,
                 minHeight: { xs: "auto", md: "500px" },
               }}
