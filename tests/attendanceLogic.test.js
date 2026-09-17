@@ -234,10 +234,9 @@ describe("shouldSyncServiceCheckIn", () => {
 // ── headcount helpers ───────────────────────────────────────────────────────
 
 describe("headcount helpers", () => {
-  test("presetHeadcountValue defaults to attendees when no saved headcount", () => {
-    assert.equal(presetHeadcountValue(0, 5), "5");
-    assert.equal(presetHeadcountValue(0, 0), "0");
-    assert.equal(presetHeadcountValue(12, 5), "12");
+  test("presetHeadcountValue stays at zero when no saved headcount", () => {
+    assert.equal(presetHeadcountValue(0), "0");
+    assert.equal(presetHeadcountValue(12), "12");
   });
 
   test("resolveDownloadHeadcount uses the edited value when present", () => {

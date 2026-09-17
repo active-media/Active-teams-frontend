@@ -216,14 +216,13 @@ export const shouldSyncServiceCheckIn = (event) => {
 };
 
 /**
- * Headcount shown in the input on load: use the saved event headcount when the
- * event has one, otherwise default to the number of attendees checked in.
+ * Headcount shown in the input on load: use the saved event headcount when one
+ * exists, otherwise stay at zero. Never defaults to the checked-in count.
  * @param {number} headcount - Saved event headcount (0 when none).
- * @param {number} attendeesCount - People currently checked in.
  * @returns {string}
  */
-export const presetHeadcountValue = (headcount, attendeesCount) =>
-  headcount > 0 ? String(headcount) : String(attendeesCount);
+export const presetHeadcountValue = (headcount) =>
+  headcount > 0 ? String(headcount) : "0";
 
 /**
  * Headcount used in exports: the explicitly edited value if any, otherwise the

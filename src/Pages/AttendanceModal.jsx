@@ -33,8 +33,6 @@ const GEOAPIFY_COUNTRY_CODE = (
   import.meta.env.VITE_GEOAPIFY_COUNTRY_CODE || "za"
 ).toLowerCase();
 
-const cleanEventId = (id) => id?.split("_")[0] ?? id;
-
 const AddPersonToEvents = ({ isOpen, onClose }) => {
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
@@ -1487,9 +1485,8 @@ const AttendanceModal = ({
   const ticketSaveTimers = useRef({});
   const pendingTicketSaveIds = useRef(new Set());
   const persistentAttendeesRef = useRef([]);
-  const headcountEditedRef = useRef(false);
   const headcountSaveTimerRef = useRef(null);
-  const lastAutoSyncCountRef = useRef(null);
+  const headcountEditedRef = useRef(false);
   const persistHeadcount = useCallback(
     (value) => {
       const parsed = parseInt(value, 10);
@@ -1820,8 +1817,8 @@ const AttendanceModal = ({
   const syncServiceCheckIn = async (person, isCheckedIn) => {
     if (!syncsServiceCheckIn) return;
 
-    const baseId = cleanEventId(getAttendanceEventId(event));
-    if (!baseId || !person?.id) return;
+    const syncEventId = getAttendanceEventId(event);
+    if (!syncEventId || !person?.id) return;
 
     const personData = {
       id: person.id,
@@ -1840,15 +1837,21 @@ const AttendanceModal = ({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          event_id: baseId,
+          event_id: syncEventId,
           person_data: personData,
           type: "attendee",
         }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        if (!String(body?.message || "").toLowerCase().includes("already")) {
-          throw new Error(`Check-in sync failed: ${res.status}`);
+        const message = String(body?.message || body?.error || "").toLowerCase();
+        if (!message.includes("already")) {
+          // Non-blocking: keep the local/attendance state consistent even if the
+          // door sync rejects this person (e.g. "already" variants, id format).
+          console.warn(
+            `Check-in sync to Service Check-In failed (${res.status}):`,
+            message,
+          );
         }
       }
     } else {
@@ -1856,19 +1859,25 @@ const AttendanceModal = ({
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          event_id: baseId,
+          event_id: syncEventId,
           person_id: person.id,
           type: "attendees",
         }),
       });
-      if (!res.ok) throw new Error(`Check-in remove sync failed: ${res.status}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.warn(
+          `Check-in remove sync failed (${res.status}):`,
+          String(body?.message || body?.error || ""),
+        );
+      }
     }
 
     window.dispatchEvent(
       new CustomEvent("attendanceUpdated", {
         detail: {
-          eventId: baseId,
-          attendanceEventId: getAttendanceEventId(event),
+          eventId: syncEventId,
+          attendanceEventId: syncEventId,
         },
       }),
     );
@@ -2113,9 +2122,9 @@ const AttendanceModal = ({
         },
       });
 
-      // Headcount defaults to the number checked in, but keeps a previously
-      // saved headcount if one exists (it was intentionally set differently).
-      const presetHeadcount = presetHeadcountValue(headcount, attendeesCount);
+      // Headcount keeps a previously saved value, otherwise stays at zero —
+      // it must never default to the number of people checked in.
+      const presetHeadcount = presetHeadcountValue(headcount);
       setManualHeadcount(presetHeadcount);
       headcountEditedRef.current = false;
       window.__lastLoadedAttendance = weekAttendance;
@@ -2146,19 +2155,41 @@ const AttendanceModal = ({
       const data = await response.json();
 
       const persistentList = data.persistent_attendees || [];
-      const baseId = getBaseEventId(event) || cleanEventId(eventId);
-      const liveResponse = await authFetch(
-        `${BACKEND_URL}/service-checkin/real-time-data?event_id=${encodeURIComponent(baseId)}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      const liveData = liveResponse.ok ? await liveResponse.json() : {};
-      const liveCheckedInList = [
-        ...(liveData.present_attendees || []),
-        ...(liveData.new_people || []),
-      ];
-      const checkedInList = liveResponse.ok
+      const attendanceEventId = getAttendanceEventId(event) || eventId;
+
+      // Door check-ins only matter for events that actually sync with Service
+      // Check-In (global services, ticketed events). Cells / training never
+      // query it, so their check-in state stays a fresh, self-contained roster.
+      let liveCheckedInList = [];
+      let liveResponseOk = false;
+      if (syncsServiceCheckIn) {
+        const liveResponse = await authFetch(
+          `${BACKEND_URL}/service-checkin/real-time-data?event_id=${encodeURIComponent(attendanceEventId)}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (liveResponse.ok) {
+          liveResponseOk = true;
+          const liveData = await liveResponse.json();
+          liveCheckedInList = [
+            ...(liveData.present_attendees || []),
+            ...(liveData.new_people || []),
+          ];
+        }
+      }
+
+      // An event that was never captured (no status yet / "incomplete") should
+      // open as a fresh instance: nobody starts checked in. Previously saved
+      // checked_in_attendees are only restored once the record is captured.
+      const status = String(data.attendance_status || "").toLowerCase();
+      const isCaptured =
+        status === "complete" ||
+        status === "did_not_meet" ||
+        status === "closed";
+      const checkedInList = liveResponseOk
         ? liveCheckedInList
-        : data.checked_in_attendees || [];
+        : isCaptured
+          ? data.checked_in_attendees || []
+          : [];
 
       setPersistentCommonAttendees(persistentList);
 
@@ -2711,19 +2742,15 @@ const AttendanceModal = ({
         id,
         fullName: id,
       };
-      syncServiceCheckIn(personData, true)
-        .then(() =>
-          saveAllAttendees(
-            persistentAttendeesRef.current || [],
-            null,
-            true,
-            checkedInSnapshots,
-          ).catch(() => {}),
-        )
-        .catch((error) => {
-          console.error("Failed to persist check-in:", error);
-          toast.error(error.message || "Failed to save check-in");
-        });
+      syncServiceCheckIn(personData, true).catch((error) => {
+        console.warn("Service check-in sync failed:", error);
+      });
+      saveAllAttendees(
+        persistentAttendeesRef.current || [],
+        null,
+        true,
+        checkedInSnapshots,
+      ).catch(() => {});
       toast.success("Person checked in for this week");
     } else {
       const personData = getAllCommonAttendees().find((p) => p.id === id) || {
@@ -2731,8 +2758,7 @@ const AttendanceModal = ({
         fullName: id,
       };
       syncServiceCheckIn(personData, false).catch((error) => {
-        console.error("Failed to persist un-check:", error);
-        toast.error(error.message || "Failed to save check-in");
+        console.warn("Service check-in remove sync failed:", error);
       });
       saveAllAttendees(
         persistentAttendeesRef.current || [],
@@ -3001,23 +3027,6 @@ const AttendanceModal = ({
   ).length;
   console.log("Attendees checked in:", attendeesCount);
 
-  // Keep the headcount in sync with the checked-in count until the user
-  // explicitly edits it. Headcount defaults to the attendees number and
-  // auto-persists, mirroring how ticket/money edits save immediately.
-  // A stored headcount is the starting value; it resyncs only when the
-  // checked-in count actually changes in this session (never on first render).
-  useEffect(() => {
-    if (headcountEditedRef.current) return;
-    if (lastAutoSyncCountRef.current === null) {
-      lastAutoSyncCountRef.current = attendeesCount;
-      return;
-    }
-    if (attendeesCount !== lastAutoSyncCountRef.current) {
-      lastAutoSyncCountRef.current = attendeesCount;
-      setManualHeadcount(String(attendeesCount));
-      if (attendeesCount > 0) persistHeadcount(String(attendeesCount));
-    }
-  }, [attendeesCount, persistHeadcount]);
   const decisionsCount = Object.keys(decisions).filter(
     (id) => decisions[id],
   ).length;
