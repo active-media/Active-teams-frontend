@@ -40,11 +40,10 @@ import { useTaskUpdate } from "../contexts/TaskUpdateContext";
 import {
   getEntryId,
   findPresentEntry,
-  findNewPersonEntry,
   isNewOrFirstTimePerson,
   classifyToggleAdd,
   classifyToggleRemove,
-  hasStatus,
+  newPeopleFromPresent,
 } from "../utils/serviceCheckinToggle";
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
@@ -235,6 +234,28 @@ function ServiceCheckIn() {
       return data.success ? data : null;
     } catch { return null; }
   }, [authFetch]);
+
+  const commitRealTimeData = useCallback((freshData) => {
+    if (!freshData) return;
+    setRealTimeData(prev => {
+      if (!prev) return freshData;
+      // Reconcile consolidations: a freshly created consolidation is shown
+      // optimistically before the server write is visible on a refetch. Keep
+      // recently-created ids that are missing from the fresh payload so they
+      // don't briefly "disappear"; older ids defer to server truth.
+      const freshCons = freshData.consolidations || [];
+      const prevCons = prev.consolidations || [];
+      const freshIds = new Set(freshCons.map(c => c.id || c._id));
+      const preserved = prevCons.filter(c => {
+        if (freshIds.has(c.id || c._id)) return false;
+        const createdMs = c.created_at ? new Date(c.created_at).getTime() : 0;
+        return createdMs > Date.now() - 20000;
+      });
+      if (!preserved.length) return freshData;
+      const mergedCons = [...freshCons, ...preserved];
+      return { ...freshData, consolidations: mergedCons, consolidation_count: mergedCons.length };
+    });
+  }, []);
 
   const transformEvents = useCallback((eventsData, normalisedPeople) => {
     const peopleById = new Map();
@@ -454,13 +475,13 @@ function ServiceCheckIn() {
     let isMounted = true;
     const loadRT = async () => {
       const data = await fetchRealTimeEventData(currentEventId);
-      if (data && isMounted) setRealTimeData(data);
+      if (data && isMounted) commitRealTimeData(data);
     };
     loadRT();
     const handleAttendanceUpdated = (event) => {
       if (event.detail?.eventId !== currentEventId) return;
       fetchRealTimeEventData(currentEventId).then(data => {
-        if (data && isMounted) setRealTimeData(data);
+        if (data && isMounted) commitRealTimeData(data);
       });
     };
     window.addEventListener("attendanceUpdated", handleAttendanceUpdated);
@@ -470,7 +491,7 @@ function ServiceCheckIn() {
       window.removeEventListener("attendanceUpdated", handleAttendanceUpdated);
       clearInterval(evInterval);
     };
-  }, [currentEventId, fetchRealTimeEventData, fetchEvents]);
+  }, [currentEventId, fetchRealTimeEventData, fetchEvents, commitRealTimeData]);
 
   const getFilteredEvents = useCallback((eventsList = events) => {
     const todayStr = new Date().toISOString().split("T")[0];
@@ -520,20 +541,14 @@ function ServiceCheckIn() {
     return ids;
   }, [realTimeData]);
 
-  const newPeopleIds = useMemo(() => {
-    const ids = new Set();
-    (realTimeData?.new_people || []).forEach(np => ids.add(np.id || np._id));
-    return ids;
-  }, [realTimeData]);
-
   const attendeesWithStatus = useMemo(() =>
     attendees.map(a => ({
       ...a,
       present: presentIds.has(a._id),
-      isNew: newPeopleIds.has(a._id),
+      isNew: isNewOrFirstTimePerson(a),
       id: a._id || a.email || `temp-${a.email}`,
     })),
-    [attendees, presentIds, newPeopleIds]
+    [attendees, presentIds]
   );
 
   const filteredAttendees = useMemo(() => {
@@ -592,7 +607,7 @@ const sortedFilteredAttendees = useMemo(() => {
   }, [filteredAttendees, sortModel, search]);
 
   const presentCount = realTimeData?.present_count ?? realTimeData?.present_attendees?.length ?? 0;
-  const newPeopleCount = realTimeData?.new_people_count ?? realTimeData?.new_people?.length ?? 0;
+  const newPeopleCount = newPeopleFromPresent(realTimeData?.present_attendees || [], attendeeMap).length;
   const consolidationCount = realTimeData?.consolidation_count ?? realTimeData?.consolidations?.length ?? 0;
 
   const modalFilteredAttendees = useMemo(() => {
@@ -629,24 +644,7 @@ const sortedFilteredAttendees = useMemo(() => {
   );
 
   const newPeopleFilteredList = useMemo(() => {
-    const full = (realTimeData?.new_people || []).map(np => {
-      const id = np.id || np._id;
-      const fp = attendeeMap.get(id) ||
-        (np.email ? [...attendeeMap.values()].find(p => p.email?.toLowerCase() === np.email?.toLowerCase()) : null) || {};
-      return {
-        ...np, ...fp,
-        name: fp.name || np.name || "",
-        surname: fp.surname || np.surname || "",
-        email: fp.email || np.email || "",
-        phone: fp.phone || np.phone || "",
-        number: fp.number || np.number || "",
-        invitedBy: fp.invitedBy || np.invitedBy || "",
-        gender: fp.gender || np.gender || "",
-        leader1: fp.leader1 || np.leader1 || "",
-        leader12: fp.leader12 || np.leader12 || "",
-        leader144: fp.leader144 || np.leader144 || "",
-      };
-    });
+    const full = newPeopleFromPresent(realTimeData?.present_attendees || [], attendeeMap);
     const sorted = [...full].sort((a, b) =>
       `${a.name} ${a.surname}`.toLowerCase().localeCompare(`${b.name} ${b.surname}`.toLowerCase())
     );
@@ -748,7 +746,7 @@ const sortedFilteredAttendees = useMemo(() => {
         fetchRealTimeEventData(currentEventId),
         authFetch(`${BASE_URL}/cache/people`),
       ]);
-      if (data) setRealTimeData(data);
+      if (data) commitRealTimeData(data);
       if (cacheResponse.ok) {
         const cacheData = await cacheResponse.json();
         if (cacheData.success && cacheData.cached_data) {
@@ -763,7 +761,7 @@ const sortedFilteredAttendees = useMemo(() => {
     } finally {
       setIsRefreshing(false);
     }
-  }, [currentEventId, authFetch, fetchRealTimeEventData]);
+  }, [currentEventId, authFetch, fetchRealTimeEventData, commitRealTimeData]);
 
   const handleRemoveConsolidation = useCallback(async (consolidation) => {
     if (!currentEventId) { toast.error("Please select an event first"); return; }
@@ -783,11 +781,11 @@ const sortedFilteredAttendees = useMemo(() => {
           toast.success(result.message || "Consolidation removed successfully");
         }
         const freshData = await fetchRealTimeEventData(currentEventId);
-        if (freshData) setRealTimeData(freshData);
+        if (freshData) commitRealTimeData(freshData);
       }
     } catch { toast.error("Failed to remove. Please try again."); }
     finally { setIsDeleting(false); }
-  }, [currentEventId, authFetch, fetchRealTimeEventData, notifyTaskUpdate]);
+  }, [currentEventId, authFetch, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
 
   const handleContextMenu = useCallback((event, person, type) => {
     event.preventDefault();
@@ -802,17 +800,13 @@ const sortedFilteredAttendees = useMemo(() => {
     if (checkInLoading.has(gridId)) return;
 
     const isCurrentlyPresent = presentIds.has(gridId);
-    const storedPresentEntry = presentEntry || findPresentEntry(realTimeData?.present_attendees || [], gridId);
-    const personIsNew = isNewOrFirstTimePerson(attendee) || (storedPresentEntry && isNewOrFirstTimePerson(storedPresentEntry));
 
     // When uncapturing, prefer the exact id the server stored on the present
     // entry. The grid row id comes from the local people cache and can differ
     // from the stored record (e.g. duplicate rows for the same person), which
     // makes the server's $pull miss -> 404 -> the row bounces back to checked.
+    const storedPresentEntry = presentEntry || findPresentEntry(realTimeData?.present_attendees || [], gridId);
     const presentId = isCurrentlyPresent && storedPresentEntry ? (getEntryId(storedPresentEntry) || gridId) : gridId;
-
-    const storedNewPersonEntry = personIsNew ? findNewPersonEntry(realTimeData?.new_people || [], attendee) : null;
-    const newPersonId = storedNewPersonEntry ? (getEntryId(storedNewPersonEntry) || `temp_${gridId}`) : null;
 
     setCheckInLoading(prev => new Set(prev).add(gridId));
     const fullName = `${attendee?.name || ""} ${attendee?.surname || ""}`.trim();
@@ -823,14 +817,6 @@ const sortedFilteredAttendees = useMemo(() => {
       email: attendee?.email || "",
       phone: attendee?.phone || attendee?.number || "",
       leader1: attendee?.leader1 || "", leader12: attendee?.leader12 || "", leader144: attendee?.leader144 || "",
-    };
-
-    const optimisticNewPersonEntry = {
-      id: `temp_${gridId}`, _id: `temp_${gridId}`,
-      name: attendee?.name || "", surname: attendee?.surname || "",
-      email: attendee?.email || "", phone: attendee?.phone || attendee?.number || "",
-      gender: attendee?.gender || "", invitedBy: attendee?.invitedBy || "",
-      added_at: new Date().toISOString(), type: "new_person", is_checked_in: true,
     };
 
     const removeFromPresent = (prevState) => {
@@ -853,26 +839,7 @@ const sortedFilteredAttendees = useMemo(() => {
       return { ...base, present_attendees: newPresent, present_count: newPresent.length };
     };
 
-    const removeFromNewPeople = (prevState, personId) => {
-      if (!prevState) return prevState;
-      const filtered = (prevState.new_people || []).filter(a => {
-        const aId = getEntryId(a);
-        return aId !== personId && aId !== gridId && aId !== `temp_${gridId}`;
-      });
-      return { ...prevState, new_people: filtered, new_people_count: filtered.length };
-    };
-
-    const addToNewPeople = (prevState) => {
-      const base = prevState || { present_attendees: [], new_people: [], consolidations: [] };
-      if (findNewPersonEntry(base.new_people || [], attendee)) return base;
-      const newPeople = [...(base.new_people || []), optimisticNewPersonEntry];
-      return { ...base, new_people: newPeople, new_people_count: newPeople.length };
-    };
-
     setRealTimeData(prev => (isCurrentlyPresent ? removeFromPresent(prev) : addToPresent(prev)));
-    if (personIsNew && !isCurrentlyPresent && !storedNewPersonEntry) {
-      setRealTimeData(addToNewPeople);
-    }
 
     const readServerBody = async (res) => {
       try { return await res.json(); } catch { return {}; }
@@ -896,39 +863,12 @@ const sortedFilteredAttendees = useMemo(() => {
         const body = await readServerBody(response);
         const status = classifyToggleAdd(response.status, body);
         if (status === "failure") {
-          setRealTimeData(prev => removeFromPresent(prev));
-          setRealTimeData(prev => removeFromNewPeople(prev, `temp_${gridId}`));
+          setRealTimeData(removeFromPresent);
           toast.error(`${fullName} could not be checked in: ${serverMsg(body)}`);
         } else if (status === "alreadyPresent") {
           toast.warning(`${fullName} is already checked in`);
         } else {
           toast.success(`${fullName} checked in`);
-        }
-
-        // First-time visitors should also land in the event's New People list so
-        // the count and modal reflect them. Guarded by email/id so duplicate DB
-        // rows of the same person never create a duplicate New People entry.
-        if (personIsNew && hasStatus(status) && !storedNewPersonEntry) {
-          try {
-            const npResponse = await authFetch(`${BASE_URL}/service-checkin/checkin`, {
-              method: "POST",
-              body: JSON.stringify({
-                event_id: cleanEventId(currentEventId),
-                person_data: {
-                  name: attendee?.name, surname: attendee?.surname,
-                  email: attendee?.email, phone: attendee?.phone || attendee?.number || "",
-                  gender: attendee?.gender, invitedBy: attendee?.invitedBy,
-                },
-                type: "new_person",
-              }),
-            });
-            const npBody = await readServerBody(npResponse);
-            if (classifyToggleAdd(npResponse.status, npBody) === "failure") {
-              toast.warning(`Checked in, but recording ${fullName} as a New Person failed: ${serverMsg(npBody)}`);
-            }
-          } catch {
-            // Optimistic New Person entry is cleared by the refetch below.
-          }
         }
       } else {
         const response = await authFetch(`${BASE_URL}/service-checkin/remove`, {
@@ -943,32 +883,16 @@ const sortedFilteredAttendees = useMemo(() => {
         } else {
           toast.info(`${fullName} removed from check-in`);
         }
-
-        if (storedNewPersonEntry && hasStatus(status)) {
-          try {
-            const npResponse = await authFetch(`${BASE_URL}/service-checkin/remove`, {
-              method: "DELETE",
-              body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: newPersonId, type: "new_people" }),
-            });
-            const npBody = await readServerBody(npResponse);
-            if (hasStatus(classifyToggleRemove(npResponse.status, npBody))) {
-              setRealTimeData(prev => removeFromNewPeople(prev, newPersonId));
-            }
-          } catch {
-            // Refetch below normalizes the optimistic state.
-          }
-        }
       }
 
-      const freshData = await fetchRealTimeEventData(currentEventId);
-      if (freshData) setRealTimeData(freshData);
+      commitRealTimeData(await fetchRealTimeEventData(currentEventId));
     } catch (err) {
       setRealTimeData(prev => (isCurrentlyPresent ? addToPresent(prev) : removeFromPresent(prev)));
       toast.error(err.message || "Failed to toggle check-in");
     } finally {
       setCheckInLoading(prev => { const s = new Set(prev); s.delete(gridId); return s; });
     }
-  }, [currentEventId, checkInLoading, presentIds, realTimeData, authFetch, fetchRealTimeEventData]);
+  }, [currentEventId, checkInLoading, presentIds, realTimeData, authFetch, fetchRealTimeEventData, commitRealTimeData]);
 
   const normalizeLeaderValue = useCallback((value) => {
     if (value == null) return "";
@@ -1133,7 +1057,7 @@ const sortedFilteredAttendees = useMemo(() => {
           return { ...prev, new_people: patch(prev.new_people), present_attendees: patch(prev.present_attendees) };
         });
         setOpenDialog(false); setEditingPerson(null); setFormData(emptyForm);
-        fetchRealTimeEventData(currentEventId).then(fd => { if (fd) setRealTimeData(fd); });
+        fetchRealTimeEventData(currentEventId).then(fd => { if (fd) commitRealTimeData(fd); });
         authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => { });
         return;
       }
@@ -1160,7 +1084,7 @@ const sortedFilteredAttendees = useMemo(() => {
 
       setAttendees(prev => [newPersonForGrid, ...prev]);
       authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => {});
-      fetchRealTimeEventData(cleanEventId(currentEventId)).then(fd => { if (fd) setRealTimeData(fd); });
+      fetchRealTimeEventData(cleanEventId(currentEventId)).then(fd => { if (fd) commitRealTimeData(fd); });
 
       // Create task for leader when new person is added
       try {
@@ -1180,7 +1104,7 @@ const sortedFilteredAttendees = useMemo(() => {
         console.error("Failed to create new person task:", taskErr);
       }
     } catch (error) { toast.error(error.message || "Failed to save person"); }
-  }, [currentEventId, editingPerson, formData, authFetch, fetchRealTimeEventData, createNewPersonTaskForLeader, getHighestAvailableLeader, resolveLeaderEmail]);
+  }, [currentEventId, editingPerson, formData, authFetch, fetchRealTimeEventData, createNewPersonTaskForLeader, getHighestAvailableLeader, resolveLeaderEmail, commitRealTimeData]);
 
   const handleFinishConsolidation = useCallback(async (task) => {
   if (!currentEventId) return;
@@ -1189,7 +1113,7 @@ const sortedFilteredAttendees = useMemo(() => {
   toast.success(`${fullName} consolidated successfully`);
 
   const newCons = {
-    id: task.consolidation_id || `opt_${Date.now()}`,
+    id: task.consolidation?.id || task.consolidation_id || `opt_${Date.now()}`,
     person_name: task.person_name || "",
     person_surname: task.person_surname || "",
     person_email: task.person_email || "",
@@ -1206,32 +1130,16 @@ const sortedFilteredAttendees = useMemo(() => {
     return { ...base, consolidations: consArr, consolidation_count: consArr.length };
   });
 
-  // Wait longer, then merge instead of replace
+  // Refetch shortly after so the UI converges with the server. commitRealTimeData
+  // keeps this optimistic consolidation (matched by id / created_at) until the
+  // server write is visible, so it never disappears mid-flight.
   setTimeout(async () => {
-    const freshData = await fetchRealTimeEventData(currentEventId);
-    if (freshData) {
-      setRealTimeData(prev => {
-        if (!prev) return freshData;
-        
-        // If fresh data has at least as many consolidations, trust it
-        const freshCount = freshData.consolidations?.length ?? 0;
-        const prevCount = prev.consolidations?.length ?? 0;
-        
-        if (freshCount >= prevCount) return freshData;
-        
-        // Otherwise keep our optimistic consolidations merged in
-        return {
-          ...freshData,
-          consolidations: prev.consolidations,
-          consolidation_count: prevCount,
-        };
-      });
-    }
-  }, 3000); // increased from 1500 to give backend more time
+    commitRealTimeData(await fetchRealTimeEventData(currentEventId));
+  }, 1500);
 
   notifyTaskUpdate?.();
   window.dispatchEvent(new CustomEvent("taskUpdated", { detail: { action: "consolidationCreated", task } }));
-}, [currentEventId, fetchRealTimeEventData, notifyTaskUpdate]);
+}, [currentEventId, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
 
   const handleSaveAndCloseEvent = useCallback(async () => {
     if (!currentEventId) { toast.error("Please select an event first"); return; }
@@ -1368,87 +1276,6 @@ const sortedFilteredAttendees = useMemo(() => {
     } catch { toast.error("An error occurred while deleting the person"); }
     finally { setIsDeleting(false); setDeleteConfirmation({ open: false, personId: null, personName: "" }); }
   }, [authFetch]);
-
-  const handleRemoveNewPerson = useCallback(async (person) => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
-    const personId = getEntryId(person);
-    if (!personId) { toast.error("Missing person ID"); return; }
-    if (checkInLoading.has(personId)) return;
-
-    const fullName = `${person?.name || ""} ${person?.surname || ""}`.trim();
-    const samePersonPresent = (realTimeData?.present_attendees || []).some(a => {
-      const sameId = getEntryId(a) === personId;
-      const sameEmail = person?.email && a.email &&
-        String(a.email).toLowerCase() === String(person.email).toLowerCase();
-      return sameId || sameEmail;
-    });
-
-    setCheckInLoading(prev => new Set(prev).add(personId));
-
-    const removeOptimistic = (prevState) => {
-      if (!prevState) return prevState;
-      const newPeople = (prevState.new_people || []).filter(a => getEntryId(a) !== personId);
-      let presentAttendees = prevState.present_attendees || [];
-      if (samePersonPresent) {
-        presentAttendees = presentAttendees.filter(a => {
-          const sameId = getEntryId(a) === personId;
-          const sameEmail = person?.email && a.email &&
-            String(a.email).toLowerCase() === String(person.email).toLowerCase();
-          return !sameId && !sameEmail;
-        });
-      }
-      return {
-        ...prevState,
-        new_people: newPeople,
-        new_people_count: newPeople.length,
-        present_attendees: presentAttendees,
-        present_count: presentAttendees.length,
-      };
-    };
-
-    setRealTimeData(removeOptimistic);
-
-    const readServerBody = async (res) => {
-      try { return await res.json(); } catch { return {}; }
-    };
-    const serverMsg = (body) => String(body?.detail || body?.message || body?.error || "server error");
-
-    try {
-      const response = await authFetch(`${BASE_URL}/service-checkin/remove`, {
-        method: "DELETE",
-        body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: personId, type: "new_people" }),
-      });
-      const body = await readServerBody(response);
-      const status = classifyToggleRemove(response.status, body);
-      if (status === "failure") {
-        toast.error(`Failed to remove ${fullName}: ${serverMsg(body)}`);
-      } else {
-        toast.success(`${fullName} removed from new people`);
-      }
-
-      if (samePersonPresent && hasStatus(status)) {
-        try {
-          const attendeeResponse = await authFetch(`${BASE_URL}/service-checkin/remove`, {
-            method: "DELETE",
-            body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: personId, type: "attendees" }),
-          });
-          const aBody = await readServerBody(attendeeResponse);
-          if (classifyToggleRemove(attendeeResponse.status, aBody) === "failure") {
-            toast.warning(`Removed from new people, but ${fullName} is still checked in as present`);
-          }
-        } catch {
-          // Refetch below normalizes the optimistic state.
-        }
-      }
-
-      const freshData = await fetchRealTimeEventData(currentEventId);
-      if (freshData) setRealTimeData(freshData);
-    } catch (err) {
-      toast.error(err.message || "Failed to remove person");
-    } finally {
-      setCheckInLoading(prev => { const s = new Set(prev); s.delete(personId); return s; });
-    }
-  }, [currentEventId, realTimeData, checkInLoading, authFetch, fetchRealTimeEventData]);
 
   const exportToExcel = useCallback((data, filename = "export") => {
     if (!data?.length) { toast.error("No data to export"); return; }
@@ -1836,7 +1663,7 @@ const sortedFilteredAttendees = useMemo(() => {
           {!currentEventId
             ? <Typography color="text.secondary" textAlign="center" py={4}>Please select an event</Typography>
             : newPeopleFilteredList.length === 0
-              ? <Typography color="text.secondary" textAlign="center" py={4}>{newPeopleSearch ? "No matching people" : "No new people added"}</Typography>
+              ? <Typography color="text.secondary" textAlign="center" py={4}>{newPeopleSearch ? "No matching people" : "No new people present"}</Typography>
               : (
                 <>
                   <Box sx={{ overflowX: "auto" }}>
@@ -1865,7 +1692,9 @@ const sortedFilteredAttendees = useMemo(() => {
                             {!isSm && <TableCell sx={{ fontSize: "0.8rem" }}>{a.leader12 || "—"}</TableCell>}
                             <TableCell>
                               <Tooltip title="Remove">
-                                <IconButton size="small" color="error" onClick={() => handleRemoveNewPerson(a)} sx={{ p: "3px" }}>
+                                <IconButton size="small" color="error"
+                                  onClick={() => handleToggleCheckIn(attendeeMap.get(a.id || a._id || a.person_id) || a, a)}
+                                  sx={{ p: "3px" }}>
                                   <DeleteForeverIcon sx={{ fontSize: "18px" }} />
                                 </IconButton>
                               </Tooltip>

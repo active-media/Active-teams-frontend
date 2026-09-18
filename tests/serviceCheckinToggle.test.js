@@ -8,6 +8,8 @@ import {
   classifyToggleAdd,
   classifyToggleRemove,
   hasStatus,
+  mergeFreshPersonData,
+  newPeopleFromPresent,
 } from "../src/utils/serviceCheckinToggle.js";
 
 // ── getEntryId ──────────────────────────────────────────────────────────────
@@ -146,5 +148,58 @@ describe("hasStatus", () => {
     assert.equal(hasStatus("alreadyPresent"), true);
     assert.equal(hasStatus("alreadyAbsent"), true);
     assert.equal(hasStatus("failure"), false);
+  });
+});
+
+// ── mergeFreshPersonData ────────────────────────────────────────────────────
+
+describe("mergeFreshPersonData", () => {
+  test("merges person profile data onto a present entry", () => {
+    const merged = mergeFreshPersonData(
+      { id: "p1", name: "", email: "e@x.com", phone: "" },
+      { name: "Amy", surname: "Smith", email: "amy@x.com", phone: "123", leader12: "Bob" }
+    );
+    assert.equal(merged.name, "Amy");
+    assert.equal(merged.surname, "Smith");
+    assert.equal(merged.email, "amy@x.com");
+    assert.equal(merged.phone, "123");
+    assert.equal(merged.leader12, "Bob");
+    assert.equal(merged.id, "p1");
+  });
+
+  test("falls back to entry fields and handles a missing profile", () => {
+    const merged = mergeFreshPersonData({ id: "p1", name: "Amy", surname: "Smith" }, null);
+    assert.equal(merged.name, "Amy");
+    assert.equal(merged.surname, "Smith");
+    assert.equal(merged._id, "p1");
+  });
+});
+
+// ── newPeopleFromPresent ────────────────────────────────────────────────────
+
+describe("newPeopleFromPresent", () => {
+  const peopleById = new Map([
+    ["p1", { name: "Amy", surname: "Smith", stage: "First Time", isNew: true }],
+    ["p2", { name: "Bob", surname: "Jones", stage: "Returning" }],
+  ]);
+
+  const present = [
+    { id: "p1", name: "" },
+    { id: "p2", name: "" },
+    { id: "p3", name: "Cid", stage: "New" },
+  ];
+
+  test("only present first-time visitors are counted", () => {
+    const newPeople = newPeopleFromPresent(present, peopleById);
+    const names = newPeople.map((p) => `${p.name} ${p.surname}`).sort();
+    assert.deepEqual(names, ["Amy Smith", "Cid "]);
+  });
+
+  test("is empty for a non-recurring/regular present list", () => {
+    assert.deepEqual(
+      newPeopleFromPresent([{ id: "p2" }], peopleById).map((p) => p.name),
+      []
+    );
+    assert.deepEqual(newPeopleFromPresent(null, peopleById), []);
   });
 });

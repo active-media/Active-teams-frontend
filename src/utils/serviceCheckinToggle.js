@@ -58,3 +58,27 @@ export function classifyToggleRemove(status, body = {}) {
 export function hasStatus(status) {
   return status !== "failure";
 }
+
+export function mergeFreshPersonData(entry, person) {
+  const fp = person || {};
+  return {
+    ...entry,
+    ...fp,
+    name: fp.name || entry.name || "",
+    surname: fp.surname || entry.surname || "",
+    email: fp.email || entry.email || "",
+    phone: fp.phone || entry.phone || "",
+    leader1: fp.leader1 || entry.leader1 || "",
+    leader12: fp.leader12 || entry.leader12 || "",
+    leader144: fp.leader144 || entry.leader144 || "",
+    id: entry.id || entry._id,
+    _id: entry.id || entry._id,
+  };
+}
+
+export function newPeopleFromPresent(presentAttendees, peopleById) {
+  if (!Array.isArray(presentAttendees)) return [];
+  return presentAttendees
+    .map((a) => mergeFreshPersonData(a, peopleById && peopleById.get ? peopleById.get(a.id || a._id) : null))
+    .filter((p) => isNewOrFirstTimePerson(p));
+}
