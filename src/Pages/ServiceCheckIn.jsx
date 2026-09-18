@@ -37,6 +37,15 @@ import { AuthContext } from "../contexts/AuthContext";
 import * as XLSX from "xlsx";
 import { DeleteForever as DeleteForeverIcon } from "@mui/icons-material";
 import { useTaskUpdate } from "../contexts/TaskUpdateContext";
+import {
+  getEntryId,
+  findPresentEntry,
+  findNewPersonEntry,
+  isNewOrFirstTimePerson,
+  classifyToggleAdd,
+  classifyToggleRemove,
+  hasStatus,
+} from "../utils/serviceCheckinToggle";
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 
@@ -785,93 +794,181 @@ const sortedFilteredAttendees = useMemo(() => {
     setContextMenu({ mouseX: event.clientX - 2, mouseY: event.clientY - 4, data: person, type });
   }, []);
 
-  const handleToggleCheckIn = useCallback(async (attendee) => {
+  const handleToggleCheckIn = useCallback(async (attendee, presentEntry) => {
     if (!currentEventId) { toast.error("Please select an event"); return; }
-    if (checkInLoading.has(attendee._id)) return;
 
-    setCheckInLoading(prev => new Set(prev).add(attendee._id));
-    const fullName = `${attendee.name} ${attendee.surname}`.trim();
-    const isCurrentlyPresent = presentIds.has(attendee._id);
-    const personId = attendee._id;
+    const gridId = attendee?._id || attendee?.id || "";
+    if (!gridId) { toast.error("Missing person ID"); return; }
+    if (checkInLoading.has(gridId)) return;
+
+    const isCurrentlyPresent = presentIds.has(gridId);
+    const storedPresentEntry = presentEntry || findPresentEntry(realTimeData?.present_attendees || [], gridId);
+    const personIsNew = isNewOrFirstTimePerson(attendee) || (storedPresentEntry && isNewOrFirstTimePerson(storedPresentEntry));
+
+    // When uncapturing, prefer the exact id the server stored on the present
+    // entry. The grid row id comes from the local people cache and can differ
+    // from the stored record (e.g. duplicate rows for the same person), which
+    // makes the server's $pull miss -> 404 -> the row bounces back to checked.
+    const presentId = isCurrentlyPresent && storedPresentEntry ? (getEntryId(storedPresentEntry) || gridId) : gridId;
+
+    const storedNewPersonEntry = personIsNew ? findNewPersonEntry(realTimeData?.new_people || [], attendee) : null;
+    const newPersonId = storedNewPersonEntry ? (getEntryId(storedNewPersonEntry) || `temp_${gridId}`) : null;
+
+    setCheckInLoading(prev => new Set(prev).add(gridId));
+    const fullName = `${attendee?.name || ""} ${attendee?.surname || ""}`.trim();
 
     const optimisticEntry = {
-      id: personId, _id: personId,
-      name: attendee.name, surname: attendee.surname, email: attendee.email,
-      phone: attendee.phone || attendee.number || "",
-      leader1: attendee.leader1 || "", leader12: attendee.leader12 || "", leader144: attendee.leader144 || "",
+      id: gridId, _id: gridId,
+      name: attendee?.name || "", surname: attendee?.surname || "",
+      email: attendee?.email || "",
+      phone: attendee?.phone || attendee?.number || "",
+      leader1: attendee?.leader1 || "", leader12: attendee?.leader12 || "", leader144: attendee?.leader144 || "",
     };
 
-    setRealTimeData(prev => {
-      const base = prev || { present_attendees: [], new_people: [], consolidations: [] };
-      if (!isCurrentlyPresent) {
-        const already = (base.present_attendees || []).some(a => a.id === personId || a._id === personId);
-        if (already) return base;
-        const newPresent = [...(base.present_attendees || []), optimisticEntry];
-        return { ...base, present_attendees: newPresent, present_count: newPresent.length };
-      } else {
-        const filtered = (base.present_attendees || []).filter(a => a.id !== personId && a._id !== personId);
-        return { ...base, present_attendees: filtered, present_count: filtered.length };
-      }
-    });
+    const optimisticNewPersonEntry = {
+      id: `temp_${gridId}`, _id: `temp_${gridId}`,
+      name: attendee?.name || "", surname: attendee?.surname || "",
+      email: attendee?.email || "", phone: attendee?.phone || attendee?.number || "",
+      gender: attendee?.gender || "", invitedBy: attendee?.invitedBy || "",
+      added_at: new Date().toISOString(), type: "new_person", is_checked_in: true,
+    };
+
+    const removeFromPresent = (prevState) => {
+      if (!prevState) return prevState;
+      const filtered = (prevState.present_attendees || []).filter(a => {
+        const aId = getEntryId(a);
+        return aId !== gridId && aId !== presentId;
+      });
+      return { ...prevState, present_attendees: filtered, present_count: filtered.length };
+    };
+
+    const addToPresent = (prevState) => {
+      const base = prevState || { present_attendees: [], new_people: [], consolidations: [] };
+      const already = (base.present_attendees || []).some(a => {
+        const aId = getEntryId(a);
+        return aId === gridId || aId === presentId;
+      });
+      if (already) return base;
+      const newPresent = [...(base.present_attendees || []), optimisticEntry];
+      return { ...base, present_attendees: newPresent, present_count: newPresent.length };
+    };
+
+    const removeFromNewPeople = (prevState, personId) => {
+      if (!prevState) return prevState;
+      const filtered = (prevState.new_people || []).filter(a => {
+        const aId = getEntryId(a);
+        return aId !== personId && aId !== gridId && aId !== `temp_${gridId}`;
+      });
+      return { ...prevState, new_people: filtered, new_people_count: filtered.length };
+    };
+
+    const addToNewPeople = (prevState) => {
+      const base = prevState || { present_attendees: [], new_people: [], consolidations: [] };
+      if (findNewPersonEntry(base.new_people || [], attendee)) return base;
+      const newPeople = [...(base.new_people || []), optimisticNewPersonEntry];
+      return { ...base, new_people: newPeople, new_people_count: newPeople.length };
+    };
+
+    setRealTimeData(prev => (isCurrentlyPresent ? removeFromPresent(prev) : addToPresent(prev)));
+    if (personIsNew && !isCurrentlyPresent && !storedNewPersonEntry) {
+      setRealTimeData(addToNewPeople);
+    }
+
+    const readServerBody = async (res) => {
+      try { return await res.json(); } catch { return {}; }
+    };
+    const serverMsg = (body) => String(body?.detail || body?.message || body?.error || "server error");
 
     try {
-      let success = false;
       if (!isCurrentlyPresent) {
         const response = await authFetch(`${BASE_URL}/service-checkin/checkin`, {
           method: "POST",
           body: JSON.stringify({
             event_id: cleanEventId(currentEventId),
-            person_data: { id: personId, name: attendee.name, fullName, email: attendee.email, phone: attendee.phone, number: attendee.number, leader12: attendee.leader12 },
+            person_data: {
+              id: gridId, name: attendee?.name, fullName,
+              email: attendee?.email, phone: attendee?.phone, number: attendee?.number,
+              leader12: attendee?.leader12,
+            },
             type: "attendee",
           }),
         });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success) { toast.success(`${fullName} checked in`); success = true; }
-          else if (data.message?.includes("already")) { toast.warning(`${fullName} is already checked in`); success = true; }
+        const body = await readServerBody(response);
+        const status = classifyToggleAdd(response.status, body);
+        if (status === "failure") {
+          setRealTimeData(prev => removeFromPresent(prev));
+          setRealTimeData(prev => removeFromNewPeople(prev, `temp_${gridId}`));
+          toast.error(`${fullName} could not be checked in: ${serverMsg(body)}`);
+        } else if (status === "alreadyPresent") {
+          toast.warning(`${fullName} is already checked in`);
+        } else {
+          toast.success(`${fullName} checked in`);
+        }
+
+        // First-time visitors should also land in the event's New People list so
+        // the count and modal reflect them. Guarded by email/id so duplicate DB
+        // rows of the same person never create a duplicate New People entry.
+        if (personIsNew && hasStatus(status) && !storedNewPersonEntry) {
+          try {
+            const npResponse = await authFetch(`${BASE_URL}/service-checkin/checkin`, {
+              method: "POST",
+              body: JSON.stringify({
+                event_id: cleanEventId(currentEventId),
+                person_data: {
+                  name: attendee?.name, surname: attendee?.surname,
+                  email: attendee?.email, phone: attendee?.phone || attendee?.number || "",
+                  gender: attendee?.gender, invitedBy: attendee?.invitedBy,
+                },
+                type: "new_person",
+              }),
+            });
+            const npBody = await readServerBody(npResponse);
+            if (classifyToggleAdd(npResponse.status, npBody) === "failure") {
+              toast.warning(`Checked in, but recording ${fullName} as a New Person failed: ${serverMsg(npBody)}`);
+            }
+          } catch {
+            // Optimistic New Person entry is cleared by the refetch below.
+          }
         }
       } else {
         const response = await authFetch(`${BASE_URL}/service-checkin/remove`, {
           method: "DELETE",
-          body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: personId, type: "attendees" }),
+          body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: presentId, type: "attendees" }),
         });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success) { toast.info(`${fullName} removed from check-in`); success = true; }
-        }
-      }
-
-      if (!success) {
-        setRealTimeData(prev => {
-          if (!prev) return prev;
-          if (!isCurrentlyPresent) {
-            const filtered = (prev.present_attendees || []).filter(a => a.id !== personId && a._id !== personId);
-            return { ...prev, present_attendees: filtered, present_count: filtered.length };
-          } else {
-            const newPresent = [...(prev.present_attendees || []), optimisticEntry];
-            return { ...prev, present_attendees: newPresent, present_count: newPresent.length };
-          }
-        });
-        toast.error(`Failed to update check-in for ${fullName}`);
-      }
-
-      fetchRealTimeEventData(currentEventId).then(freshData => { if (freshData) setRealTimeData(freshData); });
-    } catch (err) {
-      setRealTimeData(prev => {
-        if (!prev) return prev;
-        if (!isCurrentlyPresent) {
-          const filtered = (prev.present_attendees || []).filter(a => a.id !== personId && a._id !== personId);
-          return { ...prev, present_attendees: filtered, present_count: filtered.length };
+        const body = await readServerBody(response);
+        const status = classifyToggleRemove(response.status, body);
+        if (status === "failure") {
+          setRealTimeData(addToPresent);
+          toast.error(`${fullName} could not be removed from check-in: ${serverMsg(body)}`);
         } else {
-          const newPresent = [...(prev.present_attendees || []), optimisticEntry];
-          return { ...prev, present_attendees: newPresent, present_count: newPresent.length };
+          toast.info(`${fullName} removed from check-in`);
         }
-      });
+
+        if (storedNewPersonEntry && hasStatus(status)) {
+          try {
+            const npResponse = await authFetch(`${BASE_URL}/service-checkin/remove`, {
+              method: "DELETE",
+              body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: newPersonId, type: "new_people" }),
+            });
+            const npBody = await readServerBody(npResponse);
+            if (hasStatus(classifyToggleRemove(npResponse.status, npBody))) {
+              setRealTimeData(prev => removeFromNewPeople(prev, newPersonId));
+            }
+          } catch {
+            // Refetch below normalizes the optimistic state.
+          }
+        }
+      }
+
+      const freshData = await fetchRealTimeEventData(currentEventId);
+      if (freshData) setRealTimeData(freshData);
+    } catch (err) {
+      setRealTimeData(prev => (isCurrentlyPresent ? addToPresent(prev) : removeFromPresent(prev)));
       toast.error(err.message || "Failed to toggle check-in");
     } finally {
-      setCheckInLoading(prev => { const s = new Set(prev); s.delete(personId); return s; });
+      setCheckInLoading(prev => { const s = new Set(prev); s.delete(gridId); return s; });
     }
-  }, [currentEventId, checkInLoading, presentIds, authFetch, fetchRealTimeEventData]);
+  }, [currentEventId, checkInLoading, presentIds, realTimeData, authFetch, fetchRealTimeEventData]);
 
   const normalizeLeaderValue = useCallback((value) => {
     if (value == null) return "";
@@ -1274,19 +1371,84 @@ const sortedFilteredAttendees = useMemo(() => {
 
   const handleRemoveNewPerson = useCallback(async (person) => {
     if (!currentEventId) { toast.error("Please select an event first"); return; }
+    const personId = getEntryId(person);
+    if (!personId) { toast.error("Missing person ID"); return; }
+    if (checkInLoading.has(personId)) return;
+
+    const fullName = `${person?.name || ""} ${person?.surname || ""}`.trim();
+    const samePersonPresent = (realTimeData?.present_attendees || []).some(a => {
+      const sameId = getEntryId(a) === personId;
+      const sameEmail = person?.email && a.email &&
+        String(a.email).toLowerCase() === String(person.email).toLowerCase();
+      return sameId || sameEmail;
+    });
+
+    setCheckInLoading(prev => new Set(prev).add(personId));
+
+    const removeOptimistic = (prevState) => {
+      if (!prevState) return prevState;
+      const newPeople = (prevState.new_people || []).filter(a => getEntryId(a) !== personId);
+      let presentAttendees = prevState.present_attendees || [];
+      if (samePersonPresent) {
+        presentAttendees = presentAttendees.filter(a => {
+          const sameId = getEntryId(a) === personId;
+          const sameEmail = person?.email && a.email &&
+            String(a.email).toLowerCase() === String(person.email).toLowerCase();
+          return !sameId && !sameEmail;
+        });
+      }
+      return {
+        ...prevState,
+        new_people: newPeople,
+        new_people_count: newPeople.length,
+        present_attendees: presentAttendees,
+        present_count: presentAttendees.length,
+      };
+    };
+
+    setRealTimeData(removeOptimistic);
+
+    const readServerBody = async (res) => {
+      try { return await res.json(); } catch { return {}; }
+    };
+    const serverMsg = (body) => String(body?.detail || body?.message || body?.error || "server error");
+
     try {
-      const personId = person.id || person._id;
       const response = await authFetch(`${BASE_URL}/service-checkin/remove`, {
         method: "DELETE",
         body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: personId, type: "new_people" }),
       });
-      if (response.ok) {
-        toast.success("Person removed from new people");
-        const freshData = await fetchRealTimeEventData(currentEventId);
-        if (freshData) setRealTimeData(freshData);
+      const body = await readServerBody(response);
+      const status = classifyToggleRemove(response.status, body);
+      if (status === "failure") {
+        toast.error(`Failed to remove ${fullName}: ${serverMsg(body)}`);
+      } else {
+        toast.success(`${fullName} removed from new people`);
       }
-    } catch { toast.error("Failed to remove person"); }
-  }, [currentEventId, authFetch, fetchRealTimeEventData]);
+
+      if (samePersonPresent && hasStatus(status)) {
+        try {
+          const attendeeResponse = await authFetch(`${BASE_URL}/service-checkin/remove`, {
+            method: "DELETE",
+            body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: personId, type: "attendees" }),
+          });
+          const aBody = await readServerBody(attendeeResponse);
+          if (classifyToggleRemove(attendeeResponse.status, aBody) === "failure") {
+            toast.warning(`Removed from new people, but ${fullName} is still checked in as present`);
+          }
+        } catch {
+          // Refetch below normalizes the optimistic state.
+        }
+      }
+
+      const freshData = await fetchRealTimeEventData(currentEventId);
+      if (freshData) setRealTimeData(freshData);
+    } catch (err) {
+      toast.error(err.message || "Failed to remove person");
+    } finally {
+      setCheckInLoading(prev => { const s = new Set(prev); s.delete(personId); return s; });
+    }
+  }, [currentEventId, realTimeData, checkInLoading, authFetch, fetchRealTimeEventData]);
 
   const exportToExcel = useCallback((data, filename = "export") => {
     if (!data?.length) { toast.error("No data to export"); return; }
@@ -1631,7 +1793,7 @@ const sortedFilteredAttendees = useMemo(() => {
                             <TableCell align="center">
                               <Tooltip title="Remove from check-in">
                                 <IconButton color="error" size="small"
-                                  onClick={() => { const att = attendeeMap.get(a.id || a._id); if (att) handleToggleCheckIn(att); }}>
+                                  onClick={() => handleToggleCheckIn(attendeeMap.get(a.id || a._id || a.person_id) || a, a)}>
                                   <CheckCircleOutlineIcon sx={{ fontSize: "18px" }} />
                                 </IconButton>
                               </Tooltip>
