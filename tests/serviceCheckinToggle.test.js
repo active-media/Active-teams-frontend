@@ -10,6 +10,12 @@ import {
   hasStatus,
   mergeFreshPersonData,
   newPeopleFromPresent,
+  newIdentitySet,
+  isNewInSet,
+  saDateKey,
+  saTodayKey,
+  getPersonCreatedKey,
+  isNewToday,
 } from "../src/utils/serviceCheckinToggle.js";
 
 // ── getEntryId ──────────────────────────────────────────────────────────────
@@ -175,31 +181,132 @@ describe("mergeFreshPersonData", () => {
   });
 });
 
-// ── newPeopleFromPresent ────────────────────────────────────────────────────
+// ── saDateKey / isNewToday ───────────────────────────────────────────────────
+
+describe("saDateKey", () => {
+  test("converts backend UTC timestamps to the Africa/Johannesburg date", () => {
+    assert.equal(saDateKey("2026-09-20T07:00:00"), "2026-09-20");
+    assert.equal(saDateKey("2026-09-20T22:00:00"), "2026-09-21");
+  });
+
+  test("handles plain dates, Date objects, and invalid inputs", () => {
+    assert.equal(saDateKey("2026-09-20"), "2026-09-20");
+    assert.equal(saDateKey(new Date("2026-09-20T09:00:00Z")), "2026-09-20");
+    assert.equal(saDateKey(null), "");
+    assert.equal(saDateKey(""), "");
+    assert.equal(saDateKey("not-a-date"), "");
+  });
+
+  test("saTodayKey returns today's SA date", () => {
+    assert.equal(saTodayKey(), saDateKey(new Date()));
+  });
+});
+
+describe("getPersonCreatedKey / isNewToday", () => {
+  const todayKey = "2026-09-20";
+
+  test("reads DateCreated / created_at / createdAt fields", () => {
+    assert.equal(getPersonCreatedKey({ DateCreated: "2026-09-20T07:00:00" }), "2026-09-20");
+    assert.equal(getPersonCreatedKey({ created_at: "2026-09-20T07:00:00" }), "2026-09-20");
+    assert.equal(getPersonCreatedKey({ createdAt: "2026-09-20T07:00:00" }), "2026-09-20");
+    assert.equal(getPersonCreatedKey({}), "");
+  });
+
+  test("true only when the person was created today", () => {
+    assert.equal(isNewToday({ DateCreated: "2026-09-20T07:00:00" }, todayKey), true);
+    assert.equal(isNewToday({ created_at: "2026-09-20T21:30:00" }, todayKey), true);
+  });
+
+  test("false for people created on a previous service day", () => {
+    assert.equal(isNewToday({ DateCreated: "2026-09-13T07:00:00" }, todayKey), false);
+    assert.equal(isNewToday({ DateCreated: "2026-09-19T07:00:00" }, todayKey), false);
+    assert.equal(isNewToday({}, todayKey), false);
+    assert.equal(isNewToday({ stage: "First Time", isNew: true }, todayKey), false);
+  });
+});
+
+// ── newPeopleFromPresent / per-service new set ─────────────────────────────
 
 describe("newPeopleFromPresent", () => {
+  const todayKey = "2026-09-20";
   const peopleById = new Map([
-    ["p1", { name: "Amy", surname: "Smith", stage: "First Time", isNew: true }],
-    ["p2", { name: "Bob", surname: "Jones", stage: "Returning" }],
+    // Amy: added today (genuinely new this service)
+    ["p1", { name: "Amy", surname: "Smith", stage: "First Time", DateCreated: "2026-09-20T07:00:00" }],
+    // Bob: was new LAST week, still at First Time stage, but record is older
+    ["p2", { name: "Bob", surname: "Jones", stage: "First Time", DateCreated: "2026-09-13T07:00:00" }],
   ]);
 
   const present = [
     { id: "p1", name: "" },
     { id: "p2", name: "" },
-    { id: "p3", name: "Cid", stage: "New" },
+    { id: "p3", name: "Cid", stage: "New", DateCreated: "2026-09-20T08:00:00" },
   ];
 
-  test("only present first-time visitors are counted", () => {
-    const newPeople = newPeopleFromPresent(present, peopleById);
+  test("counts only people whose record was created today when no new set is given", () => {
+    const newPeople = newPeopleFromPresent(present, peopleById, null, todayKey);
     const names = newPeople.map((p) => `${p.name} ${p.surname}`).sort();
     assert.deepEqual(names, ["Amy Smith", "Cid "]);
   });
 
+  test("people who were new last week are NOT counted today", () => {
+    const newPeople = newPeopleFromPresent(present, peopleById, null, todayKey);
+    assert.ok(!newPeople.some((p) => p.name === "Bob"));
+  });
+
   test("is empty for a non-recurring/regular present list", () => {
     assert.deepEqual(
-      newPeopleFromPresent([{ id: "p2" }], peopleById).map((p) => p.name),
+      newPeopleFromPresent([{ id: "p2" }], peopleById, null, todayKey).map((p) => p.name),
       []
     );
-    assert.deepEqual(newPeopleFromPresent(null, peopleById), []);
+    assert.deepEqual(newPeopleFromPresent(null, peopleById, null, todayKey), []);
+  });
+});
+
+describe("per-service new set", () => {
+  const todayKey = "2026-09-20";
+
+  test("newIdentitySet collects person ids and emails from new_people entries", () => {
+    const set = newIdentitySet([
+      { id: "n1", email: "neo@x.com" },
+      { person_id: "n2", Email: "AMY@X.COM" },
+      { id: "" },
+    ]);
+    assert.ok(set.ids.has("n1"));
+    assert.ok(set.ids.has("n2"));
+    assert.ok(set.emails.has("neo@x.com"));
+    assert.ok(set.emails.has("amy@x.com"));
+    assert.equal(set.ids.size, 2);
+  });
+
+  test("isNewInSet matches by id or email", () => {
+    const set = newIdentitySet([{ id: "n1", email: "neo@x.com" }]);
+    assert.equal(isNewInSet({ _id: "n1" }, set), true);
+    assert.equal(isNewInSet({ id: "OTHER", email: "NEO@X.COM" }, set), true);
+    assert.equal(isNewInSet({ _id: "zz", email: "x@y.com" }, set), false);
+    assert.equal(isNewInSet(null, set), false);
+  });
+
+  test("Neo-style existing record (old, First Time) counts when present and in the new set", () => {
+    const peopleById = new Map([
+      // Neo is already on the system: record older than today, stage First Time
+      ["NEO1", { name: "Neo", surname: "Khumalo", stage: "First Time", DateCreated: "2026-09-10T09:00:00" }],
+      // Kamogelo: was new last week, NOT in today's new set
+      ["KAM1", { name: "Kamogelo", surname: "Xaba", stage: "First Time", DateCreated: "2026-09-13T09:00:00" }],
+    ]);
+    const newSet = newIdentitySet([{ id: "NEO1", email: "neo@khumalo.com" }]);
+    const present = [{ id: "NEO1", name: "" }, { id: "KAM1", name: "" }];
+
+    const newPeople = newPeopleFromPresent(present, peopleById, newSet, todayKey);
+    const names = newPeople.map((p) => `${p.name} ${p.surname}`).sort();
+    assert.deepEqual(names, ["Neo Khumalo"]);
+  });
+
+  test("matching by email counts a present person even if the stored id differs", () => {
+    const peopleById = new Map([
+      ["REC1", { name: "Neo", surname: "Khumalo", stage: "First Time", email: "neo@khumalo.com", DateCreated: "2026-09-10T09:00:00" }],
+    ]);
+    const newSet = newIdentitySet([{ id: "OLDTOKEN", email: "neo@khumalo.com" }]);
+    const newPeople = newPeopleFromPresent([{ id: "REC1", name: "" }], peopleById, newSet, todayKey);
+    assert.deepEqual(newPeople.map((p) => `${p.name} ${p.surname}`), ["Neo Khumalo"]);
   });
 });

@@ -31,6 +31,38 @@ export function isNewOrFirstTimePerson(person) {
   return stage === "new" || stage.includes("first time");
 }
 
+export function saDateKey(input) {
+  if (!input) return "";
+  let ms;
+  if (input instanceof Date) ms = input.getTime();
+  else if (typeof input === "number") ms = input;
+  else {
+    let s = String(input);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) s += "T00:00:00+00:00";
+    else if (!/Z$|[+-]\d{2}:\d{2}$/.test(s)) s += "Z";
+    ms = new Date(s).getTime();
+  }
+  if (Number.isNaN(ms)) return "";
+  return new Date(ms + 2 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+export function saTodayKey() {
+  return saDateKey(new Date());
+}
+
+export function getPersonCreatedKey(person) {
+  if (!person) return "";
+  return saDateKey(
+    person.DateCreated || person.created_at || person.createdAt || person.CreatedAt || ""
+  );
+}
+
+export function isNewToday(person, todayKey) {
+  const key = getPersonCreatedKey(person);
+  if (!key) return false;
+  return key === (todayKey || saTodayKey());
+}
+
 export function classifyToggleAdd(status, body = {}) {
   const msg = String(body.detail || body.message || body.error || "").toLowerCase();
   if (status >= 200 && status < 300) {
@@ -76,9 +108,29 @@ export function mergeFreshPersonData(entry, person) {
   };
 }
 
-export function newPeopleFromPresent(presentAttendees, peopleById) {
+export function newPeopleFromPresent(presentAttendees, peopleById, newSet, todayKey) {
   if (!Array.isArray(presentAttendees)) return [];
+  const tk = todayKey || saTodayKey();
   return presentAttendees
     .map((a) => mergeFreshPersonData(a, peopleById && peopleById.get ? peopleById.get(a.id || a._id) : null))
-    .filter((p) => isNewOrFirstTimePerson(p));
+    .filter((p) => (newSet ? isNewInSet(p, newSet) : isNewToday(p, tk)));
+}
+
+export function newIdentitySet(entries) {
+  const ids = new Set();
+  const emails = new Set();
+  (Array.isArray(entries) ? entries : []).forEach((e) => {
+    const id = getEntryId(e);
+    if (id) ids.add(id);
+    const email = String(e.email || e.Email || e.person_email || "").toLowerCase().trim();
+    if (email) emails.add(email);
+  });
+  return { ids, emails };
+}
+
+export function isNewInSet(person, newSet) {
+  if (!person || !newSet) return false;
+  const id = String(person._id || person.id || "").trim();
+  const email = String(person.email || "").toLowerCase().trim();
+  return (id && newSet.ids.has(id)) || (email && newSet.emails.has(email));
 }

@@ -40,11 +40,20 @@ import { useTaskUpdate } from "../contexts/TaskUpdateContext";
 import {
   getEntryId,
   findPresentEntry,
-  isNewOrFirstTimePerson,
+  isNewInSet,
+  newIdentitySet,
   classifyToggleAdd,
   classifyToggleRemove,
   newPeopleFromPresent,
+  saDateKey,
+  saTodayKey,
 } from "../utils/serviceCheckinToggle";
+
+const isTodayService = (event) => {
+  if (!event || !event.rawDate && !event.date) return false;
+  const key = event.rawDate || event.date;
+  return saDateKey(key) === saTodayKey();
+};
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 
@@ -119,6 +128,8 @@ function normalisePerson(p) {
     dob: p.Birthday || p.birthday || "",
     invitedBy: p.InvitedBy || p.invitedBy || "",
     stage: p.Stage || p.stage || "Win",
+    dateCreated: p.DateCreated || p.created_at || p.createdAt || p.CreatedAt || "",
+    created_at: p.created_at || p.DateCreated || p.createdAt || p.CreatedAt || "",
     fullName: p.FullName || `${name} ${surname}`.trim(),
     leaders: p.leaders || [],
     LeaderId: p.LeaderId || p.leaderId || null,
@@ -235,6 +246,15 @@ function ServiceCheckIn() {
     } catch { return null; }
   }, [authFetch]);
 
+  // Captures made by this browser session. A non-recurring service stores its
+  // attendees in the event's root array while consolidations live in the
+  // date-scoped attendance bucket; the server real-time read can therefore
+  // return a different (empty/stale) attendee list. Until the backend read is
+  // fixed, keep session captures visible across refetches.
+  const sessionCaptured = useRef(new Map());
+  const [sessionNew, setSessionNew] = useState(new Map());
+  useEffect(() => { sessionCaptured.current = new Map(); setSessionNew(new Map()); }, [currentEventId]);
+
   const commitRealTimeData = useCallback((freshData) => {
     if (!freshData) return;
     setRealTimeData(prev => {
@@ -251,9 +271,26 @@ function ServiceCheckIn() {
         const createdMs = c.created_at ? new Date(c.created_at).getTime() : 0;
         return createdMs > Date.now() - 20000;
       });
-      if (!preserved.length) return freshData;
-      const mergedCons = [...freshCons, ...preserved];
-      return { ...freshData, consolidations: mergedCons, consolidation_count: mergedCons.length };
+      let result;
+      if (preserved.length) {
+        const mergedCons = [...freshCons, ...preserved];
+        result = { ...freshData, consolidations: mergedCons, consolidation_count: mergedCons.length };
+      } else {
+        result = freshData;
+      }
+      // Overlay this session's captures so they never drop off the door list
+      // because of the server's date-bucket ambiguity.
+      if (sessionCaptured.current.size > 0) {
+        const present = [...(result.present_attendees || [])];
+        const ids = new Set(present.map(a => getEntryId(a)));
+        const added = [];
+        sessionCaptured.current.forEach((entry, gid) => { if (gid && !ids.has(gid)) added.push(entry); });
+        if (added.length) {
+          const mergedPresent = [...present, ...added];
+          result = { ...result, present_attendees: mergedPresent, present_count: mergedPresent.length };
+        }
+      }
+      return result;
     });
   }, []);
 
@@ -336,6 +373,7 @@ function ServiceCheckIn() {
             isGlobal: event.isGlobal === true || event.isGlobal === "true",
             isTicketed: event.isTicketed === true,
             date: event.date || event.createdAt,
+            rawDate: event.date || "",
             eventType: event.eventType || "Global Events",
             closed_by: event.closed_by,
             closed_at: event.closed_at,
@@ -397,13 +435,13 @@ function ServiceCheckIn() {
             setIsLoadingEvents(false);
             setIsLoadingHistory(false);
 
-            const todayStr = new Date().toISOString().split("T")[0];
-            const todayOpen = valid.filter(e => {
-              const status = e.status?.toLowerCase() || "";
-              if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
-              if (!e.date) return false;
-              return new Date(e.date).toISOString().split("T")[0] === todayStr;
-            });
+            const todayOpen = valid
+              .filter(e => {
+                const status = e.status?.toLowerCase() || "";
+                if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
+                return isTodayService(e);
+              })
+              .sort((a, b) => (b.attendance + b.newPeople + b.consolidated) - (a.attendance + a.newPeople + a.consolidated));
             if (todayOpen.length > 0) setCurrentEventId(todayOpen[0].id);
           }
         } else {
@@ -434,13 +472,13 @@ function ServiceCheckIn() {
             setIsLoadingEvents(false);
             setIsLoadingHistory(false);
 
-            const todayStr = new Date().toISOString().split("T")[0];
-            const todayOpen = valid.filter(e => {
-              const status = e.status?.toLowerCase() || "";
-              if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
-              if (!e.date) return false;
-              return new Date(e.date).toISOString().split("T")[0] === todayStr;
-            });
+            const todayOpen = valid
+              .filter(e => {
+                const status = e.status?.toLowerCase() || "";
+                if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
+                return isTodayService(e);
+              })
+              .sort((a, b) => (b.attendance + b.newPeople + b.consolidated) - (a.attendance + a.newPeople + a.consolidated));
             if (todayOpen.length > 0) setCurrentEventId(todayOpen[0].id);
           }
         }
@@ -494,15 +532,13 @@ function ServiceCheckIn() {
   }, [currentEventId, fetchRealTimeEventData, fetchEvents, commitRealTimeData]);
 
   const getFilteredEvents = useCallback((eventsList = events) => {
-    const todayStr = new Date().toISOString().split("T")[0];
     return eventsList.filter(event => {
       const typeName = (event.eventType || "").toLowerCase();
       if (["cells", "all cells", "cell"].includes(typeName)) return false;
       if (event.isGlobal !== true && event.isGlobal !== "true") return false;
       const status = event.status?.toLowerCase() || "";
       if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
-      if (!event.date) return false;
-      return new Date(event.date).toISOString().split("T")[0] === todayStr;
+      return isTodayService(event);
     });
   }, [events]);
 
@@ -541,14 +577,24 @@ function ServiceCheckIn() {
     return ids;
   }, [realTimeData]);
 
+  const mergedNewSet = useMemo(() => {
+    const entries = new Map();
+    (realTimeData?.new_people || []).forEach(e => {
+      const key = getEntryId(e) || String(e?.email || "")?.toLowerCase();
+      if (key) entries.set(`server:${key}`, e);
+    });
+    sessionNew.forEach((e, key) => entries.set(`session:${key}`, e));
+    return newIdentitySet([...entries.values()]);
+  }, [realTimeData, sessionNew]);
+
   const attendeesWithStatus = useMemo(() =>
     attendees.map(a => ({
       ...a,
       present: presentIds.has(a._id),
-      isNew: isNewOrFirstTimePerson(a),
+      isNew: isNewInSet(a, mergedNewSet),
       id: a._id || a.email || `temp-${a.email}`,
     })),
-    [attendees, presentIds]
+    [attendees, presentIds, mergedNewSet]
   );
 
   const filteredAttendees = useMemo(() => {
@@ -607,7 +653,7 @@ const sortedFilteredAttendees = useMemo(() => {
   }, [filteredAttendees, sortModel, search]);
 
   const presentCount = realTimeData?.present_count ?? realTimeData?.present_attendees?.length ?? 0;
-  const newPeopleCount = newPeopleFromPresent(realTimeData?.present_attendees || [], attendeeMap).length;
+  const newPeopleCount = newPeopleFromPresent(realTimeData?.present_attendees || [], attendeeMap, mergedNewSet).length;
   const consolidationCount = realTimeData?.consolidation_count ?? realTimeData?.consolidations?.length ?? 0;
 
   const modalFilteredAttendees = useMemo(() => {
@@ -644,14 +690,14 @@ const sortedFilteredAttendees = useMemo(() => {
   );
 
   const newPeopleFilteredList = useMemo(() => {
-    const full = newPeopleFromPresent(realTimeData?.present_attendees || [], attendeeMap);
+    const full = newPeopleFromPresent(realTimeData?.present_attendees || [], attendeeMap, mergedNewSet);
     const sorted = [...full].sort((a, b) =>
       `${a.name} ${a.surname}`.toLowerCase().localeCompare(`${b.name} ${b.surname}`.toLowerCase())
     );
     if (!newPeopleSearch.trim()) return sorted;
     const terms = newPeopleSearch.toLowerCase().trim().split(/\s+/);
     return sorted.filter(p => matchesSearch(p, terms));
-  }, [realTimeData, attendeeMap, newPeopleSearch]);
+  }, [realTimeData, attendeeMap, mergedNewSet, newPeopleSearch]);
 
   const newPeoplePaginatedList = useMemo(
     () => newPeopleFilteredList.slice(
@@ -865,10 +911,13 @@ const sortedFilteredAttendees = useMemo(() => {
         if (status === "failure") {
           setRealTimeData(removeFromPresent);
           toast.error(`${fullName} could not be checked in: ${serverMsg(body)}`);
-        } else if (status === "alreadyPresent") {
-          toast.warning(`${fullName} is already checked in`);
         } else {
-          toast.success(`${fullName} checked in`);
+          sessionCaptured.current.set(gridId, optimisticEntry);
+          if (status === "alreadyPresent") {
+            toast.info(`${fullName} was already captured`);
+          } else {
+            toast.success(`${fullName} checked in`);
+          }
         }
       } else {
         const response = await authFetch(`${BASE_URL}/service-checkin/remove`, {
@@ -881,6 +930,7 @@ const sortedFilteredAttendees = useMemo(() => {
           setRealTimeData(addToPresent);
           toast.error(`${fullName} could not be removed from check-in: ${serverMsg(body)}`);
         } else {
+          sessionCaptured.current.delete(gridId);
           toast.info(`${fullName} removed from check-in`);
         }
       }
@@ -893,6 +943,41 @@ const sortedFilteredAttendees = useMemo(() => {
       setCheckInLoading(prev => { const s = new Set(prev); s.delete(gridId); return s; });
     }
   }, [currentEventId, checkInLoading, presentIds, realTimeData, authFetch, fetchRealTimeEventData, commitRealTimeData]);
+
+  const setPersonNewFlag = useCallback(async (person) => {
+    if (!currentEventId) { toast.error("Please select an event first"); return; }
+    const personId = person?._id || person?.id || "";
+    const entryKey = personId || String(person?.email || "").toLowerCase().trim();
+    if (!entryKey) { toast.error("Missing person details"); return; }
+    const fullName = `${person?.name || ""} ${person?.surname || ""}`.trim() || "This person";
+    const currentlyNew = isNewInSet(person, mergedNewSet);
+    const personData = {
+      id: personId, name: person?.name,
+      fullName: fullName === " " ? "" : fullName,
+      email: person?.email || "",
+      phone: person?.number || person?.phone || "",
+      number: person?.number || person?.phone || "",
+      leader12: person?.leader12 || "",
+    };
+
+    if (currentlyNew) {
+      setSessionNew(prev => { const m = new Map(prev); m.delete(entryKey); return m; });
+      if (personId) {
+        authFetch(`${BASE_URL}/service-checkin/remove`, {
+          method: "DELETE",
+          body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: personId, type: "new_people" }),
+        }).catch(() => { });
+      }
+      toast.info(`${fullName} no longer marked as new`);
+    } else {
+      setSessionNew(prev => { const m = new Map(prev); m.set(entryKey, { ...personData, _id: personId }); return m; });
+      authFetch(`${BASE_URL}/service-checkin/checkin`, {
+        method: "POST",
+        body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_data: personData, type: "new_person" }),
+      }).catch(() => { });
+      toast.success(`${fullName} marked as new this service`);
+    }
+  }, [currentEventId, mergedNewSet, authFetch]);
 
   const normalizeLeaderValue = useCallback((value) => {
     if (value == null) return "";
@@ -1080,10 +1165,31 @@ const sortedFilteredAttendees = useMemo(() => {
         leaders: newPersonData.leaders || [],
         Stage: "First Time",
         isNew: true,
+        DateCreated: newPersonData.DateCreated || new Date().toISOString(),
       });
 
       setAttendees(prev => [newPersonForGrid, ...prev]);
+      setSessionNew(prev => {
+        const m = new Map(prev);
+        m.set(String(insertedId || newPersonForGrid.email || "").toLowerCase() || `added:${Date.now()}`, {
+          id: insertedId, _id: insertedId,
+          name: newPersonForGrid.name, surname: newPersonForGrid.surname,
+          email: newPersonForGrid.email || "", phone: newPersonForGrid.number || "",
+          number: newPersonForGrid.number || "", leader12: newPersonForGrid.leader12 || "",
+        });
+        return m;
+      });
       authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => {});
+      if (insertedId) {
+        authFetch(`${BASE_URL}/service-checkin/checkin`, {
+          method: "POST",
+          body: JSON.stringify({ event_id: cleanEventId(currentEventId), type: "new_person", person_data: {
+            id: insertedId, name: newPersonForGrid.name, fullName: fullName,
+            email: newPersonForGrid.email || "", phone: newPersonForGrid.number || "",
+            number: newPersonForGrid.number || "", leader12: newPersonForGrid.leader12 || "",
+          } }),
+        }).catch(() => { });
+      }
       fetchRealTimeEventData(cleanEventId(currentEventId)).then(fd => { if (fd) commitRealTimeData(fd); });
 
       // Create task for leader when new person is added
@@ -1161,7 +1267,7 @@ const sortedFilteredAttendees = useMemo(() => {
             ? { ...e, status: "complete", closed_by: result.closed_by, closed_at: result.closed_at }
             : e
         );
-        const todayStr = new Date().toISOString().split("T")[0];
+        const todayStr = saTodayKey();
         const nextEvent = updated.find(e => {
           if (cleanEventId(e.id) === cleanEventId(currentEventId)) return false;
           if (e.isGlobal !== true) return false;
@@ -1169,8 +1275,8 @@ const sortedFilteredAttendees = useMemo(() => {
           if (["cells", "all cells", "cell"].includes(typeName)) return false;
           const status = (e.status || "").toLowerCase();
           if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
-          if (!e.date) return false;
-          return new Date(e.date).toISOString().split("T")[0] === todayStr;
+          if (!e.rawDate) return false;
+          return saDateKey(e.rawDate) === todayStr;
         });
         setCurrentEventId(nextEvent?.id || "");
         return updated;
@@ -1316,13 +1422,15 @@ const sortedFilteredAttendees = useMemo(() => {
       {
         field: "name", headerName: "Name", flex: 1, minWidth: isSm ? 110 : 140, sortable: true,
         renderCell: (params) => {
-          const isFirstTime = params.row.stage === "First Time" || params.row.isNew === true;
+          const isFirstTime = params.row.isNew === true;
           return (
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.3, width: "100%", overflow: "hidden" }}>
-              {isFirstTime && (
-                <Chip label="New" size="small" color="success" variant="filled"
-                  sx={{ fontSize: "0.5rem", height: 13, flexShrink: 0, px: "2px", "& .MuiChip-label": { px: "3px" } }} />
-              )}
+              <Chip label={isFirstTime ? "New" : "+ New"} size="small"
+                color={isFirstTime ? "success" : "default"}
+                variant={isFirstTime ? "filled" : "outlined"}
+                onClick={() => setPersonNewFlag(params.row)}
+                title={isFirstTime ? "Remove new mark" : "Mark as new this service"}
+                sx={{ fontSize: "0.5rem", height: 13, flexShrink: 0, px: "2px", cursor: "pointer", "& .MuiChip-label": { px: "3px" } }} />
               <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.72rem" : "0.88rem", lineHeight: 1.2 }}>
                 {params.row.name} {params.row.surname}
               </Typography>
@@ -1395,7 +1503,7 @@ const sortedFilteredAttendees = useMemo(() => {
       },
     ];
     return base;
-  }, [isXs, isSm, isMd, currentEventId, checkInLoading, handleEditClick, handleToggleCheckIn]);
+  }, [isXs, isSm, isMd, currentEventId, checkInLoading, handleEditClick, handleToggleCheckIn, setPersonNewFlag]);
 
   const StatsCard = useCallback(({ title, count, icon, color = "primary", onClick, disabled = false }) => (
     <Paper variant="outlined" onClick={onClick} sx={{
