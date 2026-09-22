@@ -1,300 +1,480 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useContext, useEffect, useState } from "react";
 import {
-  Alert,
   Box,
-  Breadcrumbs,
-  Button,
-  Card,
-  Chip,
-  CircularProgress,
-  FormControl,
-  Link,
-  MenuItem,
-  Select,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Typography,
+  Button,
+  Breadcrumbs,
+  Link as MuiLink,
+  Paper,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  MenuItem,
+  Chip,
+  IconButton,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  Tooltip,
+  Stack,
+  CircularProgress,
+  Alert,
 } from "@mui/material";
-import { ChevronRight, Refresh, TrendingDown, TrendingUp } from "@mui/icons-material";
+import AddIcon from "@mui/icons-material/Add";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import PauseCircleOutlineIcon from "@mui/icons-material/PauseCircleOutline";
+import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
+import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
+
 import { AuthContext } from "../contexts/AuthContext";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-
-const periodOptions = [
-  { value: "thisWeek", label: "This week" },
-  { value: "previousWeek", label: "Previous week" },
-  { value: "thisMonth", label: "This month" },
-  { value: "previousMonth", label: "This month" },
-  { value: "today", label: "Today" },
+// Same report catalogue shown on the Reports page — keep these in sync.
+const REPORT_TYPES = [
+  { value: "overall_church_performance", label: "Overall Church Performance" },
+  { value: "cells_report", label: "Cells Report" },
+  { value: "life_class_report", label: "Life Class Report" },
+  { value: "school_of_leaders_report", label: "School of Leaders Report" },
+  { value: "plan_40_report", label: "Plan 40 Report" },
+  { value: "school_cell_report", label: "School Cell Report" },
+  { value: "service_target_report", label: "Service Target Report" },
+  { value: "twelve_tasks_report", label: "Twelve Tasks Report" },
+  { value: "staff_interns_youth_report", label: "Staff, Interns & Youth Report" },
 ];
 
-// ---- Design tokens (matches the v2 dark dashboard screens) ----
-const surface = "#0e0f12";
-const cardBg = "#16181d";
-const cardBorder = "#25272e";
-const textPrimary = "#f4f4f5";
-const textSecondary = "#9a9ba3";
-const accent = "#3b82f6";
-const success = "#22c55e";
-const danger = "#ef4444";
+const FREQUENCIES = [
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+];
 
-const formatDate = (date) => {
-  if (!date) return "-";
-  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+const WEEKDAYS = [
+  { value: "monday", label: "Monday" },
+  { value: "tuesday", label: "Tuesday" },
+  { value: "wednesday", label: "Wednesday" },
+  { value: "thursday", label: "Thursday" },
+  { value: "friday", label: "Friday" },
+  { value: "saturday", label: "Saturday" },
+  { value: "sunday", label: "Sunday" },
+];
+
+const FORMATS = [
+  { value: "pdf", label: "PDF" },
+  { value: "csv", label: "CSV" },
+  { value: "xlsx", label: "Excel (.xlsx)" },
+];
+
+const emptyFormState = {
+  report_type: "",
+  frequency: "weekly",
+  weekday: "monday",
+  day_of_month: 1,
+  time: "07:00",
+  format: "pdf",
+  recipients: "",
 };
 
-function TrendChip({ change, percent }) {
-  if (!change) {
-    return <Chip size="small" label="No change" sx={{ bgcolor: "#1f2127", color: textSecondary }} />;
+function frequencyLabel(schedule) {
+  if (schedule.frequency === "daily") return `Daily at ${schedule.time}`;
+  if (schedule.frequency === "weekly") {
+    const day = WEEKDAYS.find((w) => w.value === schedule.weekday)?.label || schedule.weekday;
+    return `Weekly on ${day} at ${schedule.time}`;
   }
-  const positive = change > 0;
-  const label = `${positive ? "+" : ""}${change} (${percent === null ? "New" : `${positive ? "+" : ""}${percent}%`})`;
-  return (
-    <Stack direction="row" spacing={0.5} alignItems="center">
-      {positive ? (
-        <TrendingUp fontSize="small" sx={{ color: success }} />
-      ) : (
-        <TrendingDown fontSize="small" sx={{ color: danger }} />
-      )}
-      <Typography fontWeight={700} fontSize={13} sx={{ color: positive ? success : danger }}>
-        {label}
-      </Typography>
-    </Stack>
-  );
+  if (schedule.frequency === "monthly") {
+    return `Monthly on day ${schedule.day_of_month} at ${schedule.time}`;
+  }
+  return "";
 }
 
-function KPICard({ label, value, sublabel, badge }) {
-  return (
-    <Card
-      sx={{
-        flex: 1,
-        bgcolor: cardBg,
-        border: `1px solid ${cardBorder}`,
-        borderRadius: 2,
-        p: 2.5,
-        boxShadow: "none",
-      }}
-    >
-      <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-        <Typography sx={{ color: textSecondary, fontSize: 13 }}>{label}</Typography>
-        {badge}
-      </Stack>
-      <Typography sx={{ color: textPrimary, fontSize: 32, fontWeight: 800, mt: 0.5 }}>{value}</Typography>
-      {sublabel && (
-        <Typography sx={{ color: textSecondary, fontSize: 12.5, mt: 0.5 }}>{sublabel}</Typography>
-      )}
-    </Card>
-  );
+function reportLabel(value) {
+  return REPORT_TYPES.find((r) => r.value === value)?.label || value;
 }
 
 export default function ScheduledReports() {
   const { authFetch } = useContext(AuthContext);
-  const navigate = useNavigate();
-  const [period, setPeriod] = useState("thisMonth");
-  const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = state("");
+  const backendUrl = import.meta.env.VITE_BACKEND_URL;
 
-  const fetchReport = useCallback(async () => {
+  const [schedules, setSchedules] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(emptyFormState);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const loadSchedules = async () => {
     setLoading(true);
     setError("");
     try {
-      const response = await authFetch(
-        `${BACKEND_URL}/stats/scheduled-reports?period=${period}`,
-        { retryOnAuthFailure: true, maxRetries: 1 },
-      );
-      if (!response.ok) {
-        throw new Error(`Unable to load report (${response.status})`);
-      }
-      setReport(await response.json());
-    } catch (fetchError) {
-      setError(fetchError.message || "Unable to load the report.");
+      const res = await authFetch(`${backendUrl}/report-schedules`);
+      if (!res.ok) throw new Error("Failed to load scheduled reports");
+      const data = await res.json();
+      setSchedules(Array.isArray(data) ? data : data.schedules || []);
+    } catch (e) {
+      console.error("Error loading scheduled reports:", e);
+      setError("Couldn't load scheduled reports. Please try again.");
     } finally {
       setLoading(false);
     }
-  }, [authFetch, period]);
+  };
 
   useEffect(() => {
-    fetchReport();
-  }, [fetchReport]);
+    loadSchedules();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const { currentTotal, previousTotal, activeLeaders, avgPerLeader, completionRate, totalChangePercent } =
-    useMemo(() => {
-      const current = report?.currentTotal || 0;
-      const previous = report?.previousTotal || 0;
-      const active = report?.activeLeaders || 0;
-      const avg = report?.avgPerLeader || 0;
-      const rate = report?.completionRate || 0;
-      const changePct = previous ? ((current - previous) / previous) * 100 : current ? 100 : 0;
-      return {
-        currentTotal: current,
-        previousTotal: previous,
-        activeLeaders: active,
-        avgPerLeader: avg,
-        completionRate: rate,
-        totalChangePercent: changePct,
-      };
-    }, [report]);
+  const openNewSchedule = () => {
+    setEditingId(null);
+    setForm(emptyFormState);
+    setFormError("");
+    setModalOpen(true);
+  };
+
+  const openEditSchedule = (schedule) => {
+    setEditingId(schedule.id);
+    setForm({
+      report_type: schedule.report_type,
+      frequency: schedule.frequency,
+      weekday: schedule.weekday || "monday",
+      day_of_month: schedule.day_of_month || 1,
+      time: schedule.time || "07:00",
+      format: schedule.format,
+      recipients: (schedule.recipients || []).join(", "),
+    });
+    setFormError("");
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    if (saving) return;
+    setModalOpen(false);
+  };
+
+  const handleFieldChange = (field) => (e) => {
+    setForm((prev) => ({ ...prev, [field]: e.target.value }));
+  };
+
+  const validate = () => {
+    if (!form.report_type) return "Please choose a report.";
+    if (!form.recipients.trim()) return "Add at least one recipient email.";
+    const emails = form.recipients.split(",").map((e) => e.trim()).filter(Boolean);
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const invalid = emails.find((e) => !emailRegex.test(e));
+    if (invalid) return `"${invalid}" doesn't look like a valid email.`;
+    return "";
+  };
+
+  const handleSave = async () => {
+    const validationError = validate();
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
+    setSaving(true);
+    setFormError("");
+
+    const payload = {
+      report_type: form.report_type,
+      frequency: form.frequency,
+      weekday: form.frequency === "weekly" ? form.weekday : undefined,
+      day_of_month: form.frequency === "monthly" ? Number(form.day_of_month) : undefined,
+      time: form.time,
+      format: form.format,
+      recipients: form.recipients.split(",").map((e) => e.trim()).filter(Boolean),
+    };
+
+    try {
+      const url = editingId
+        ? `${backendUrl}/report-schedules/${editingId}`
+        : `${backendUrl}/report-schedules`;
+      const method = editingId ? "PUT" : "POST";
+
+      const res = await authFetch(url, {
+        method,
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to save schedule");
+      }
+
+      setModalOpen(false);
+      await loadSchedules();
+    } catch (e) {
+      console.error("Error saving schedule:", e);
+      setFormError(e.message || "Something went wrong saving this schedule.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this scheduled report? This can't be undone.")) return;
+    try {
+      const res = await authFetch(`${backendUrl}/report-schedules/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete schedule");
+      setSchedules((prev) => prev.filter((s) => s.id !== id));
+    } catch (e) {
+      console.error("Error deleting schedule:", e);
+      setError("Couldn't delete that schedule. Please try again.");
+    }
+  };
+
+  const handleToggleActive = async (schedule) => {
+    try {
+      const res = await authFetch(`${backendUrl}/report-schedules/${schedule.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ active: !schedule.active }),
+      });
+      if (!res.ok) throw new Error("Failed to update schedule");
+      setSchedules((prev) =>
+        prev.map((s) => (s.id === schedule.id ? { ...s, active: !s.active } : s))
+      );
+    } catch (e) {
+      console.error("Error toggling schedule:", e);
+      setError("Couldn't update that schedule. Please try again.");
+    }
+  };
 
   return (
-    <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1280, mx: "auto", bgcolor: surface, minHeight: "100%" }}>
-      <Breadcrumbs
-        separator={<ChevronRight sx={{ fontSize: 14, color: textSecondary }} />}
-        sx={{ mb: 1, "& .MuiBreadcrumbs-li": { fontSize: 13 } }}
-      >
-        <Link underline="hover" sx={{ color: textSecondary, cursor: "pointer" }} onClick={() => navigate("/reporting/dashboard")}>
+    <Box sx={{ p: { xs: 2, md: 4 } }}>
+      <Breadcrumbs sx={{ mb: 2 }}>
+        <MuiLink underline="hover" color="text.secondary" href="#">
           Reporting
-        </Link>
-        <Typography sx={{ color: textPrimary, fontSize: 13 }}>Scheduled Reports</Typography>
+        </MuiLink>
+        <Typography color="text.primary">Scheduled Reports</Typography>
       </Breadcrumbs>
 
       <Stack
         direction={{ xs: "column", sm: "row" }}
         justifyContent="space-between"
-        alignItems={{ xs: "stretch", sm: "center" }}
+        alignItems={{ xs: "flex-start", sm: "center" }}
         spacing={2}
-        mb={3}
+        sx={{ mb: 3 }}
       >
         <Box>
-          <Typography sx={{ color: textPrimary, fontSize: 28, fontWeight: 800 }}>Scheduled Reports</Typography>
-          <Typography sx={{ color: textSecondary, fontSize: 14 }}>
-            Scheduled report activity per leader, compared with the previous period.
+          <Typography variant="h5" fontWeight={700}>
+            Scheduled Reports
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Automate report generation and email delivery to leadership.
           </Typography>
         </Box>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-          <FormControl size="small" sx={{ minWidth: 170 }}>
-            <Select
-              value={period}
-              onChange={(event) => setPeriod(event.target.value)}
-              sx={{
-                bgcolor: cardBg,
-                color: textPrimary,
-                "& .MuiOutlinedInput-notchedOutline": { borderColor: cardBorder },
-              }}
-            >
-              {periodOptions.map((option) => (
-                <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Button
-            variant="outlined"
-            startIcon={<Refresh />}
-            onClick={fetchReport}
-            disabled={loading}
-            sx={{ borderColor: cardBorder, color: textPrimary }}
-          >
-            Refresh
-          </Button>
-        </Stack>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={openNewSchedule}
+          sx={{ borderRadius: 2, textTransform: "none", fontWeight: 600 }}
+        >
+          New Schedule
+        </Button>
       </Stack>
 
-      {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError("")}>
+          {error}
+        </Alert>
+      )}
 
-      <Stack direction="column" spacing={2} sx={{ mb: 3 }}>
-        <KPICard
-          label="Tasks Scheduled"
-          value={`${currentTotal}`}
-          sublabel={`${formatDate(report?.period?.start)} – ${formatDate(report?.period?.end)}`}
-          badge={<Chip size="small" label="Live" sx={{ bgcolor: "#0f2a1c", color: success, fontSize: 11 }} />}
-        />
-        <KPICard
-          label="Active Leaders"
-          value={`${activeLeaders}/${report?.leadersLength || 0}`}
-          sublabel="with scheduled tasks"
-        />
-        <KPICard
-          label="Avg per Leader"
-          value={avgPerLeader.toFixed(1)}
-          sublabel={`out of 12 tasks`}
-        />
-        <KPICard
-          label="Completion Rate"
-          value={`${completionRate.toFixed(0)}%`}
-          sublabel={`vs previous: ${previousTotal} scheduled`}
-          badge={
-            <Chip
-              size="small"
-              label={`${totalChangePercent >= 0 ? "+" : ""}${totalChangePercent.toFixed(1)}%`}
-              sx={{
-                bgcolor: totalChangePercent >= 0 ? "#0f2a1c" : "#2a1414",
-                color: totalChangePercent >= 0 ? success : danger,
-                fontSize: 11,
-              }}
-            />
-          }
-        />
-      </Stack>
-
-      <TableContainer
-        component={Card}
-        sx={{ bgcolor: cardBg, border: `1px solid ${cardBorder}`, borderRadius: 2, boxShadow: "none" }}
+      <Paper
+        variant="outlined"
+        sx={{ borderRadius: 2, overflow: "hidden", bgcolor: "background.paper" }}
       >
-        <Table>
-          <TableHead>
-            <TableRow>
-              {["Leader", "Scheduled", "Previous", "Change", ""].map((head) => (
-                <TableCell
-                  key={head}
-                  align={head === "Current" || head === "Previous" ? "right" : "left"}
-                  sx={{ color: textSecondary, borderColor: cardBorder, fontSize: 12, textTransform: "uppercase" }}
-                >
-                  {head}
-                </TableCell>
-              ))}
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading ? (
+        {loading ? (
+          <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+            <CircularProgress size={28} />
+          </Box>
+        ) : schedules.length === 0 ? (
+          <Box sx={{ textAlign: "center", py: 6, px: 2 }}>
+            <CalendarMonthIcon sx={{ fontSize: 32, color: "text.disabled", mb: 1 }} />
+            <Typography color="text.secondary">No scheduled reports yet.</Typography>
+          </Box>
+        ) : (
+          <Table>
+            <TableHead>
               <TableRow>
-                <TableCell colSpan={5} align="center" sx={{ py: 5, borderColor: cardBorder }}>
-                  <CircularProgress size={28} />
-                </TableCell>
+                <TableCell>Report</TableCell>
+                <TableCell>Schedule</TableCell>
+                <TableCell>Format</TableCell>
+                <TableCell>Recipients</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell align="right">Actions</TableCell>
               </TableRow>
-            ) : report?.leaders?.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} align="center" sx={{ py: 5, borderColor: cardBorder, color: textSecondary }}>
-                  No scheduled report activity for this period.
-                </TableCell>
-              </TableRow>
-            ) : (
-              report.leaders.map((leader) => (
-                <TableRow
-                  key={leader.id || leader.name}
-                  hover
-                  sx={{ cursor: "pointer", "&:hover": { bgcolor: "#1c1e24" } }}
-                >
-                  <TableCell sx={{ color: textPrimary, borderColor: cardBorder, fontWeight: 600 }}>
-                    {leader.name}
+            </TableHead>
+            <TableBody>
+              {schedules.map((schedule) => (
+                <TableRow key={schedule.id} hover>
+                  <TableCell sx={{ fontWeight: 600 }}>
+                    {reportLabel(schedule.report_type)}
                   </TableCell>
-                  <TableCell align="right" sx={{ color: textPrimary, borderColor: cardBorder }}>
-                    {leader.scheduled}/{TASKS_PER_LEADER}
+                  <TableCell>{frequencyLabel(schedule)}</TableCell>
+                  <TableCell sx={{ textTransform: "uppercase" }}>{schedule.format}</TableCell>
+                  <TableCell>
+                    <Tooltip title={(schedule.recipients || []).join(", ")}>
+                      <span>
+                        {(schedule.recipients || []).length} recipient
+                        {(schedule.recipients || []).length === 1 ? "" : "s"}
+                      </span>
+                    </Tooltip>
                   </TableCell>
-                  <TableCell align="right" sx={{ color: textSecondary, borderColor: cardBorder }}>
-                    {leader.previous_scheduled}/{TASKS_PER_LEADER}
+                  <TableCell>
+                    <Chip
+                      size="small"
+                      label={schedule.active ? "Active" : "Paused"}
+                      color={schedule.active ? "success" : "default"}
+                      variant={schedule.active ? "filled" : "outlined"}
+                    />
                   </TableCell>
-                  <TableCell sx={{ borderColor: cardBorder }}>
-                    <TrendChip change={leader.change} percent={leader.change_percent} />
-                  </TableCell>
-                  <TableCell align="right" sx={{ borderColor: cardBorder }}>
-                    <ChevronRight sx={{ color: textSecondary, fontSize: 18 }} />
+                  <TableCell align="right">
+                    <Tooltip title={schedule.active ? "Pause" : "Resume"}>
+                      <IconButton size="small" onClick={() => handleToggleActive(schedule)}>
+                        {schedule.active ? (
+                          <PauseCircleOutlineIcon fontSize="small" />
+                        ) : (
+                          <PlayCircleOutlineIcon fontSize="small" />
+                        )}
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Edit">
+                      <IconButton size="small" onClick={() => openEditSchedule(schedule)}>
+                        <EditOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Delete">
+                      <IconButton size="small" onClick={() => handleDelete(schedule.id)}>
+                        <DeleteOutlineIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </TableCell>
                 </TableRow>
-              ))
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Paper>
+
+      <Dialog open={modalOpen} onClose={closeModal} fullWidth maxWidth="sm">
+        <DialogTitle sx={{ fontWeight: 700 }}>
+          {editingId ? "Edit Schedule" : "New Schedule"}
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={2.5} sx={{ mt: 1 }}>
+            {formError && <Alert severity="error">{formError}</Alert>}
+
+            <TextField
+              select
+              label="Report"
+              value={form.report_type}
+              onChange={handleFieldChange("report_type")}
+              fullWidth
+            >
+              {REPORT_TYPES.map((r) => (
+                <MenuItem key={r.value} value={r.value}>
+                  {r.label}
+                </MenuItem>
+              ))}
+            </TextField>
+
+            <TextField
+              select
+              label="Frequency"
+              value={form.frequency}
+              onChange={handleFieldChange("frequency")}
+              fullWidth
+            >
+              {FREQUENCIES.map((f) => (
+                <MenuItem key={f.value} value={f.value}>
+                  {f.label}
+                </MenuItem>
+              ))}
+            </TextField>
+
+            {form.frequency === "weekly" && (
+              <TextField
+                select
+                label="Day of week"
+                value={form.weekday}
+                onChange={handleFieldChange("weekday")}
+                fullWidth
+              >
+                {WEEKDAYS.map((w) => (
+                  <MenuItem key={w.value} value={w.value}>
+                    {w.label}
+                  </MenuItem>
+                ))}
+              </TextField>
             )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+
+            {form.frequency === "monthly" && (
+              <TextField
+                type="number"
+                label="Day of month"
+                value={form.day_of_month}
+                onChange={handleFieldChange("day_of_month")}
+                inputProps={{ min: 1, max: 28 }}
+                fullWidth
+                helperText="Capped at 28 so it always lands on a real date."
+              />
+            )}
+
+            <TextField
+              type="time"
+              label="Time"
+              value={form.time}
+              onChange={handleFieldChange("time")}
+              fullWidth
+              InputLabelProps={{ shrink: true }}
+            />
+
+            <TextField
+              select
+              label="Format"
+              value={form.format}
+              onChange={handleFieldChange("format")}
+              fullWidth
+            >
+              {FORMATS.map((f) => (
+                <MenuItem key={f.value} value={f.value}>
+                  {f.label}
+                </MenuItem>
+              ))}
+            </TextField>
+
+            <TextField
+              label="Recipients"
+              placeholder="pastor@church.org, leader12@church.org"
+              value={form.recipients}
+              onChange={handleFieldChange("recipients")}
+              helperText="Comma-separated email addresses."
+              fullWidth
+              multiline
+              minRows={2}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={closeModal} disabled={saving} sx={{ textTransform: "none" }}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            variant="contained"
+            disabled={saving}
+            sx={{ textTransform: "none", fontWeight: 600 }}
+          >
+            {saving ? "Saving..." : editingId ? "Save Changes" : "Create Schedule"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

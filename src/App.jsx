@@ -41,7 +41,7 @@ const ProtectedEvents = withAuthCheck(Events, ['admin', 'leader', 'leaderAt12', 
 const ProtectedStats = withAuthCheck(Stats, ['admin','leaderAt12']);
 const ProtectedReports = withAuthCheck(Reports, ['admin', 'leaderAt12']);
 const ProtectedScheduledReports = withAuthCheck(ScheduledReports, ['admin', 'leaderAt12']);
-const ProtectedReportingDashboard = withAuthCheck(ReportingDashboard, ['admin', 'leaderAt12']);
+const ProtectedReportingDashboard = withAuthCheck(ReportingDashboard, ['admin', 'leaderAt12', 'leaderAt144']);
 const ProtectedCheckIn = withAuthCheck(ServiceCheckIn, ['admin', 'registrant', 'leaderAt12']);
 const ProtectedDailyTasks = withAuthCheck(DailyTasks, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
 const ProtectedAdmin = withAuthCheck(Admin, ['admin']);
@@ -218,6 +218,9 @@ function App() {
             <Route path="/reports" element={<ProtectedReports title="Reports" />} />
             <Route path="/reporting/scheduled" element={<ProtectedScheduledReports title="Scheduled Reports" />} />
             <Route path="/reporting/dashboard" element={<ProtectedReportingDashboard title="Reporting Dashboard" />} />
+            <Route path="/reporting/dashboard/:section" element={<ProtectedReportingDashboard title="Reporting Dashboard" />} />
+            <Route path="/reporting/dashboard/:section/:leaderId" element={<ProtectedReportingDashboard title="Reporting Dashboard" />} />
+            <Route path="/reporting/dashboard/:section/:leaderId/:cellId" element={<ProtectedReportingDashboard title="Reporting Dashboard" />} />
             <Route path="/create-events" element={<ProtectedCreateEvents title="Create Events" />} />
             <Route path="/edit-event/:id" element={<ProtectedCreateEvents title="Create Events Edit" />} />
             <Route path="/attendance" element={<ProtectedAttendance title="Attendance Modal" />} />
