@@ -1,0 +1,9 @@
+.cell-growth { min-height: 100vh; padding: 32px; background: linear-gradient(135deg, #f4f1ea 0%, #e6f2ef 100%); color: #19302d; }
+.cell-growth__inner { max-width: 1400px; margin: 0 auto; }
+.cell-growth__title { font-weight: 800; margin-bottom: 4px; }
+.cell-growth__filters, .cell-growth__chart, .cell-growth__table { padding: 20px; margin-bottom: 24px; }
+.cell-growth__summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.cell-growth__summary .MuiCard-root { border-top: 4px solid #0f766e; }
+.cell-growth__loading { display: flex; gap: 12px; justify-content: center; align-items: center; padding: 64px; }
+.cell-growth__leader-row { cursor: pointer; }
+@media (max-width: 700px) { .cell-growth { padding: 16px; } .cell-growth__summary { grid-template-columns: repeat(2, 1fr); gap: 10px; } .cell-growth__filters, .cell-growth__chart, .cell-growth__table { padding: 12px; } }

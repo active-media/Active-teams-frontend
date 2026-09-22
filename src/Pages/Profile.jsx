@@ -32,7 +32,7 @@ import {
 import Cropper from "react-easy-crop";
 import getCroppedImg from "../components/cropImageHelper";
 import { UserContext } from "../contexts/UserContext.jsx";
-import { AuthContext, supabase } from "../contexts/AuthContext.jsx";
+import { AuthContext } from "../contexts/AuthContext.jsx";
 import {
   Save,
   Cancel,
@@ -75,10 +75,9 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
-/** Get the current Supabase session token */
+/** Get the current backend session token */
 async function getToken() {
-  const { data } = await supabase.auth.getSession();
-  return data?.session?.access_token || null;
+  return localStorage.getItem("access_token");
 }
 
 /** GET /profile/{userId} */
@@ -142,10 +141,10 @@ async function uploadAvatarViaAPI(userId, blob, contentType) {
   return res.json(); // { avatarUrl }
 }
 
-/** Change password via Supabase Auth directly (no backend round-trip needed) */
+/** Password changes require a backend endpoint that is not currently available. */
 async function changePasswordViaSupabase(newPassword) {
-  const { error } = await supabase.auth.updateUser({ password: newPassword });
-  if (error) throw new Error(error.message);
+  void newPassword;
+  throw new Error("Password changes are not available through the current account service.");
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────

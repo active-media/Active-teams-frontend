@@ -85,6 +85,13 @@ const allMenuItems = [
     level: 5,
   },
   {
+    label: "Cells Report",
+    path: "/cells-report",
+    icon: ShowChart,
+    roles: ["admin", "leader", "leaderAt12"],
+    level: 3,
+  },
+  {
     label: "Service Check-in",
     path: "/service-check-in",
     icon: HowToReg,

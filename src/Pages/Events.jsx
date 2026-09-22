@@ -3485,7 +3485,7 @@ const getFilteredEventTypes = (allEventTypes) => {
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        const allFetched = data.events || [];
+        const allFetched = data?.events || [];
         //Events sort day order
 
         allFetched.sort((a, b) => {

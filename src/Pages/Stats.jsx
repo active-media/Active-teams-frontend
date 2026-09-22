@@ -62,6 +62,7 @@ import { toast } from "react-toastify";
 import * as XLSX from "xlsx";
 import { AuthContext } from "../contexts/AuthContext";
 import { useTaskUpdate } from "../contexts/TaskUpdateContext";
+import { useNavigate } from "react-router-dom";
 import CreateEvents from "./CreateEvents";
 
 const toSATime = (d) => {
@@ -86,6 +87,7 @@ const CellsExportBar = ({
   setExportStartDate,
   setExportEndDate,
   handleCellsExcelExport,
+  onGenerateCellsReport,
 }) => (
   <Box
     display="flex"
@@ -97,6 +99,9 @@ const CellsExportBar = ({
     <Typography variant="subtitle2" fontWeight={600} sx={{ mr: 1 }}>
       Export Cells Attendance
     </Typography>
+    <Button variant="contained" size="small" onClick={onGenerateCellsReport}>
+      Generate Cells Report
+    </Button>
     <TextField
       label="From"
       type="date"
@@ -291,6 +296,7 @@ const TaskGroupRow = React.memo(
 
 const StatsDashboard = () => {
   const theme = useTheme();
+  const navigate = useNavigate();
   const isXsDown = useMediaQuery(theme.breakpoints.down("xs"));
   const isSmDown = useMediaQuery(theme.breakpoints.down("sm"));
   const isMdDown = useMediaQuery(theme.breakpoints.down("md"));
@@ -2369,6 +2375,7 @@ const StatsDashboard = () => {
                 setExportStartDate={setExportStartDate}
                 setExportEndDate={setExportEndDate}
                 handleCellsExcelExport={handleCellsExcelExport}
+                onGenerateCellsReport={() => navigate("/cells-report")}
               />
             </Paper>
           </Box>
