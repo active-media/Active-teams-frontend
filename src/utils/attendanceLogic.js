@@ -60,14 +60,45 @@ export const numericFieldSum = (rows, field, { strip = ["R", ","] } = {}) =>
   }, 0);
 
 /**
+ * Column order for every attendance export row. All "Event ..." columns are
+ * kept together at the front so the file reads Event Name / Event Type /
+ * Event Date / Event Leader Name / Event Leader Email in one block.
+ */
+const BASE_ROW_KEYS = [
+  "Event Name",
+  "Event Type",
+  "Event Date",
+  "Event Leader Name",
+  "Event Leader Email",
+  "Is Ticketed",
+  "Checked In",
+  "Name",
+  "Email",
+  "Phone",
+  "Decision",
+  "Price Tier",
+  "Headcount",
+];
+
+const LEADER_HIERARCHY_KEYS = ["Leader @1", "Leader @12", "Leader @144"];
+const TICKETED_FINANCIAL_KEYS = ["Payment Method", "Price", "Paid", "Owing"];
+
+/**
  * Builds the normalized attendance download rows for an event.
  * Unifies the previous duplicated implementations in Events.jsx:
- * - Every row carries the event Headcount.
- * - Ticketed events add Price Tier / Payment Method / Price / Paid / Owing.
- * - Ticketed events append a TOTAL row summing Price / Paid / Owing across the
- *   different price tiers.
+ * - By default ONLY people who were actually checked in are exported (every
+ *   row carries the event's Headcount). Pass `opts.includeEveryone: true` to
+ *   export every associated person (checked-in + paid no-shows + registrants)
+ *   so the money of people who bought tickets but never showed up still counts.
+ * - ALL "Event ..." columns stay grouped together (Event Name / Event Type /
+ *   Event Date / Event Leader Name / Event Leader Email) regardless of which
+ *   fields happen to exist on the event.
+ * - Ticketed events always include the Leader @1 / @12 / @144 columns, Price
+ *   Tier / Payment Method / Price / Paid / Owing.
+ * - Ticketed events append a TOTAL row (with the leading cells left blank as a
+ *   visible space before the amount fields) summing Price / Paid / Owing.
  * @param {object} event - The full event object.
- * @param {{ getEventType?: (typeName: string) => object }} [opts]
+ * @param {{ getEventType?: (typeName: string) => object, includeEveryone?: boolean }} [opts]
  * @returns {object[]}
  */
 export const normalizeEventAttendance = (event, opts = {}) => {
@@ -75,6 +106,7 @@ export const normalizeEventAttendance = (event, opts = {}) => {
 
   const getEventType =
     typeof opts.getEventType === "function" ? opts.getEventType : () => undefined;
+  const includeEveryone = opts.includeEveryone === true;
   const eventDate = event.date;
   const eventTypeName = event.eventType || event.event_type || event.type || "";
   const eventTypeObj = getEventType(eventTypeName);
@@ -126,69 +158,92 @@ export const normalizeEventAttendance = (event, opts = {}) => {
     event.leaderAt144 || event.leader_at_144 || event.leaderAt144Name || "";
   const hasLeaderHierarchy = leaderAt1 || leaderAt12 || leaderAt144;
 
+  // Ticketed events always export the leader columns (a leader @12 may be set
+  // even when the rest of the hierarchy is not).
+  const includeLeaderColumns = hasLeaderHierarchy || isTicketed;
+
   const headcount = resolveHeadcount(event, eventDate);
 
-  const rows = Array.from(peopleMap.values()).map((person) => {
-    const row = {
-      "Event Name": event.eventName || event["Event Name"] || "",
-      "Event Type": eventTypeName,
-      "Is Ticketed": isTicketed ? "Yes" : "No",
-      "Event Date": eventDate,
-      "Checked In": person.checkedIn ? "Yes" : "No",
-      "Name": person.fullName || person.name || "",
-      "Email": person.email || "",
-      "Phone": person.phone || "",
-      "Decision": person.decision || person.Decision || "",
-      "Price Tier": person.priceTier || person.price_tier || person.PriceTier || "",
-      "Event Leader Name": event.eventLeaderName || event.Leader || "",
-      "Headcount": headcount,
-    };
+  const rowKeys = [
+    ...BASE_ROW_KEYS,
+    ...(includeLeaderColumns ? LEADER_HIERARCHY_KEYS : []),
+    ...(isTicketed ? TICKETED_FINANCIAL_KEYS : []),
+  ];
 
-    if (hasLeaderHierarchy) {
-      row["Leader @1"] = leaderAt1;
-      row["Leader @12"] = leaderAt12;
-      row["Leader @144"] = leaderAt144;
-    }
-
-    if (isTicketed) {
-      row["Payment Method"] = person.paymentMethod || person.payment_method || "";
-      row["Price"] =
-        person.price !== undefined ? `R${Number(person.price).toFixed(2)}` : "";
-      row["Paid"] =
-        person.paid !== undefined ? `R${Number(person.paid).toFixed(2)}` : "";
-      row["Owing"] =
-        person.owing !== undefined ? `R${Number(person.owing).toFixed(2)}` : "";
-    }
-
+  // Builds a row with the canonical column order; any value absent below
+  // becomes an empty cell so every row (and the totals row) lines up.
+  const makeRow = (values) => {
+    const row = {};
+    rowKeys.forEach((key) => {
+      row[key] = values[key] !== undefined ? values[key] : "";
+    });
     return row;
-  });
+  };
+
+  const rows = Array.from(peopleMap.values())
+    .filter((person) => includeEveryone || person.checkedIn)
+    .map((person) =>
+      makeRow({
+        "Event Name": event.eventName || event["Event Name"] || "",
+        "Event Type": eventTypeName,
+        "Event Date": eventDate,
+        "Event Leader Name": event.eventLeaderName || event.Leader || "",
+        "Event Leader Email":
+          event.eventLeaderEmail ||
+          event.event_leader_email ||
+          event.leaderEmail ||
+          event.leader_email ||
+          "",
+        "Is Ticketed": isTicketed ? "Yes" : "No",
+        "Checked In": person.checkedIn ? "Yes" : "No",
+        "Name": person.fullName || person.name || "",
+        "Email": person.email || "",
+        "Phone": person.phone || "",
+        "Decision": person.decision || person.Decision || "",
+        "Price Tier":
+          person.priceTier ||
+          person.price_tier ||
+          person.PriceTier ||
+          person.priceName ||
+          person.PriceName ||
+          "",
+        // Headcount is filled once per export (see below) — it is an
+        // event-level figure, not a per-person field.
+        "Headcount": "",
+        ...(includeLeaderColumns && {
+          "Leader @1": leaderAt1,
+          "Leader @12": leaderAt12,
+          "Leader @144": leaderAt144,
+        }),
+        ...(isTicketed && {
+          "Payment Method":
+            person.paymentMethod || person.payment_method || "",
+          "Price":
+            person.price !== undefined ? `R${Number(person.price).toFixed(2)}` : "",
+          "Paid":
+            person.paid !== undefined ? `R${Number(person.paid).toFixed(2)}` : "",
+          "Owing":
+            person.owing !== undefined ? `R${Number(person.owing).toFixed(2)}` : "",
+        }),
+      }),
+    );
 
   if (isTicketed && rows.length > 0) {
-    const totalsRow = {
-      "Event Name": event.eventName || event["Event Name"] || "",
-      "Event Type": eventTypeName,
-      "Is Ticketed": "Yes",
-      "Event Date": eventDate,
-      "Checked In": "",
-      "Name": "TOTAL",
-      "Email": "",
-      "Phone": "",
-      "Decision": "",
-      "Price Tier": "",
-      "Event Leader Name": "",
-      "Headcount": headcount,
-    };
-    if (hasLeaderHierarchy) {
-      totalsRow["Leader @1"] = "";
-      totalsRow["Leader @12"] = "";
-      totalsRow["Leader @144"] = "";
-    }
-    totalsRow["Payment Method"] = "";
-    totalsRow["Price"] = `R${numericFieldSum(rows, "Price").toFixed(2)}`;
-    totalsRow["Paid"] = `R${numericFieldSum(rows, "Paid").toFixed(2)}`;
-    totalsRow["Owing"] = `R${numericFieldSum(rows, "Owing").toFixed(2)}`;
-
-    rows.push(totalsRow);
+    // The totals row leaves the leading cells blank (a visible space before
+    // the amount fields) and only fills the TOTAL label, headcount and sums.
+    rows.push(
+      makeRow({
+        "Name": "TOTAL",
+        "Headcount": headcount,
+        "Price": `R${numericFieldSum(rows, "Price").toFixed(2)}`,
+        "Paid": `R${numericFieldSum(rows, "Paid").toFixed(2)}`,
+        "Owing": `R${numericFieldSum(rows, "Owing").toFixed(2)}`,
+      }),
+    );
+  } else if (!isTicketed && rows.length > 0) {
+    // Non-ticketed events have no TOTAL row, so the headcount lives on the
+    // first row — still exactly one row per export.
+    rows[0].Headcount = headcount;
   }
 
   return rows;
@@ -271,24 +326,27 @@ export const computeTicketSubtotals = (people, getTicketInfo) => {
 };
 
 /**
- * Picks which people appear in the exported attendance file:
- * - Non-ticketed events export the people who were checked in.
- * - Ticketed events also include every ticket holder — a person may pay for a
- *   ticket but not show up, and that money still counts.
+ * Picks which people appear in the exported attendance file.
+ * - Default: only people who were actually checked in are exported — a
+ *   ticketed event no longer includes ticket holders who paid but never
+ *   showed up, because the attendance file is expected to reflect the people
+ *   present (their money is still tracked separately in the finance flows).
+ * - `includeEveryone: true` exports every associated person (checked-in people
+ *   plus paid no-shows and registrants) with all columns/fields filled.
  * @param {object[]} people - All associated people.
  * @param {string[]} checkedInIds - People currently checked in.
- * @param {{ isTicketedEvent: boolean, hasTicketInfo: (person) => boolean }} opts
+ * @param {{ includeEveryone?: boolean }} [opts]
  * @returns {object[]}
  */
 export const pickDownloadPeople = (
   people,
   checkedInIds,
-  { isTicketedEvent = false, hasTicketInfo = () => false } = {},
+  { includeEveryone = false } = {},
 ) => {
   const checked = new Set(checkedInIds || []);
   return (people || []).filter((person) => {
     if (!person || person.id == null) return false;
-    if (!isTicketedEvent) return checked.has(person.id);
-    return checked.has(person.id) || hasTicketInfo(person);
+    if (includeEveryone) return true;
+    return checked.has(person.id);
   });
 };

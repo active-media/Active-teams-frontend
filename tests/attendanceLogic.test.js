@@ -99,7 +99,7 @@ describe("normalizeEventAttendance", () => {
     const dataRows = rows.filter((r) => r.Name !== "TOTAL");
     assert.equal(dataRows.length, 3);
 
-    assert.equal(rows[0].Headcount, 0);
+    assert.equal(rows[0].Headcount, ""); // headcount only lives on the TOTAL row
     assert.equal(rows[0]["Price Tier"], "Gold");
     assert.equal(rows[0].Price, "R150.00");
     assert.equal(rows[0].Paid, "R150.00");
@@ -120,13 +120,141 @@ describe("normalizeEventAttendance", () => {
       date: "2026-09-13",
       eventName: "Camp",
       eventType: "Camp",
-      registrants: [{ email: "e@x.com", name: "Eve", price: 99 }],
+      attendees: [{ email: "e@x.com", name: "Eve", price: 99 }],
     };
     const rows = normalizeEventAttendance(event, {
       getEventType: (name) => (name === "Camp" ? { isTicketed: true } : undefined),
     });
     assert.equal(rows[0].Price, "R99.00");
+    assert.equal(rows[0]["Price Tier"], "");
     assert.equal(rows[rows.length - 1].Name, "TOTAL");
+  });
+
+  test("people who were never checked in are excluded from the download", () => {
+    const event = {
+      date: "2026-09-13",
+      eventName: "Gala",
+      isTicketed: true,
+      attendees: [{ email: "a@x.com", name: "Amy" }],
+      registrants: [
+        { email: "a@x.com", name: "Amy" }, // same person, deduped
+        { email: "n@x.com", name: "Noah", price: 300 }, // paid but never showed
+      ],
+    };
+    const rows = normalizeEventAttendance(event);
+    const dataRows = rows.filter((r) => r.Name !== "TOTAL");
+    assert.equal(dataRows.length, 1);
+    assert.equal(dataRows[0].Name, "Amy");
+    assert.equal(dataRows[0]["Checked In"], "Yes");
+    assert.ok(!rows.some((r) => r.Name === "Noah"));
+  });
+
+  test("includeEveryone exports paid no-shows too and totals their money", () => {
+    const event = {
+      date: "2026-09-13",
+      eventName: "Gala",
+      isTicketed: true,
+      attendees: [{ email: "a@x.com", name: "Amy", price: 150, paid: 150 }],
+      registrants: [
+        { email: "a@x.com", name: "Amy" }, // same person, deduped
+        { email: "n@x.com", name: "Noah", price: 300, paid: 300, priceTier: "Gold" },
+      ],
+    };
+    const rows = normalizeEventAttendance(event, { includeEveryone: true });
+    const dataRows = rows.filter((r) => r.Name !== "TOTAL");
+    assert.equal(dataRows.length, 2);
+    const amy = dataRows.find((r) => r.Name === "Amy");
+    const noah = dataRows.find((r) => r.Name === "Noah");
+    assert.equal(amy["Checked In"], "Yes");
+    assert.equal(noah["Checked In"], "No");
+    assert.equal(noah["Price Tier"], "Gold");
+    assert.equal(noah.Price, "R300.00");
+    const total = rows[rows.length - 1];
+    assert.equal(total.Name, "TOTAL");
+    assert.equal(total.Price, "R450.00"); // 150 + 300: everyone's money counts
+    assert.equal(total.Paid, "R450.00");
+  });
+
+  test("ticketed event always exports the Leader at 12 column even without a hierarchy", () => {
+    const event = {
+      date: "2026-09-13",
+      eventName: "Gala",
+      isTicketed: true,
+      attendees: [{ email: "a@x.com", name: "Amy" }],
+    };
+    const rows = normalizeEventAttendance(event);
+    assert.equal(rows[0]["Leader @12"], "");
+    assert.equal(rows[0]["Leader @1"], "");
+    assert.equal(rows[0]["Leader @144"], "");
+    assert.ok("Leader @12" in rows[0]);
+  });
+
+  test("all Event... columns are grouped together at the front of the row", () => {
+    const event = {
+      date: "2026-09-13",
+      eventName: "Gala",
+      eventType: "Gala",
+      isTicketed: true,
+      eventLeaderName: "Lea",
+      eventLeaderEmail: "lea@x.com",
+      attendees: [{ email: "a@x.com", name: "Amy" }],
+    };
+    const keys = Object.keys(normalizeEventAttendance(event)[0]);
+    const eventKeys = keys.filter((k) => k.toLowerCase().startsWith("event"));
+    const leaderIdx = keys.indexOf("Leader @12");
+    // The whole event block comes first, nothing event-y appears after "Name".
+    assert.deepEqual(eventKeys, [
+      "Event Name",
+      "Event Type",
+      "Event Date",
+      "Event Leader Name",
+      "Event Leader Email",
+    ]);
+    assert.equal(leaderIdx, 14); // ...after the 13 base columns, right before Leader @12
+    assert.equal(keys[0], "Event Name");
+    assert.equal(keys[1], "Event Type");
+  });
+
+  test("the TOTAL row leaves a space before the amount fields", () => {
+    const event = {
+      date: "2026-09-13",
+      eventName: "Gala",
+      isTicketed: true,
+      attendees: [{ email: "a@x.com", name: "Amy", price: 150, paid: 150 }],
+    };
+    const total = normalizeEventAttendance(event).slice(-1)[0];
+    assert.equal(total.Name, "TOTAL");
+    assert.equal(total["Event Name"], ""); // blank space before the label
+    assert.equal(total["Event Date"], "");
+    assert.equal(total["Is Ticketed"], "");
+    assert.equal(total.Price, "R150.00");
+    assert.equal(total.Headcount, 0);
+  });
+
+  test("headcount is filled on exactly one row", () => {
+    const base = {
+      date: "2026-09-13",
+      eventName: "Svc",
+      total_headcounts: 45, // the stipulated "45 heads found"
+      attendees: [
+        { email: "a@x.com", name: "Amy" },
+        { email: "b@x.com", name: "Ben" },
+      ],
+    };
+
+    // Ticketed: the TOTAL row carries it, every person row stays blank.
+    const ticketed = normalizeEventAttendance({ ...base, isTicketed: true });
+    const filled = ticketed.filter((r) => r.Headcount !== "");
+    assert.equal(filled.length, 1);
+    assert.equal(filled[0].Name, "TOTAL");
+    assert.equal(filled[0].Headcount, 45);
+
+    // Non-ticketed (no TOTAL row): the first row carries it, the rest blank.
+    const plain = normalizeEventAttendance(base);
+    const plainFilled = plain.filter((r) => r.Headcount !== "");
+    assert.equal(plainFilled.length, 1);
+    assert.equal(plainFilled[0].Name, "Amy");
+    assert.equal(plainFilled[0].Headcount, 45);
   });
 
   test("non-ticketed event: no TOTAL row and no Price/Paid/Owing fields", () => {
@@ -301,26 +429,26 @@ describe("pickDownloadPeople", () => {
     null,
   ];
   const checkedInIds = ["a"];
-  const hasTicketInfo = (p) => p && p.id === "b";
 
   test("non-ticketed: only checked-in people are exported", () => {
-    const picked = pickDownloadPeople(people, checkedInIds, {
-      isTicketedEvent: false,
-      hasTicketInfo,
-    });
+    const picked = pickDownloadPeople(people, checkedInIds);
     assert.deepEqual(picked.map((p) => p.id), ["a"]);
   });
 
-  test("ticketed: checked-in + every ticket holder (paid but no-show) exported", () => {
+  test("ticketed: only checked-in people are exported (paid no-shows are excluded)", () => {
+    const picked = pickDownloadPeople(people, checkedInIds);
+    assert.deepEqual(picked.map((p) => p.id), ["a"]);
+  });
+
+  test("includeEveryone exports all associated people", () => {
     const picked = pickDownloadPeople(people, checkedInIds, {
-      isTicketedEvent: true,
-      hasTicketInfo,
+      includeEveryone: true,
     });
-    assert.deepEqual(picked.map((p) => p.id), ["a", "b"]);
+    assert.deepEqual(picked.map((p) => p.id), ["a", "b", "c"]);
   });
 
   test("empty input is safe", () => {
-    assert.deepEqual(pickDownloadPeople([], [], { isTicketedEvent: true }), []);
+    assert.deepEqual(pickDownloadPeople([], []), []);
   });
 });
 

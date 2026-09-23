@@ -3328,7 +3328,7 @@ const AttendanceModal = ({
     }
   };
 
-  const downloadAttendanceData = () => {
+  const downloadAttendanceData = (everyone = false) => {
     try {
       const allPeople = getAllCommonAttendees();
       const checkedInIds = Object.keys(checkedIn).filter((id) => checkedIn[id]);
@@ -3337,19 +3337,11 @@ const AttendanceModal = ({
         checkedInIds.length,
       );
 
-      // For ticketed events every ticket holder is exported too (a person may
-      // pay for a ticket but not show up — that money still counts). For other
-      // events only the people checked in are exported.
-      const hasTicketInfo = (person) => {
-        if (!person || !person.id) return false;
-        const t = attendeeTicketInfo[person.id] || {};
-        const price = t.price ?? person.price ?? 0;
-        const paid = t.paidAmount ?? person.paidAmount ?? 0;
-        return (Number(price) || 0) > 0 || (Number(paid) || 0) > 0;
-      };
+      // Default: only people actually checked in are exported. With
+      // `everyone: true` every associated person is included (checked-in
+      // people plus paid no-shows / registrants) so the money still counts.
       const exportIds = pickDownloadPeople(allPeople, checkedInIds, {
-        isTicketedEvent,
-        hasTicketInfo,
+        includeEveryone: everyone,
       }).map((p) => p.id);
 
       const rowsToExport = exportIds
@@ -3374,9 +3366,11 @@ const AttendanceModal = ({
               : isCheckedIn
                 ? "Complete"
                 : "Not Checked In",
-            Headcount: finalHeadcountExport,
+            // Headcount is filled once per export below — it's an
+            // event-level figure, not a per-person field.
+            Headcount: "",
             ...(isTicketedEvent && {
-              "Price Name":
+              "Price Tier":
                 attendeeTicketInfo[id]?.priceName || person.priceName || "N/A",
               "Price (R)":
                 attendeeTicketInfo[id]?.price || person.price || "N/A",
@@ -3409,7 +3403,7 @@ const AttendanceModal = ({
               Status: "Did Not Meet",
               Headcount: finalHeadcountExport,
               ...(isTicketedEvent && {
-                "Price Name": "N/A",
+                "Price Tier": "N/A",
                 "Price (R)": "N/A",
                 "Age Group": "N/A",
                 "Payment Method": "N/A",
@@ -3429,6 +3423,12 @@ const AttendanceModal = ({
         return;
       }
 
+      if (!isTicketedEvent && rowsToExport.length > 0) {
+        // Non-ticketed events have no totals row: the headcount lives on the
+        // first row so it appears exactly once per export.
+        rowsToExport[0].Headcount = finalHeadcountExport;
+      }
+
       if (isTicketedEvent) {
         const totalPrice = numericFieldSum(rowsToExport, "Price (R)");
         const totalPaid = numericFieldSum(rowsToExport, "Paid (R)");
@@ -3436,8 +3436,9 @@ const AttendanceModal = ({
         const totalChange = numericFieldSum(rowsToExport, "Change (R)");
 
         rowsToExport.push({
-          "Event Name": event?.eventName || "N/A",
-          "Event Date": event?.date || "N/A",
+          // Leading cells left blank: a visible space before the total amounts.
+          "Event Name": "",
+          "Event Date": "",
           Name: "TOTAL",
           Email: "",
           "Leader @12": "",
@@ -3446,7 +3447,7 @@ const AttendanceModal = ({
           Decision: "",
           Status: "",
           Headcount: finalHeadcountExport,
-          "Price Name": "",
+          "Price Tier": "",
           "Price (R)": totalPrice.toFixed(2),
           "Age Group": "",
           "Payment Method": "",
@@ -3458,11 +3459,13 @@ const AttendanceModal = ({
 
       buildXlsFromRows(
         rowsToExport,
-        `attendance_${(event?.eventName || "event").replace(/\s/g, "_")}_${didNotMeet ? "did_not_meet" : "complete"}`,
+        `${everyone ? "everyone" : "attendance"}_${(event?.eventName || "event").replace(/\s/g, "_")}_${didNotMeet ? "did_not_meet" : "complete"}`,
       );
 
       toast.success(
-        `Downloaded ${rowsToExport.length} attendance records`,
+        everyone
+          ? `Downloaded ${rowsToExport.length} associated people`
+          : `Downloaded ${rowsToExport.length} attendance records`,
       );
     } catch (err) {
       console.error("Download failed:", err);
@@ -4560,7 +4563,7 @@ const AttendanceModal = ({
                           <th style={styles.th}>Attendees Number</th>
                           {isTicketedEvent && (
                             <>
-                              <th style={styles.th}>Price Name</th>
+                              <th style={styles.th}>Price Tier</th>
                               <th style={styles.th}>Price (R)</th>
                               <th style={styles.th}>Age Group</th>
                               <th style={styles.th}>Payment Method</th>
@@ -5343,6 +5346,41 @@ const AttendanceModal = ({
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
               Download Attendance
+            </button>
+            <button
+              onClick={() => downloadAttendanceData(true)}
+              style={{
+                background: "#7b1fa2",
+                color: "#fff",
+                border: "none",
+                padding: "12px 20px",
+                borderRadius: 6,
+                cursor: "pointer",
+                fontSize: 16,
+                fontWeight: 500,
+                flex: isMobile ? "1 1 100%" : "none",
+                minWidth: 120,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+              }}
+              title="Download all associated people (checked in + paid no-shows)"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              Download Everyone
             </button>
 
             <div

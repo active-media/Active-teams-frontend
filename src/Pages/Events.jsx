@@ -34,6 +34,7 @@ import DialogActions from "@mui/material/DialogActions";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
 import GetAppIcon from "@mui/icons-material/GetApp";
+import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
 
 import Eventsfilter from "./AddPersonToEvents";
 import CreateEvents from "./CreateEvents";
@@ -42,7 +43,7 @@ import EditEventModal from "./EditEventModal";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { AuthContext } from "../contexts/AuthContext";
-import { normalizeEventAttendance } from "../utils/attendanceLogic";
+import { normalizeEventAttendance, resolveHeadcount } from "../utils/attendanceLogic";
 
 const formatRecurringDays = (recurringDays) => {
   if (!recurringDays || recurringDays.length === 0) {
@@ -620,9 +621,18 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
     return !(exactMatch || caseInsensitiveMatch || containsOverdue || containsDisplayDate || containsOriginated || containsLeader12 || shouldExcludeLeader1 || containsPersonSteps);
   });
 
+  // Keep every column that starts with "event" together (Event Name,
+  // Event Leader, Event Leader Email, ...) so they read as one block no
+  // matter what order the backend returns the fields in.
+  const groupedEventFields = [...filteredFields].sort((a, b) => {
+    const aEvent = a.toLowerCase().startsWith("event");
+    const bEvent = b.toLowerCase().startsWith("event");
+    return aEvent === bEvent ? 0 : aEvent ? -1 : 1;
+  });
+
   const columns = [statusCol, recurringCol];
   columns.push(
-    ...filteredFields.map((key) => ({
+    ...groupedEventFields.map((key) => ({
       field: key,
       headerName: key.replace(/_/g, " ").replace(/([A-Z])/g, " $1").replace(/^./, (str) => str.toUpperCase()),
       flex: 1,
@@ -819,8 +829,8 @@ ${xmlCols}
     }
   };
 
-  const downloadEventAttendance = async (event) => {
-  const TOAST_ID = `download-event-${event?._id || event?.id || Date.now()}`;
+  const downloadEventAttendance = async (event, { everyone = false } = {}) => {
+  const TOAST_ID = `download-event-${event?._id || event?.id || Date.now()}-${everyone ? "everyone" : "checked"}`;
   try {
     toast.info("Preparing event download…", { toastId: TOAST_ID, autoClose: false });
 
@@ -828,6 +838,7 @@ ${xmlCols}
 
     const rows = normalizeEventAttendance(fullEvent, {
       getEventType: findEventTypeByName,
+      includeEveryone: everyone,
     });
 
     if (!rows || rows.length === 0) {
@@ -838,11 +849,15 @@ ${xmlCols}
     console.log("Full event",fullEvent)
     buildXlsFromRows(
       rows,
-      `attendance_${(fullEvent.eventName || "event").replace(/\s/g, "_")}`,
+      `${everyone ? "everyone" : "attendance"}_${(fullEvent.eventName || "event").replace(/\s/g, "_")}`,
     );
 
     toast.dismiss(TOAST_ID);
-    toast.success(`Downloaded ${rows.length} people for this event`);
+    toast.success(
+      everyone
+        ? `Downloaded ${rows.length} associated people for this event`
+        : `Downloaded ${rows.length} people for this event`,
+    );
   } catch (err) {
     console.error("Download event attendance failed:", err);
     toast.dismiss(TOAST_ID);
@@ -927,10 +942,10 @@ ${xmlCols}
           <span style={styles.mobileCardValue}>{event.leader1 || "N/A"}</span>
         </div>
       )}
-      {!event.isTicketed && <div style={styles.mobileCardRow}>
+      <div style={styles.mobileCardRow}>
         <span style={styles.mobileCardLabel}>Leader @12:</span>
         <span style={styles.mobileCardValue}>{event.leader12 || "N/A"}</span>
-      </div>}
+      </div>
       <div style={styles.mobileActions}>
         <Tooltip title={`View Attendance (${attendeesCount} people)`}>
           <IconButton
@@ -968,6 +983,15 @@ ${xmlCols}
             sx={{ color: "#1976d2" }}
           >
             <GetAppIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="Download Everyone (Event)" arrow>
+          <IconButton
+            onClick={() => downloadEventAttendance(event, { everyone: true })}
+            size="small"
+            sx={{ color: "#7b1fa2" }}
+          >
+            <PeopleAltIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       </div>
@@ -1250,8 +1274,8 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
     }
     return results;
   };
-  const downloadEventAttendance = async (event) => {
-  const TOAST_ID = `download-event-${event?._id || event?.id || Date.now()}`;
+  const downloadEventAttendance = async (event, { everyone = false } = {}) => {
+  const TOAST_ID = `download-event-${event?._id || event?.id || Date.now()}-${everyone ? "everyone" : "checked"}`;
   try {
     toast.info("Preparing event download…", { toastId: TOAST_ID, autoClose: false });
 
@@ -1259,6 +1283,7 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
 
     const rows = normalizeEventAttendance(fullEvent, {
       getEventType: findEventTypeByName,
+      includeEveryone: everyone,
     });
 
     if (!rows || rows.length === 0) {
@@ -1269,11 +1294,15 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
 
     buildXlsFromRows(
       rows,
-      `attendance_${(fullEvent.eventName || "event").replace(/\s/g, "_")}`,
+      `${everyone ? "everyone" : "attendance"}_${(fullEvent.eventName || "event").replace(/\s/g, "_")}`,
     );
 
     toast.dismiss(TOAST_ID);
-    toast.success(`Downloaded ${rows.length} people for this event`);
+    toast.success(
+      everyone
+        ? `Downloaded ${rows.length} associated people for this event`
+        : `Downloaded ${rows.length} people for this event`,
+    );
   } catch (err) {
     console.error("Download event attendance failed:", err);
     toast.dismiss(TOAST_ID);
@@ -1405,15 +1434,28 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
         ) {
           allRows.push({
             "Event Name": ev.eventName || ev.Event_Name || ev.name || "",
+            "Event Type": ev.eventType || ev.event_type || ev.type || "",
             "Event Date": formatDate(ev.date),
+            "Event Leader Name":
+              ev.eventLeaderName || ev.leaderName || ev.eventLeader || ev.leader || "",
+            "Event Leader Email":
+              ev.eventLeaderEmail ||
+              ev.event_leader_email ||
+              ev.leaderEmail ||
+              ev.leader_email ||
+              "",
+            "Is Ticketed":
+              ev.isTicketed === true || ev.is_ticketed === true ? "Yes" : "No",
+            "Checked In": "No",
             Name: "",
             Email: "",
-            "Event Leader Name ": ev.eventLeaderName || ev.leaderName || ev.eventLeader || ev.leader || "",
-            "Leader @12": ev.leader12 || "",
-            "Leader @144": ev.leader144 || "",
             Phone: "",
             Decision: "",
             "Price Tier": "",
+            Headcount: resolveHeadcount(ev, ev.date),
+            "Leader @1": ev.leader1 || "",
+            "Leader @12": ev.leader12 || "",
+            "Leader @144": ev.leader144 || "",
             "Payment Method": "",
             Price: "",
             Paid: "",
@@ -4911,7 +4953,7 @@ const getTypeValue = (type) => {
                           headerName: "Actions",
                           sortable: false,
                           flex: 1,
-                          minWidth: 150,
+                          minWidth: 200,
                           renderCell: (params) => (
                             <Box sx={{ display: "flex", gap: 1 }}>
                               <Tooltip
@@ -4968,6 +5010,19 @@ const getTypeValue = (type) => {
                                   sx={{ color: "#1976d2" }}
                                 >
                                   <GetAppIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Download Everyone (Event)" arrow>
+                                <IconButton
+                                  onClick={() =>
+                                    downloadEventAttendance(params.row, {
+                                      everyone: true,
+                                    })
+                                  }
+                                  size="small"
+                                  sx={{ color: "#7b1fa2" }}
+                                >
+                                  <PeopleAltIcon fontSize="small" />
                                 </IconButton>
                               </Tooltip>
                             </Box>
