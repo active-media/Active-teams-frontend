@@ -7,6 +7,7 @@ import {
   fireEvent,
   cleanup,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { toast } from "react-toastify";
 
 import Events from "../../src/Pages/Events";
@@ -389,6 +390,64 @@ describe("Events page actions", () => {
         },
         { timeout: 3000 },
       );
+    });
+
+    test("pressing Enter applies the search immediately", async () => {
+      const routes = eventsRoutes({
+        events: [makeEvt(), makeEvt({ _id: "evt-2", eventName: "Midweek Connect" })],
+        total_events: 2,
+      });
+      await openEventsView(routes);
+
+      const searchBox = screen.getByPlaceholderText("Search by Event Name, Leader, or Email...");
+      const before = eventsDataCalls(routes).length;
+      // A real click focuses the field and loads the searchable set.
+      await userEvent.click(searchBox);
+      expect(eventsDataCalls(routes).length).toBeGreaterThan(before);
+
+      fireEvent.change(searchBox, { target: { value: "celebration" } });
+      // Enter must apply on the spot. The rows are already filtered before the
+      // 300ms debounce timer can fire, so only the keypress drove this.
+      await userEvent.keyboard("{Enter}");
+
+      expect(screen.getByText("Sunday Celebration")).toBeInTheDocument();
+      expect(screen.queryByText("Midweek Connect")).not.toBeInTheDocument();
+    });
+
+    test("the result counter reflects the search matches", async () => {
+      const routes = eventsRoutes({
+        events: [makeEvt(), makeEvt({ _id: "evt-2", eventName: "Midweek Connect" })],
+        total_events: 2,
+      });
+      await openEventsView(routes);
+      expect(screen.getByText("1-2 of 2")).toBeInTheDocument();
+
+      const searchBox = screen.getByPlaceholderText("Search by Event Name, Leader, or Email...");
+      const before = eventsDataCalls(routes).length;
+      fireEvent.click(searchBox);
+      await waitFor(() => expect(eventsDataCalls(routes).length).toBeGreaterThan(before));
+      fireEvent.change(searchBox, { target: { value: "celebration" } });
+
+      expect(await screen.findByText("1-1 of 1")).toBeInTheDocument();
+    });
+
+    test("the counter still settles correctly when typing beats the search fetch", async () => {
+      const routes = eventsRoutes({
+        events: [makeEvt(), makeEvt({ _id: "evt-2", eventName: "Midweek Connect" })],
+        total_events: 2,
+      });
+      await openEventsView(routes);
+
+      const searchBox = screen.getByPlaceholderText("Search by Event Name, Leader, or Email...");
+      // Type in the same tick as the click, so the searchable set is still
+      // empty when the debounce fires. The count must still self-correct once
+      // the click's fetch lands.
+      fireEvent.click(searchBox);
+      fireEvent.change(searchBox, { target: { value: "celebration" } });
+
+      expect(await screen.findByText("1-1 of 1")).toBeInTheDocument();
+      expect(screen.getByText("Sunday Celebration")).toBeInTheDocument();
+      expect(screen.queryByText("Midweek Connect")).not.toBeInTheDocument();
     });
 
     test("CLEAR ALL restores the unfiltered list", async () => {

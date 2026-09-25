@@ -2292,17 +2292,26 @@ const getFilteredEventTypes = (allEventTypes) => {
     DEFAULT_API_START_DATE,
   ]);
 
+  // Refreshing the searchable set when the surrounding filters change *while*
+  // searching. `isSearching` is deliberately NOT a dependency: the searchable
+  // set is loaded by clicking the search bar (see the input's onClick), so
+  // merely starting to type must not trigger a load.
   useEffect(() => {
-    if (!isSearching) return
-    fetchAllCurrentEvents()
-  }, [selectedStatus, selectedEventTypeFilter, viewFilter, userRole])
+    if (!isSearching) return;
+    fetchAllCurrentEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStatus, selectedEventTypeFilter, viewFilter, userRole]);
 
-  const handleSearchSubmit = (searchText) => {
-    if (!searchText.trim()) return;
-    const trimmedSearch = searchText.trim();
+  // Pure filter over the set loaded by clicking the search bar. It must stay
+  // free of state writes because it runs inside a useMemo — setting state
+  // during render was discarding the result count and the rendered rows
+  // could disagree.
+  const filterEventsBySearch = (list, searchText) => {
+    const trimmedSearch = String(searchText || "").trim();
+    if (!trimmedSearch) return list || [];
+    const needle = trimmedSearch.toLowerCase();
 
-    const newArray = allCurrentEvents.filter((event) => {
-      let found = false;
+    return (list || []).filter((event) =>
       [
         "Event Name",
         "eventName",
@@ -2316,18 +2325,12 @@ const getFilteredEventTypes = (allEventTypes) => {
         "Leader at 12",
         "Leader @12",
         "leader12",
-      ].forEach((field) => {
-        if (event[field] && typeof event[field] === "string") {
-          found =
-            found ||
-            event[field].toLowerCase().includes(trimmedSearch.toLowerCase());
-        }
-      });
-      return found;
-    });
-    console.log("searched", allCurrentEvents, "with", trimmedSearch);
-    setTotalEvents(newArray.length || 0);
-    return newArray;
+      ].some(
+        (field) =>
+          typeof event?.[field] === "string" &&
+          event[field].toLowerCase().includes(needle),
+      ),
+    );
   };
 
   const searchDebounceRef = useRef(null);
@@ -2351,13 +2354,25 @@ const getFilteredEventTypes = (allEventTypes) => {
         clearTimeout(searchDebounceRef.current);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
 
   const filteredEvents = useMemo(() => {
     if (isSearching === null) return events;
     if (!debouncedSearchTerm.trim()) return events;
-    return handleSearchSubmit(debouncedSearchTerm) || [];
+    return filterEventsBySearch(allCurrentEvents, debouncedSearchTerm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allCurrentEvents, debouncedSearchTerm, selectedStatus, isSearching]);
+
+  // Keep the result counter in step with the rows. This has to be an effect,
+  // not a write inside the memo above: writing state during render discarded
+  // the count. Keying it on filteredEvents also covers the case where the
+  // click-loaded set lands *after* the user's keystroke, which would otherwise
+  // leave the counter stuck on zero.
+  useEffect(() => {
+    if (!isSearching) return;
+    setTotalEvents(filteredEvents.length);
+  }, [isSearching, filteredEvents]);
   console.log(
     "issearching",
     isSearching,
@@ -4452,7 +4467,12 @@ const getTypeValue = (type) => {
                 }}
                 onKeyPress={(e) => {
                   if (e.key === "Enter") {
-                    handleSearchSubmit();
+                    // Apply straight away rather than waiting out the debounce.
+                    // The result counter is kept in sync by the effect above.
+                    if (searchDebounceRef.current) {
+                      clearTimeout(searchDebounceRef.current);
+                    }
+                    setDebouncedSearchTerm(searchQuery);
                   }
                 }}
                 InputProps={{
