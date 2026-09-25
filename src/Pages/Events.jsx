@@ -5722,6 +5722,7 @@ const getTypeValue = (type) => {
                 selectedTypeForMenu.name ||
                 selectedTypeForMenu.eventTypeName ||
                 selectedTypeForMenu,
+                eventTypes,
               );
               setEditingEventType(fullEventTypeObj);
               setEventTypesModalOpen(true);
@@ -5823,6 +5824,7 @@ const getTypeValue = (type) => {
                   setFabMenuOpen(false);
                   const eventTypeObj = findEventTypeByName(
                     selectedEventTypeFilter,
+                    eventTypes,
                   );
                   setSelectedEventTypeObj(eventTypeObj);
                   setCreateEventModalOpen(true);
@@ -5956,6 +5958,7 @@ const getTypeValue = (type) => {
                 onClose={handleCloseCreateEventModal}
                 selectedEventTypeObj={findEventTypeByName(
                   selectedEventTypeFilter,
+                  eventTypes,
                 )}
                 selectedEventType={selectedEventTypeFilter}
                 eventTypes={eventTypes}
