@@ -2765,7 +2765,6 @@ const getFilteredEventTypes = (allEventTypes) => {
       return;
     }
     setSelectedEvent(eventToEdit);
-    if (event.isTicketed === true) return //extra precaustion to not open edit event model if it is a ticketed event
     setEditModalOpen(true);
   }, []);
 

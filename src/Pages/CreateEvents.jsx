@@ -68,7 +68,28 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   const navigate = useNavigate();
   const { id: paramEventID } = useParams();
   const [autoPopulatedFields, setAutoPopulatedFields] = useState(new Set());
-  const [eventId, setEventId] = useState(paramEventID ? paramEventID : null)
+  
+  // Determine eventId from route param, query param, or passed event object
+  const getInitialEventId = () => {
+    // 1. Check route param (/edit-event/:id)
+    if (paramEventID) return paramEventID;
+    
+    // 2. Check query param (?eventId=...)
+    const queryParams = new URLSearchParams(window.location.search);
+    const queryEventId = queryParams.get("eventId");
+    if (queryEventId) return queryEventId;
+    
+    // 3. Check if selectedEventTypeObj contains full event data (not just event type)
+    // Event type objects have name, description, isTicketed, etc.
+    // Full event objects have eventName, date, location, etc.
+    if (selectedEventTypeObj && selectedEventTypeObj.eventName) {
+      return selectedEventTypeObj._id || selectedEventTypeObj.id;
+    }
+    
+    return null;
+  };
+  
+  const [eventId, setEventId] = useState(getInitialEventId());
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
   const [isSearchingPeople, setIsSearchingPeople] = useState(false);
@@ -430,21 +451,41 @@ const fetchPeople = async (q) => {
 };
 
   useEffect(() => {
-  const queryString = window.location.search
-  const queries = new URLSearchParams(queryString)
-  if (selectedEventTypeObj?.isTicketed === true) {
-    setEventId(queries.get("eventId"))
+  // Update eventId from query param or passed event object
+  const queryParams = new URLSearchParams(window.location.search);
+  const queryEventId = queryParams.get("eventId");
+  
+  // If selectedEventTypeObj has full event data (eventName), use its ID
+  const hasFullEventData = selectedEventTypeObj && selectedEventTypeObj.eventName;
+  const propEventId = hasFullEventData ? (selectedEventTypeObj._id || selectedEventTypeObj.id) : null;
+  
+  const newEventId = queryEventId || propEventId;
+  if (newEventId && newEventId !== eventId) {
+    setEventId(newEventId);
   }
-}, [])
+}, [selectedEventTypeObj])
   useEffect(() => {
     console.log("dd", eventId)
     if (!eventId) return;
+    
+    // Check if we already have the full event data in selectedEventTypeObj
+    const hasFullEventData = selectedEventTypeObj && selectedEventTypeObj.eventName && 
+      (selectedEventTypeObj._id === eventId || selectedEventTypeObj.id === eventId);
+    
     const fetchEventData = async () => {
       try {
-        const response = await axios.get(`${BACKEND_URL}/events/${eventId}`);
-        const data = response.data;
-
-        console.log("Fetched event data:", data);
+        let data;
+        
+        if (hasFullEventData) {
+          // Use the passed event data directly
+          data = selectedEventTypeObj;
+          console.log("Using passed event data:", data);
+        } else {
+          // Fetch from server
+          const response = await axios.get(`${BACKEND_URL}/events/${eventId}`);
+          data = response.data;
+          console.log("Fetched event data:", data);
+        }
 
         if (data.date) {
           const dt = new Date(data.date);
@@ -512,7 +553,7 @@ const fetchPeople = async (q) => {
     };
 
     fetchEventData();
-  }, [eventId]);
+  }, [eventId, selectedEventTypeObj]);
 
   const handleChange = (field, value) => {
     setFormData((prev) => {

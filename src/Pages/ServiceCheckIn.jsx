@@ -564,9 +564,13 @@ function ServiceCheckIn() {
   const menuEvents = useMemo(() => {
     const filtered = getFilteredEvents();
     const list = [...filtered];
+    // Only preserve currentEventId in the dropdown if it's actually a valid today event.
+    // Don't re-add stale/closed events from previous weeks.
     if (currentEventId && !list.some(ev => ev.id === currentEventId)) {
       const cur = events.find(ev => ev.id === currentEventId);
-      if (cur) list.unshift(cur);
+      if (cur && getFilteredEvents([cur]).length > 0) {
+        list.unshift(cur);
+      }
     }
     return list;
   }, [events, currentEventId, getFilteredEvents]);
@@ -935,7 +939,10 @@ const sortedFilteredAttendees = useMemo(() => {
         }
       }
 
-      commitRealTimeData(await fetchRealTimeEventData(currentEventId));
+      // Don't immediately refetch - the "attendanceUpdated" event listener
+      // will trigger a refetch once the server has processed the change.
+      // Immediate refetch causes a race condition where stale server data
+      // overwrites the optimistic update, making the check-in flicker.
     } catch (err) {
       setRealTimeData(prev => (isCurrentlyPresent ? addToPresent(prev) : removeFromPresent(prev)));
       toast.error(err.message || "Failed to toggle check-in");
@@ -1639,7 +1646,7 @@ const sortedFilteredAttendees = useMemo(() => {
           <Paper variant="outlined" sx={{ boxShadow: 3, overflow: "hidden", width: "100%", height: gridHeight, minHeight: gridMinHeight }}>
             <DataGrid
               rows={sortedFilteredAttendees} columns={mainColumns}
-              getRowId={(row) => row.id || row._id || row.email || `temp-${Math.random()}`}
+              getRowId={(row) => row._id || row.id || row.email || `temp-${row._id || row.email || 'unknown'}`}
               loading={isLoadingPeople} pagination
               paginationModel={{ page, pageSize: rowsPerPage }}
               onPaginationModelChange={model => { setPage(model.page); setRowsPerPage(model.pageSize); }}
