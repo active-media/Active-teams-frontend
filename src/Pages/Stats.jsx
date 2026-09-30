@@ -81,7 +81,13 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 // Add this memoized component OUTSIDE StatsDashboard
 const TaskGroupRow = React.memo(
   ({ group, isExpanded, onToggle, formatDate }) => {
-    const { user, tasks, totalCount, completedCount, incompleteCount } = group;
+    const {
+      user,
+      tasks = group.Tasks || [],
+      totalCount,
+      completedCount,
+      incompleteCount,
+    } = group;
     const key = user.email || user.fullName;
 
     return (
@@ -292,6 +298,8 @@ const StatsDashboard = () => {
 
   const [createEventModalOpen, setCreateEventModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
+  const [taskFilter, setTaskFilter] = useState("all");
+  const [selectedTaskPerson, setSelectedTaskPerson] = useState("all");
   const [expandedUsers, setExpandedUsers] = useState([]);
   const [newEventData, setNewEventData] = useState({
     eventName: "",
@@ -316,7 +324,7 @@ const StatsDashboard = () => {
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [viewMoreModalOpen, setViewMoreModalOpen] = useState(false);
   const [cells, setCells] = useState([]);
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [_isDownloading, setIsDownloading] = useState(false);
   const [cellsLoading, setCellsLoading] = useState(false);
   const [cellsError, setCellsError] = useState(null);
   const { authFetch } = useContext(AuthContext);
@@ -524,7 +532,7 @@ const StatsDashboard = () => {
         console.log("fetchOverdueCells finished / released lock");
       }
     },
-    [authFetch],
+    [authFetch, period],
   );
   const isOverdue = useCallback((cell) => {
     if (!cell) return false;
@@ -589,7 +597,14 @@ const StatsDashboard = () => {
           overdueCells: data.overdueCells || data.overdue_cells || [],
           allTasks: data.allTasks || [],
           allUsers: data.allUsers || [],
-          groupedTasks: data.groupedTasks || [],
+          groupedTasks: (data.groupedTasks || []).map((group) => ({
+            ...group,
+            tasks: Array.isArray(group.tasks)
+              ? group.tasks
+              : Array.isArray(group.Tasks)
+                ? group.Tasks
+                : [],
+          })),
           dateRange: data.date_range || { start: "", end: "" },
           loading: false,
           error: null,
@@ -643,7 +658,76 @@ const StatsDashboard = () => {
     });
   }, [cells]);
 
-  const filteredTasks = useMemo(() => stats.allTasks, [stats.allTasks]);
+  const taskPeople = useMemo(
+    () =>
+      stats.groupedTasks
+        .map((group) => group.user)
+        .filter(Boolean)
+        .sort((a, b) => (a.fullName || "").localeCompare(b.fullName || "")),
+    [stats.groupedTasks],
+  );
+
+  const filteredTasks = useMemo(() => {
+    return stats.allTasks.filter((task) => {
+      const status = task.status?.toLowerCase?.() || "";
+      const isCompleted = task.is_completed || ["completed", "done", "closed", "finished"].includes(status);
+      const isConsolidation =
+        task.is_consolidation_task || task.taskType?.toLowerCase?.() === "consolidation";
+      const matchesFilter =
+        taskFilter === "all" ||
+        (taskFilter === "completed" && isCompleted) ||
+        (taskFilter === "pending" && !isCompleted) ||
+        (taskFilter === "incomplete" && !isCompleted) ||
+        (taskFilter === "consolidation" && isConsolidation);
+      const matchesPerson =
+        selectedTaskPerson === "all" ||
+        task.assignedfor === selectedTaskPerson ||
+        task.assignedfor ===
+          taskPeople.find(
+            (person) => (person.email || person.fullName) === selectedTaskPerson,
+          )?.fullName;
+
+      return matchesFilter && matchesPerson;
+    });
+  }, [stats.allTasks, taskFilter, selectedTaskPerson, taskPeople]);
+
+  const visibleGroupedTasks = useMemo(() => {
+    const visibleIds = new Set(filteredTasks.map((task) => task._id));
+
+    return stats.groupedTasks
+      .map((group) => ({
+        ...group,
+        tasks: (group.tasks || group.Tasks || []).filter((task) =>
+          visibleIds.has(task._id),
+        ),
+      }))
+      .filter((group) => group.tasks.length > 0);
+  }, [stats.groupedTasks, filteredTasks]);
+
+  const taskFilterCounts = useMemo(() => {
+    const count = (filter) =>
+      stats.allTasks.filter((task) => {
+        const status = task.status?.toLowerCase?.() || "";
+        const isCompleted = task.is_completed || ["completed", "done", "closed", "finished"].includes(status);
+        const isConsolidation =
+          task.is_consolidation_task || task.taskType?.toLowerCase?.() === "consolidation";
+        return (
+          (filter === "all" ||
+            (filter === "completed" && isCompleted) ||
+            (filter !== "completed" && filter !== "consolidation" && !isCompleted) ||
+            (filter === "consolidation" && isConsolidation)) &&
+          (selectedTaskPerson === "all" || task.assignedfor === selectedTaskPerson)
+        );
+      }).length;
+
+    return {
+      all: count("all"),
+      pending: count("pending"),
+      completed: count("completed"),
+      incomplete: count("incomplete"),
+      consolidation: count("consolidation"),
+    };
+  }, [stats.allTasks, selectedTaskPerson]);
   const filteredEvents = useMemo(() => stats.events, [stats.events]);
 
   const getPeriodDisplayText = (periodType) => {
@@ -684,7 +768,7 @@ const StatsDashboard = () => {
   };
 
   // Excel Download Function
-  const downloadFilteredStats = () => {
+  const _downloadFilteredStats = () => {
     try {
       const currentPeriod = getPeriodDisplayText(period);
       const today = new Date().toISOString().split("T")[0];
@@ -840,8 +924,47 @@ const StatsDashboard = () => {
       toast.error("Error creating Excel file: " + error.message);
     }
   };
-  const handleDownloadCalendar = useCallback(() => {
-    if (isDownloading) return;
+
+  const downloadTasksExcel = () => {
+    if (filteredTasks.length === 0) {
+      toast.info("No tasks data to export for the selected filters.");
+      return;
+    }
+
+    const rows = filteredTasks.map((task) => ({
+      "Task ID": task._id || "",
+      "Task Name": task.name || task.taskType || "Untitled Task",
+      "Task Type": task.type || task.taskType || "",
+      "Contact Person": task.contacted_person?.name || "",
+      "Assigned To": task.assignedfor || "",
+      "Due Date": task.followup_date
+        ? formatDateForExcel(task.followup_date)
+        : "",
+      Status: task.status || "pending",
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Tasks");
+    const workbookOutput = XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array",
+      bookSST: false,
+    });
+    const blob = new Blob([workbookOutput], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = `tasks_${period}_${new Date().toISOString().split("T")[0]}.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${rows.length} tasks to Excel`);
+  };
+
+  const _handleDownloadCalendar = useCallback(() => {
+    if (_isDownloading) return;
 
     try {
       setIsDownloading(true);
@@ -900,7 +1023,7 @@ const StatsDashboard = () => {
     } finally {
       setIsDownloading(false);
     }
-  }, [calendarEvents, formatDateForExcel, isDownloading]);
+  }, [calendarEvents, formatDateForExcel, _isDownloading]);
 
   useEffect(() => {
     fetchCalendarEvents();
@@ -1464,7 +1587,7 @@ const StatsDashboard = () => {
       >
         <Box>
           <Typography variant="h5" fontWeight="medium">
-            Dashboard
+            Stats Dashboard
           </Typography>
           {stats.dateRange.start && stats.dateRange.end && (
             <Typography variant="body2" color="text.secondary">
@@ -1474,62 +1597,13 @@ const StatsDashboard = () => {
           )}
         </Box>
 
-        <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
-          <FormControl size="small" sx={{ minWidth: 140 }}>
-            <InputLabel>Period</InputLabel>
-            <Select
-              value={period}
-              label="Period"
-              onChange={handlePeriodChange}
-              disabled={stats.loading}
-            >
-              {periodOptions.map((opt) => (
-                <MenuItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          {/* CHANGE: Refresh should refresh BOTH stats & cells */}
-          <Tooltip title="Refresh">
-            <IconButton
-              onClick={() => {
-                //CHANGE: forceRefresh=true so both fetches run even if a previous call is mid-flight.
-                fetchStats(true);
-                fetchOverdueCells(true);
-              }}
-              disabled={stats.loading || cellsLoading}
-            >
-              <Refresh />
-            </IconButton>
-          </Tooltip> 
-          {/* Download button should download based  */}
-          <Button
-            size="small"
-            onClick={downloadFilteredStats}
-            startIcon={ <Download />}
-            variant="outlined"
-            disabled={
-              stats.loading ||
-              cellsLoading ||
-              (activeTab === 0
-                ? filteredOverdueCells.length === 0
-                : activeTab === 1
-                ? filteredTasks.length === 0
-                : filteredEvents.length === 0)
-            }
-          >
-            {isDownloading ? "Downloading..." : "Download"}
-          </Button>
-        </Box>
       </Box>
 
       {(stats.loading || cellsLoading) && <LinearProgress sx={{ mb: 3 }} />}
 
       {/* Stat Cards */}
-      <Grid container spacing={3} mb={4}>
-        <Grid item xs={12} sm={6} md={4}>
+      <Grid container spacing={2} mb={3}>
+        <Grid item xs={6} sm={3} md={2.5}>
           <StatCard
             title="Overdue Cells"
             color="warning"
@@ -1538,7 +1612,7 @@ const StatsDashboard = () => {
             icon={<Warning />}
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={4}>
+        <Grid item xs={6} sm={3} md={2.5}>
           <StatCard
             title="Tasks Due"
             subtitle={getPeriodDisplayText(period)}
@@ -1557,9 +1631,9 @@ const StatsDashboard = () => {
           value={activeTab}
           onChange={(_, v) => setActiveTab(v)}
         >
-          <Tab label={`Overdue Cells (${filteredOverdueCells.length})`} />
-          <Tab label={`Tasks (${filteredTasks.length})`} />
-          <Tab label={`Calendar (${calendarEvents.length} events)`} />
+          <Tab label={`OVERDUE CELLS (${filteredOverdueCells.length})`} />
+          <Tab label={`TASKS (${stats.allTasks.length})`} />
+          <Tab label={`CALENDAR (${calendarEvents.length} EVENTS)`} />
         </Tabs>
       </Paper>
 
@@ -1595,12 +1669,21 @@ const StatsDashboard = () => {
                 </Typography>
               </Box>
               <Box display="flex" gap={1.5} alignItems="center">
-                <Chip
-                  label={getPeriodDisplayText(period)}
-                  color="warning"
-                  size="small"
-                  variant="outlined"
-                />
+                <FormControl size="small" sx={{ minWidth: 150 }}>
+                  <InputLabel id="overdue-period-label">Period</InputLabel>
+                  <Select
+                    labelId="overdue-period-label"
+                    value={period}
+                    label="Period"
+                    onChange={handlePeriodChange}
+                  >
+                    {periodOptions.map((option) => (
+                      <MenuItem key={option.value} value={option.value}>
+                        {option.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
                 <Button
                   color="warning"
                   variant="outlined"
@@ -1827,6 +1910,7 @@ const StatsDashboard = () => {
         )}
 
         {/* TASKS TAB */}
+               {/* TASKS TAB */}
         {activeTab === 1 && (
           <Paper
             sx={{
@@ -1834,33 +1918,107 @@ const StatsDashboard = () => {
               height: "calc(100vh - 320px)",
               display: "flex",
               flexDirection: "column",
+              borderRadius: 2,
+              boxShadow: 1,
             }}
           >
+            {/* Top Filter Row: Period, People, Export */}
             <Box
               sx={{
                 display: "flex",
-                justifyContent: "space-between",
-                alignItems: isXsDown ? "flex-start" : "center",
-                mb: { xs: 2.5, md: 3 },
-                flexShrink: 0,
-                flexDirection: isXsDown ? "column" : "row",
-                gap: isXsDown ? 1 : 0,
+                justifyContent: "flex-start",
+                alignItems: "center",
+                mb: 2,
+                flexWrap: "wrap",
+                gap: 1.5,
               }}
             >
-              <Box>
-                <Typography variant="subtitle1" gutterBottom>
-                  All Tasks by Person ({stats.groupedTasks.length} people •{" "}
-                  {filteredTasks.length} total)
-                </Typography>
-              </Box>
-              <Chip
-                label={`Period: ${getPeriodDisplayText(period)}`}
-                color="secondary"
+              <FormControl size="small" sx={{ minWidth: 140 }}>
+                <InputLabel>Period</InputLabel>
+                <Select
+                  value={period}
+                  label="Period"
+                  onChange={handlePeriodChange}
+                  disabled={stats.loading}
+                >
+                  {periodOptions.map((opt) => (
+                    <MenuItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControl size="small" sx={{ minWidth: 150 }}>
+                <InputLabel>All People</InputLabel>
+                <Select
+                  value={selectedTaskPerson}
+                  label="All People"
+                  onChange={(event) => setSelectedTaskPerson(event.target.value)}
+                >
+                  <MenuItem value="all">All People</MenuItem>
+                  {taskPeople.map((person) => (
+                    <MenuItem key={person.email || person.fullName} value={person.email || person.fullName}>
+                      {person.fullName}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <Button
                 size="small"
                 variant="outlined"
-              />
+                startIcon={<Download />}
+                onClick={downloadTasksExcel}
+                disabled={filteredTasks.length === 0}
+                sx={{ textTransform: "none", height: 40 }}
+              >
+                Export CSV
+              </Button>
             </Box>
 
+            {/* Bottom Filter Row: Tabs */}
+            <Tabs
+              value={taskFilter}
+              onChange={(_, value) => setTaskFilter(value)}
+              variant={isSmDown ? "scrollable" : "standard"}
+              scrollButtons="auto"
+              sx={{
+                minHeight: 36,
+                mb: 1.5,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                "& .MuiTabs-flexContainer": {
+                  justifyContent: "flex-start", // Aligns tabs to the left like the screenshot
+                },
+                "& .MuiTab-root": {
+                  minHeight: 36,
+                  minWidth: "auto",
+                  px: { xs: 1, sm: 1.5, md: 2 },
+                  py: 0.5,
+                  fontSize: "0.75rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  color: "text.secondary",
+                  "&.Mui-selected": {
+                    color: "text.primary",
+                    fontWeight: 600,
+                  },
+                },
+                "& .MuiTabs-indicator": {
+                  backgroundColor: "primary.main",
+                  height: 3,
+                },
+              }}
+            >
+              <Tab value="all" label={`ALL CONTACTS (${taskFilterCounts.all})`} />
+              <Tab value="pending" label={`PENDING (${taskFilterCounts.pending})`} />
+              <Tab value="completed" label={`COMPLETED (${taskFilterCounts.completed})`} />
+              <Tab value="incomplete" label={`INCOMPLETE (${taskFilterCounts.incomplete})`} />
+              <Tab value="consolidation" label={`CONSOLIDATION (${taskFilterCounts.consolidation})`} />
+            </Tabs>
+
+            {/* Task List Content */}
             <Box
               sx={{
                 flexGrow: 1,
@@ -1878,7 +2036,7 @@ const StatsDashboard = () => {
                 "&::-webkit-scrollbar-thumb:hover": { background: "#555" },
               }}
             >
-              {stats.groupedTasks.length === 0 && !stats.loading ? (
+              {visibleGroupedTasks.length === 0 && !stats.loading ? (
                 <Box
                   sx={{
                     textAlign: "center",
@@ -1892,12 +2050,12 @@ const StatsDashboard = () => {
                   <Task sx={{ fontSize: 48, opacity: 0.3, mb: 1.5 }} />
                   <Typography variant="body1">No tasks found</Typography>
                   <Typography variant="caption" sx={{ fontSize: "0.75rem" }}>
-                    No tasks found for {getPeriodDisplayText(period)}.
+                    No tasks found for the selected filters.
                   </Typography>
                 </Box>
               ) : (
                 <Stack spacing={1.5}>
-                  {stats.groupedTasks.map((group) => {
+                  {visibleGroupedTasks.map((group) => {
                     const key = group.user.email || group.user.fullName;
                     return (
                       <TaskGroupRow
@@ -1949,16 +2107,7 @@ const StatsDashboard = () => {
                   <Typography variant="subtitle1" fontWeight="medium">
                     Event Calendar ({calendarEvents.length} events total)
                   </Typography>
-                <Box display="flex" gap={1}>       
-              <Button
-                  variant="outlined"
-                 size="small"
-                 startIcon={isDownloading ? <CircularProgress size={14} /> : <Download />}
-                 onClick={handleDownloadCalendar}
-                 disabled={isDownloading || calendarEvents.length === 0}
-                >
-                  {isDownloading ? "Downloading..." : "Download"}
-                  </Button>  
+                <Box display="flex" gap={1}>
                   <Button
                     variant="contained"
                     size="small"
