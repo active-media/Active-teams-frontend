@@ -7,6 +7,7 @@ import { toast } from "react-toastify";
 import ServiceCheckIn from "../../src/Pages/ServiceCheckIn";
 import {
   TODAY,
+  jsonResponse,
   makeAuthFetch,
   makeEvent,
   makePerson,
@@ -577,5 +578,130 @@ describe("ServiceCheckIn page actions", () => {
       expect(screen.getByText("Ben Ndlovu")).toBeInTheDocument();
       expect(screen.queryByText("Amy Ndlovu")).not.toBeInTheDocument();
     });
+  });
+});
+
+// ── Event History paging ─────────────────────────────────────────────────────
+// The page used to ask for a single `limit=500` and never page, so the history
+// only held the most recent ~14 weeks of a dataset that reaches back two years.
+// It now asks the server for global events only and walks the pages.
+describe("ServiceCheckIn event history paging", () => {
+  beforeEach(() => {
+    window.globalPeopleCache = null;
+    window.globalCacheTimestamp = null;
+    vi.clearAllMocks();
+  });
+
+  // A closed service on a given date, so getFilteredClosedEvents keeps it.
+  const service = (id, name, date, extra = {}) =>
+    makeEvent({
+      id,
+      eventName: name,
+      date,
+      rawDate: date,
+      status: "complete",
+      isGlobal: true,
+      eventType: "Church Service",
+      ...extra,
+    });
+
+  const pagingRoutes = (pages) =>
+    makeAuthFetch([
+      {
+        method: "GET",
+        url: "/events/eventsdata",
+        handler: (url) => {
+          const n = Number(
+            new URL(url, "https://test.local").searchParams.get("page") || 1,
+          );
+          const page = pages[n - 1];
+          return page
+            ? jsonResponse(page)
+            : jsonResponse({ detail: `no page ${n}` }, 404);
+        },
+      },
+      { method: "GET", url: "/cache/people", data: { success: true, cached_data: [amy] } },
+      { method: "POST", url: "/cache/people/refresh", data: { success: true } },
+      { method: "GET", url: "/service-checkin/real-time-data", data: makeRealtime() },
+    ]);
+
+  const eventDataCalls = (routes) =>
+    routes.mock.calls
+      .map(([url]) => String(url))
+      .filter((u) => u.includes("/events/eventsdata"));
+
+  const openHistory = async () => {
+    fireEvent.click(screen.getByRole("tab", { name: /event history/i }));
+    return screen.findByTestId("event-history");
+  };
+
+  test("asks the server for global events instead of filtering client side", async () => {
+    const routes = pagingRoutes([
+      { events: [service("a", "Service A", "2026-09-20")], has_more: false },
+    ]);
+    renderPage(routes);
+    await openHistory();
+
+    await waitFor(() => expect(eventDataCalls(routes).length).toBeGreaterThan(0));
+    for (const url of eventDataCalls(routes)) {
+      expect(url).toContain("is_global=true");
+    }
+  });
+
+  test("walks every page and keeps the events from all of them", async () => {
+    const routes = pagingRoutes([
+      { events: [service("a", "Service A", "2026-09-20")], has_more: true },
+      { events: [service("b", "Service B", "2025-03-16")], has_more: true },
+      { events: [service("c", "Service C", "2024-10-14")], has_more: false },
+    ]);
+    renderPage(routes);
+    const history = await openHistory();
+
+    // The whole point: the older pages are reachable, not just the first 500.
+    expect(await screen.findByTestId("history-a")).toBeInTheDocument();
+    expect(await screen.findByTestId("history-b")).toBeInTheDocument();
+    expect(await screen.findByTestId("history-c")).toBeInTheDocument();
+    await waitFor(() => expect(history).toHaveAttribute("data-count", "3"));
+
+    const pages = eventDataCalls(routes).map((u) =>
+      new URL(u, "https://test.local").searchParams.get("page"),
+    );
+    expect(pages).toEqual(["1", "2", "3"]);
+  });
+
+  test("stops after one request when the server says there is no more", async () => {
+    const routes = pagingRoutes([
+      { events: [service("a", "Service A", "2026-09-20")], has_more: false },
+    ]);
+    renderPage(routes);
+    await openHistory();
+    await screen.findByTestId("history-a");
+
+    await waitFor(() => expect(eventDataCalls(routes)).toHaveLength(1));
+  });
+
+  test("a later page failing keeps the pages that already loaded", async () => {
+    const routes = pagingRoutes([
+      { events: [service("a", "Service A", "2026-09-20")], has_more: true },
+      // page 2 is deliberately absent, so the stub 404s.
+    ]);
+    renderPage(routes);
+    const history = await openHistory();
+
+    // Partial history beats an empty page and beats an error toast.
+    expect(await screen.findByTestId("history-a")).toBeInTheDocument();
+    await waitFor(() => expect(history).toHaveAttribute("data-count", "1"));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(eventDataCalls(routes)).toHaveLength(2);
+  });
+
+  test("a first page failing surfaces an error and loads nothing", async () => {
+    const routes = pagingRoutes([]);
+    renderPage(routes);
+
+    await waitFor(() => expect(eventDataCalls(routes)).toHaveLength(1));
+    // The mount path owns its own message, distinct from the refresh path's.
+    expect(toast.error).toHaveBeenCalledWith("Failed to load initial data.");
+    expect(screen.queryByTestId("event-history")).not.toBeInTheDocument();
   });
 });

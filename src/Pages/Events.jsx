@@ -126,6 +126,11 @@ const styles = {
     textTransform: "uppercase",
     whiteSpace: "nowrap",
   },
+  statusBadgeAll: {
+    backgroundColor: "#fff",
+    color: "#333",
+    borderColor: "#333",
+  },
   statusBadgeIncomplete: {
     backgroundColor: "#FFA500",
     color: "#fff",
@@ -1047,7 +1052,17 @@ const Events = () => {
   const isLeader = normalizedRole === "leader" && !isLeaderAt12;
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-  const DEFAULT_API_START_DATE = "2025-11-30";
+  // Earliest date the API is asked for. This was hardcoded to "2025-11-30",
+  // which silently hid every event captured before that date from the Events
+  // list with no way for a user to widen it.
+  //
+  // The backend expands each recurring event into one instance per week in the
+  // window, so this value is the main cost lever. Measured against production:
+  //   2025-01-01 -> 3,202 instances    2015-01-01 -> 18,217 instances
+  // The oldest event in the database is 2025-12-25, so 2025-01-01 covers all
+  // existing history while keeping the instance count bounded. Revisit before
+  // 2027, or make this a rolling window.
+  const DEFAULT_API_START_DATE = "2025-01-01";
 
   const [showFilter, setShowFilter] = useState(false);
   const [events, setEvents] = useState([]);
@@ -1067,7 +1082,9 @@ const Events = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
-  const [selectedStatus, setSelectedStatus] = useState("incomplete");
+  // "all" by default: defaulting to "incomplete" hid every completed and
+  // did-not-meet event until the user manually changed the filter.
+  const [selectedStatus, setSelectedStatus] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -1498,8 +1515,15 @@ const fetchEventsFilters = (filters) => {
     page: filters.page || currentPage,
     limit: filters.limit || rowsPerPage,
     start_date: filters.start_date || DEFAULT_API_START_DATE,
-    status: filters.status || selectedStatus || "incomplete",
   };
+
+  // Never send status="all". The backend treats any non-empty status as an exact
+  // match against the computed instance status, so "all" would match nothing and
+  // blank out the whole list. Omit the key instead.
+  const requestedStatus = filters.status || selectedStatus;
+  if (requestedStatus && requestedStatus !== "all") {
+    params.status = requestedStatus;
+  }
 
   if (filters.search) params.search = filters.search;
   if (filters.event_type) {
@@ -1681,9 +1705,12 @@ const fetchEventTypes = useCallback(async () => {
       }
     }, [fetchEventTypes, currentUser?.email]);
     useEffect(() => {
-      // When event type filter changes, reset to "incomplete" status
+      // When the event type filter changes, drop any status filter rather than
+      // imposing one. This previously reset to "incomplete", which meant that
+      // opening any event type silently hid every completed and did-not-meet
+      // event until the user manually re-selected a status.
       if (selectedEventTypeFilter && selectedEventTypeFilter !== "all") {
-        setSelectedStatus("incomplete");
+        setSelectedStatus("all");
       }
     }, [selectedEventTypeFilter]);
 
@@ -3425,7 +3452,11 @@ const getFilteredEventTypes = (allEventTypes) => {
       limit: 100,
       must_paginate: false,
       start_date: DEFAULT_API_START_DATE,
-      status: selectedStatus || "incomplete",
+      // "all" must not be sent: the backend treats any non-empty status as an
+      // exact match, so status=all would filter out every event.
+      ...(selectedStatus && selectedStatus !== "all"
+        ? { status: selectedStatus }
+        : {}),
       event_type:
         selectedEventTypeFilter === "all" ? "CELLS" : selectedEventTypeFilter,
     };
@@ -3520,6 +3551,14 @@ const getFilteredEventTypes = (allEventTypes) => {
     DEFAULT_API_START_DATE,
   }) => {
     const statuses = [
+      {
+        // Neutral option. Without it the three badges below imply a status is
+        // always selected, and the user has no way back to seeing every event
+        // once they have narrowed to one.
+        value: "all",
+        label: "ALL EVENTS",
+        style: styles.statusBadgeAll,
+      },
       {
         value: "incomplete",
         label: "INCOMPLETE",

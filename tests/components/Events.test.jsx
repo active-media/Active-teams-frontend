@@ -352,7 +352,9 @@ describe("Events page actions", () => {
       expect(screen.getByTestId("datagrid")).toBeInTheDocument();
       const urls = eventsDataCalls(routes);
       expect(urls.some((u) => u.includes("event_type=Service"))).toBe(true);
-      expect(urls.some((u) => u.includes("status=incomplete"))).toBe(true);
+      // Entering a type used to force status=incomplete, hiding every completed
+      // and did-not-meet event. It must now leave the status unfiltered.
+      expect(urls.some((u) => u.includes("status="))).toBe(false);
       expect(screen.queryByText("Select Event Type")).not.toBeInTheDocument();
     });
 
@@ -483,6 +485,66 @@ describe("Events page actions", () => {
           eventsDataCalls(routes, (u) => u.includes(`status=${status}`)).length,
         ).toBeGreaterThan(0),
       );
+    });
+
+    // The backend treats any non-empty status as an exact match against the
+    // computed instance status, so sending status=all matches nothing and
+    // blanks the list. Two call sites used to send it verbatim.
+    test("the initial fetch never sends status=all", async () => {
+      const routes = eventsRoutes();
+      await openEventsView(routes);
+
+      const calls = eventsDataCalls(routes);
+      expect(calls.length).toBeGreaterThan(0);
+      for (const url of calls) {
+        expect(url).not.toMatch(/[?&]status=all/);
+      }
+    });
+
+    test("the initial fetch defaults to no status filter, not incomplete", async () => {
+      const routes = eventsRoutes();
+      await openEventsView(routes);
+
+      // Previously selectedStatus initialised to "incomplete", so completed and
+      // did-not-meet events were hidden until the user changed the filter.
+      const calls = eventsDataCalls(routes);
+      expect(calls.length).toBeGreaterThan(0);
+      for (const url of calls) {
+        expect(url).not.toMatch(/status=incomplete/);
+      }
+    });
+
+    test("the ALL EVENTS status badge refetches without a status param", async () => {
+      const routes = eventsRoutes();
+      await openEventsView(routes);
+      routes.mockClear();
+
+      fireEvent.click(screen.getByText("ALL EVENTS"));
+
+      await waitFor(() => expect(eventsDataCalls(routes).length).toBeGreaterThan(0));
+      for (const url of eventsDataCalls(routes)) {
+        expect(url).not.toMatch(/[?&]status=/);
+      }
+    });
+
+    test("narrowing to a status, then back to ALL EVENTS, restores the full list", async () => {
+      const routes = eventsRoutes();
+      await openEventsView(routes);
+
+      fireEvent.click(screen.getByText("COMPLETE"));
+      await waitFor(() =>
+        expect(
+          eventsDataCalls(routes, (u) => u.includes("status=complete")).length,
+        ).toBeGreaterThan(0),
+      );
+
+      routes.mockClear();
+      fireEvent.click(screen.getByText("ALL EVENTS"));
+
+      await waitFor(() => expect(eventsDataCalls(routes).length).toBeGreaterThan(0));
+      for (const url of eventsDataCalls(routes)) {
+        expect(url).not.toMatch(/[?&]status=/);
+      }
     });
 
     test("Next > / < Previous walk the pages", async () => {

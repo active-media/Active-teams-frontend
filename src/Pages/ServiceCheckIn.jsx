@@ -408,6 +408,38 @@ function ServiceCheckIn() {
     }),
     []);
 
+  // Every event this page renders is a global one, so the request asks for
+  // exactly those instead of downloading the whole grid and discarding the rest.
+  //
+  // The endpoint paginates and this used to ask for a single page of 500, so the
+  // Event History only ever held the most recent ~14 weeks: it ran out at
+  // 2026-06-23 while the data goes back to 2024-10-14, which is why older
+  // Church Service and Conference services never appeared. Asking for is_global
+  // narrows 3,628 rows down to the 1,261 that belong here, so this is three
+  // requests rather than eight.
+  const SERVICE_EVENTS_PAGE_SIZE = 500;
+  const MAX_SERVICE_EVENT_PAGES = 12; // 6,000 rows; a stop against a bad has_more.
+
+  const fetchAllServiceEvents = useCallback(async () => {
+    const collected = [];
+    for (let page = 1; page <= MAX_SERVICE_EVENT_PAGES; page += 1) {
+      const res = await authFetch(
+        `${BASE_URL}/events/eventsdata?limit=${SERVICE_EVENTS_PAGE_SIZE}` +
+        `&page=${page}&start_date=2024-10-10&is_global=true`,
+      );
+      if (!res.ok) {
+        // A later page failing should not throw away the pages that worked.
+        if (collected.length) break;
+        throw new Error(`eventsdata page ${page} failed (${res.status})`);
+      }
+      const data = await res.json();
+      const rows = Array.isArray(data.events) ? data.events : [];
+      collected.push(...rows);
+      if (!data.has_more || rows.length === 0) break;
+    }
+    return collected;
+  }, [authFetch]);
+
   const hasInitialized = useRef(false);
   useEffect(() => {
     if (hasInitialized.current) return;
@@ -426,10 +458,9 @@ function ServiceCheckIn() {
           setHasDataLoaded(true);
           setIsLoadingPeople(false);
 
-          const evRes = await authFetch(`${BASE_URL}/events/eventsdata?limit=500&start_date=2024-10-10`);
-          if (evRes.ok) {
-            const evData = await evRes.json();
-            const transformed = transformEvents(evData.events || [], normalisedPeople);
+          const evRows = await fetchAllServiceEvents();
+          {
+            const transformed = transformEvents(evRows, normalisedPeople);
             const valid = filterValidEvents(transformed);
             setEvents(valid);
             setIsLoadingEvents(false);
@@ -446,8 +477,8 @@ function ServiceCheckIn() {
           }
         } else {
           setIsLoadingPeople(true);
-          const [evRes, peopleRes] = await Promise.all([
-            authFetch(`${BASE_URL}/events/eventsdata?limit=500&start_date=2024-10-10`),
+          const [evRows, peopleRes] = await Promise.all([
+            fetchAllServiceEvents(),
             authFetch(`${BASE_URL}/cache/people`),
           ]);
 
@@ -464,9 +495,8 @@ function ServiceCheckIn() {
           }
           setIsLoadingPeople(false);
 
-          if (evRes.ok) {
-            const evData = await evRes.json();
-            const transformed = transformEvents(evData.events || [], normalisedPeople);
+          {
+            const transformed = transformEvents(evRows, normalisedPeople);
             const valid = filterValidEvents(transformed);
             setEvents(valid);
             setIsLoadingEvents(false);
@@ -490,19 +520,17 @@ function ServiceCheckIn() {
         setIsLoadingHistory(false);
       }
     })();
-  }, [authFetch, filterValidEvents, transformEvents]);
+  }, [authFetch, fetchAllServiceEvents, filterValidEvents, transformEvents]);
 
   const fetchEvents = useCallback(async () => {
     try {
-      const res = await authFetch(`${BASE_URL}/events/eventsdata?limit=500&start_date=2024-10-10`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const transformed = transformEvents(data.events || [], attendees);
+      const rows = await fetchAllServiceEvents();
+      const transformed = transformEvents(rows, attendees);
       const valid = filterValidEvents(transformed);
       setEvents(valid);
     } catch { toast.error("Failed to fetch events. Please try again."); }
     finally { setIsLoadingEvents(false); setIsLoadingHistory(false); }
-  }, [authFetch, attendees, transformEvents, filterValidEvents]);
+  }, [fetchAllServiceEvents, attendees, transformEvents, filterValidEvents]);
 
   useEffect(() => {
     if (!search.trim()) setSortModel([]);
