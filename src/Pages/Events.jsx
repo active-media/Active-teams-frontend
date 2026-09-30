@@ -20,6 +20,7 @@ import {
   LinearProgress,
   TextField,
   InputAdornment,
+  Select,
 } from "@mui/material";
 import { DataGrid, GridToolbar } from "@mui/x-data-grid";
 import SearchIcon from "@mui/icons-material/Search";
@@ -1115,6 +1116,17 @@ const Events = () => {
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
   const DEFAULT_API_START_DATE = "2025-11-30";
 
+  // Options for the date filter. "all" keeps the historical behaviour of
+  // fetching from DEFAULT_API_START_DATE with no upper bound.
+  const DATE_FILTER_OPTIONS = [
+    { value: "all", label: "All Dates" },
+    { value: "thisWeek", label: "This Week" },
+    { value: "thisMonth", label: "This Month" },
+    { value: "previousWeek", label: "Previous Week" },
+    { value: "previousMonth", label: "Previous Month" },
+    { value: "custom", label: "Custom Range" },
+  ];
+
   const [showFilter, setShowFilter] = useState(false);
   const [events, setEvents] = useState([]);
   const [, setActiveFilters] = useState({});
@@ -1135,6 +1147,11 @@ const Events = () => {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [selectedStatus, setSelectedStatus] = useState("incomplete");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Date range filter
+  const [dateFilter, setDateFilter] = useState("all");
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
@@ -1501,7 +1518,7 @@ const normalizeEventAttendance = (event) => {
 
       toast.info("Preparing export — fetching events...", { toastId: TOAST_ID, autoClose: false });
 
-      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeKey}`;
       let sourceEvents =
         (eventsCache.current && eventsCache.current[cacheKey]) ||
         (allCurrentEvents && allCurrentEvents.length ? allCurrentEvents : null) ||
@@ -1609,13 +1626,81 @@ const allEventTypes = useMemo(() => {
   return typeNames;
 }, [eventTypes]);
 
+  /**
+   * Resolves the active date filter into { start_date, end_date } params.
+   * Returns an empty object for "all" so callers fall back to
+   * DEFAULT_API_START_DATE (the pre-existing behaviour).
+   *
+   * Weeks start on Monday and dates are formatted as en-CA ISO strings so
+   * they line up with the other screens (Stats / DailyTasks).
+   */
+  const resolveDateRange = useCallback(() => {
+    const iso = (d) =>
+      d.toLocaleDateString("en-CA", { timeZone: "Africa/Johannesburg" });
+    const now = new Date();
+
+    const mondayOf = (d) => {
+      const copy = new Date(d);
+      copy.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      return copy;
+    };
+
+    switch (dateFilter) {
+      case "thisWeek":
+        return { start_date: iso(mondayOf(now)), end_date: iso(now) };
+
+      case "thisMonth":
+        return {
+          start_date: iso(new Date(now.getFullYear(), now.getMonth(), 1)),
+          end_date: iso(now),
+        };
+
+      case "previousWeek": {
+        const lastWeek = new Date(now);
+        lastWeek.setDate(now.getDate() - 7);
+        return { start_date: iso(mondayOf(lastWeek)), end_date: iso(lastWeek) };
+      }
+
+      case "previousMonth": {
+        const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const prevEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+        return { start_date: iso(prevStart), end_date: iso(prevEnd) };
+      }
+
+      case "custom": {
+        // Inactive until at least one bound is chosen, so picking "Custom
+        // Range" doesn't immediately blank the table or silently ignore it.
+        if (!customStartDate && !customEndDate) return {};
+        const range = {};
+        if (customStartDate) range.start_date = customStartDate;
+        if (customEndDate) range.end_date = customEndDate;
+        return range;
+      }
+
+      default:
+        return {};
+    }
+  }, [dateFilter, customStartDate, customEndDate]);
+
+  // Included in every eventsCache key so switching date range never serves a
+  // page cached for a different range.
+  const dateRangeKey = useMemo(() => {
+    const { start_date, end_date } = resolveDateRange();
+    return `${dateFilter}:${start_date || ""}:${end_date || ""}`;
+  }, [resolveDateRange, dateFilter]);
+
 const fetchEventsFilters = (filters) => {
+  const dateRange = resolveDateRange();
   const params = {
     page: filters.page || currentPage,
     limit: filters.limit || rowsPerPage,
-    start_date: filters.start_date || DEFAULT_API_START_DATE,
+    start_date:
+      dateRange.start_date || filters.start_date || DEFAULT_API_START_DATE,
     status: filters.status || selectedStatus || "incomplete",
   };
+
+  // Only send end_date when the user actually narrowed the range.
+  if (dateRange.end_date) params.end_date = dateRange.end_date;
 
   if (filters.search) params.search = filters.search;
   if (filters.event_type) {
@@ -1742,6 +1827,7 @@ const fetchEventsFilters = (filters) => {
         logout,
         selectedEventTypeFilter,
         selectedStatus,
+        resolveDateRange,
       ],
     );
 
@@ -2345,12 +2431,51 @@ const getFilteredEventTypes = (allEventTypes) => {
   const clearAllFilters = useCallback(() => {
     setSearchQuery("");
     setIsSearching(false);
+    setDateFilter("all");
+    setCustomStartDate("");
+    setCustomEndDate("");
     setTotalEvents(events.length || 0)
 
   }, [viewFilter, userRole, fetchEvents, rowsPerPage, DEFAULT_API_START_DATE]);
 
   const [allCurrentEvents, setAllCurrentEvents] = useState([]);
   const [isSearching, setIsSearching] = useState(null);
+
+  // Refetch whenever the date range changes. Both caches are keyed on
+  // status/type/view only, so they have to be dropped explicitly or a stale
+  // page from the previous range would be served.
+  const isFirstDateFilterRun = useRef(true);
+  useEffect(() => {
+    if (isFirstDateFilterRun.current) {
+      isFirstDateFilterRun.current = false;
+      return;
+    }
+    if (!showingEvents) return;
+
+    clearCache();
+    eventsCache.current = {};
+    setCurrentPage(1);
+    setIsSearching(false);
+
+    fetchEvents({ page: 1, limit: rowsPerPage }, true);
+  }, [
+    dateFilter,
+    customStartDate,
+    customEndDate,
+    showingEvents,
+    clearCache,
+    rowsPerPage,
+    fetchEvents,
+  ]);
+
+  // Guard against a custom range entered backwards (end before start).
+  const customRangeError =
+    dateFilter === "custom" &&
+    customStartDate &&
+    customEndDate &&
+    customStartDate > customEndDate
+      ? "Start date is after end date"
+      : "";
 
   const fetchAllCurrentEvents = useCallback(async () => {
     try {
@@ -2481,7 +2606,7 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handleRowsPerPageChange = useCallback((e) => {
     const newRowsPerPage = Number(e.target.value);
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeKey}`;
     const cached = eventsCache.current[cacheKey];
 
     setRowsPerPage(newRowsPerPage);
@@ -2491,7 +2616,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       setTotalPages(Math.ceil(cached.length / newRowsPerPage) || 1);
       setEvents(cached.slice(0, newRowsPerPage));
     }
-  }, [selectedEventTypeFilter, selectedStatus, viewFilter]);
+  }, [selectedEventTypeFilter, selectedStatus, viewFilter, dateRangeKey]);
 
 
   const handleCaptureClick = useCallback(async (event) => {
@@ -3282,7 +3407,7 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handlePageChange = useCallback(
     (newPage) => {
-      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeKey}`;
       const cached = eventsCache.current[cacheKey];
 
       setCurrentPage(newPage);
@@ -3292,7 +3417,7 @@ const getFilteredEventTypes = (allEventTypes) => {
         setEvents(cached.slice(skip, skip + rowsPerPage));
       }
     },
-    [selectedEventTypeFilter, selectedStatus, viewFilter, rowsPerPage]
+    [selectedEventTypeFilter, selectedStatus, viewFilter, rowsPerPage, dateRangeKey]
   );
   const handleNextPage = useCallback(() => {
     if (currentPage < totalPages && !isLoading) {
@@ -3506,7 +3631,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   useEffect(() => {
     if (!selectedEventTypeFilter || !showingEvents) return;
 
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeKey}`;
     const cached = eventsCache.current[cacheKey];
 
     if (cached) {
@@ -3600,6 +3725,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     isRegularUser,
     isLeaderAt12,
     DEFAULT_API_START_DATE,
+    dateRangeKey,
   ]);
 
   const StatusBadges = ({
@@ -4608,6 +4734,85 @@ const getTypeValue = (type) => {
                   },
                 }}
               />
+
+              <Select
+                size="small"
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value)}
+                disabled={loading}
+                aria-label="Filter events by date"
+                sx={{
+                  minWidth: 160,
+                  backgroundColor: "transparent !important",
+                  fontSize: isMobileView ? "14px" : "0.95rem",
+                  borderRadius: "10px",
+                  "& .MuiSelect-select": {
+                    padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
+                    backgroundColor: "transparent !important",
+                  },
+                  "& .MuiOutlinedInput-notchedOutline": {
+                    borderColor: isDarkMode ? theme.palette.divider : "#ccc",
+                  },
+                  "&:hover .MuiOutlinedInput-notchedOutline": {
+                    borderColor: isDarkMode
+                      ? theme.palette.primary.main
+                      : "#007bff",
+                  },
+                }}
+              >
+                {DATE_FILTER_OPTIONS.map((opt) => (
+                  <MenuItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+
+              {dateFilter === "custom" && (
+                <Box
+                  sx={{
+                    display: "flex",
+                    gap: 1,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <TextField
+                    type="date"
+                    size="small"
+                    label="From"
+                    value={customStartDate}
+                    onChange={(e) => setCustomStartDate(e.target.value)}
+                    disabled={loading}
+                    error={!!customRangeError}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ max: customEndDate || undefined }}
+                    sx={{
+                      width: { xs: 130, sm: 160 },
+                      "& .MuiInputBase-input": {
+                        fontSize: isMobileView ? "13px" : "0.9rem",
+                      },
+                    }}
+                  />
+                  <TextField
+                    type="date"
+                    size="small"
+                    label="To"
+                    value={customEndDate}
+                    onChange={(e) => setCustomEndDate(e.target.value)}
+                    disabled={loading}
+                    error={!!customRangeError}
+                    helperText={customRangeError || " "}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ min: customStartDate || undefined }}
+                    sx={{
+                      width: { xs: 130, sm: 160 },
+                      "& .MuiInputBase-input": {
+                        fontSize: isMobileView ? "13px" : "0.9rem",
+                      },
+                    }}
+                  />
+                </Box>
+              )}
 
               <Button
                 variant="outlined"

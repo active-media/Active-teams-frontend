@@ -9,6 +9,9 @@ import {
   IconButton,
   Tooltip,
   Skeleton,
+  Select,
+  MenuItem,
+  TextField,
 } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -76,6 +79,60 @@ const EventHistory = React.memo(function EventHistory({
     return 0;
   }, []);
 
+  const DATE_FILTER_OPTIONS = [
+    { value: 'all',    label: 'All Dates' },
+    { value: 'thisWeek', label: 'This Week' },
+    { value: 'thisMonth', label: 'This Month' },
+    { value: 'previousWeek', label: 'Previous Week' },
+    { value: 'previousMonth', label: 'Previous Month' },
+    { value: 'custom', label: 'Custom Range' },
+  ];
+
+  const [dateFilter, setDateFilter] = React.useState('all');
+  const [customStartDate, setCustomStartDate] = React.useState('');
+  const [customEndDate, setCustomEndDate] = React.useState('');
+
+  const customRangeError =
+    dateFilter === 'custom' && customStartDate && customEndDate && customStartDate > customEndDate
+      ? 'Start date is after end date'
+      : '';
+
+  // Resolves the filter to inclusive { start, end } ISO strings, or null for "All Dates".
+  // Weeks start Monday and dates use en-CA so they match Events / Stats / DailyTasks.
+  const resolveDateRange = React.useCallback(() => {
+    const iso = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
+    const now = new Date();
+    const mondayOf = (d) => {
+      const copy = new Date(d);
+      copy.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      return copy;
+    };
+
+    switch (dateFilter) {
+      case 'thisWeek':   return { start: iso(mondayOf(now)), end: iso(now) };
+      case 'thisMonth':  return { start: iso(new Date(now.getFullYear(), now.getMonth(), 1)), end: iso(now) };
+      case 'previousWeek': {
+        const lastWeek = new Date(now);
+        lastWeek.setDate(now.getDate() - 7);
+        return { start: iso(mondayOf(lastWeek)), end: iso(lastWeek) };
+      }
+      case 'previousMonth': {
+        return {
+          start: iso(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+          end: iso(new Date(now.getFullYear(), now.getMonth(), 0)),
+        };
+      }
+      case 'custom': {
+        if (!customStartDate && !customEndDate) return null;
+        const range = {};
+        if (customStartDate) range.start = customStartDate;
+        if (customEndDate) range.end = customEndDate;
+        return range;
+      }
+      default: return null;
+    }
+  }, [dateFilter, customStartDate, customEndDate]);
+
   const sortAlpha = (arr) =>
     [...arr].sort((a, b) =>
       `${a.name || ''} ${a.surname || ''}`.toLowerCase()
@@ -96,9 +153,23 @@ const EventHistory = React.memo(function EventHistory({
 
   const filtered = React.useMemo(() => {
     if (!Array.isArray(events)) return [];
-    if (!searchTerm.trim()) return events;
+
+    const range = resolveDateRange();
+    let out = events;
+
+    if (range) {
+      out = out.filter((e) => {
+        if (!e || !e.date) return false;
+        const iso = new Date(e.date).toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
+        if (range.start && iso < range.start) return false;
+        if (range.end   && iso > range.end)   return false;
+        return true;
+      });
+    }
+
+    if (!searchTerm.trim()) return out;
     const term = searchTerm.toLowerCase().trim();
-    return events.filter((e) =>
+    return out.filter((e) =>
       e && (
         (e.eventName  && e.eventName.toLowerCase().includes(term))  ||
         (e.date       && e.date.toString().toLowerCase().includes(term)) ||
@@ -106,7 +177,7 @@ const EventHistory = React.memo(function EventHistory({
         (e.closed_by  && e.closed_by.toLowerCase().includes(term))
       ),
     );
-  }, [events, searchTerm]);
+  }, [events, searchTerm, resolveDateRange]);
 
   const columns = React.useMemo(() => {
     const cols = [];
@@ -276,6 +347,69 @@ const EventHistory = React.memo(function EventHistory({
   const rowH          = isSm ? 44 : 52;
   const headerH       = isSm ? 40 : 48;
 
+  const activeDateFilter = dateFilter !== 'all';
+
+  const dateFilterBar = (
+    <Box sx={{
+      px: isSm ? 1 : 2, py: isSm ? 0.75 : 1,
+      display: 'flex', alignItems: 'center', gap: 1,
+      flexWrap: 'wrap',
+      borderBottom: `1px solid ${theme.palette.divider}`,
+      backgroundColor: theme.palette.background.paper,
+    }}>
+      <Select
+        size="small"
+        value={dateFilter}
+        onChange={(e) => setDateFilter(e.target.value)}
+        aria-label="Filter event history by date"
+        sx={{
+          minWidth: 150,
+          fontSize: isSm ? '0.78rem' : '0.85rem',
+          borderRadius: '8px',
+          ...(activeDateFilter && { color: 'primary.main', fontWeight: 600 }),
+        }}
+      >
+        {DATE_FILTER_OPTIONS.map((opt) => (
+          <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+        ))}
+      </Select>
+
+      {dateFilter === 'custom' && (
+        <>
+          <TextField
+            type="date"
+            size="small"
+            value={customStartDate}
+            onChange={(e) => setCustomStartDate(e.target.value)}
+            inputProps={{ 'aria-label': 'Custom range start date', max: customEndDate || undefined }}
+            error={!!customRangeError}
+            sx={{ width: isSm ? 130 : 160 }}
+          />
+          <TextField
+            type="date"
+            size="small"
+            value={customEndDate}
+            onChange={(e) => setCustomEndDate(e.target.value)}
+            inputProps={{ 'aria-label': 'Custom range end date', min: customStartDate || undefined }}
+            error={!!customRangeError}
+            helperText={customRangeError || ' '}
+            sx={{ width: isSm ? 130 : 160 }}
+          />
+        </>
+      )}
+
+      {activeDateFilter && (
+        <Button
+          size="small"
+          onClick={() => { setDateFilter('all'); setCustomStartDate(''); setCustomEndDate(''); }}
+          sx={{ ml: 'auto' }}
+        >
+          Clear date filter
+        </Button>
+      )}
+    </Box>
+  );
+
   if (isLoading && filtered.length === 0) {
     return (
       <Paper variant="outlined" sx={{ boxShadow: 3, overflow: 'hidden', width: '100%', height: gridHeight, minHeight: gridMinHeight }}>
@@ -317,7 +451,10 @@ const EventHistory = React.memo(function EventHistory({
     <Paper variant="outlined" sx={{
       boxShadow: 3, overflow: 'hidden', width: '100%',
       height: gridHeight, minHeight: gridMinHeight, maxHeight: gridMaxHeight,
+      display: 'flex', flexDirection: 'column',
     }}>
+      {dateFilterBar}
+      <Box sx={{ flexGrow: 1, minHeight: 0 }}>
       <DataGrid
         rows={filtered}
         columns={columns}
@@ -396,6 +533,7 @@ const EventHistory = React.memo(function EventHistory({
           '& .MuiDataGrid-overlayWrapper': { minHeight: 80 },
         }}
       />
+      </Box>
     </Paper>
   );
 });

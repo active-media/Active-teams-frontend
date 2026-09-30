@@ -140,6 +140,15 @@ export default function DailyTasks() {
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
 
+  // Surfaced in the UI; the native min/max on the inputs stop most cases.
+  const customRangeError =
+    dateRange === "custom" &&
+    customStartDate &&
+    customEndDate &&
+    customStartDate > customEndDate
+      ? "Start date is after end date"
+      : "";
+
   // Multi-select for bulk actions
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState(new Set());
@@ -1594,12 +1603,21 @@ export default function DailyTasks() {
     }
 
     case "custom": {
-      if (!customStartDate || !customEndDate) return true;
-      const start = new Date(customStartDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(customEndDate);
-      end.setHours(23, 59, 59, 999);
-      return isDateInRange(dateToCheck, start, end);
+      // Nothing chosen yet — stay unfiltered rather than blanking the list.
+      if (!customStartDate && !customEndDate) return true;
+
+      // A single bound is a valid open-ended range; only apply the ones given.
+      if (customStartDate) {
+        const start = new Date(customStartDate);
+        start.setHours(0, 0, 0, 0);
+        if (dateToCheck < start) return false;
+      }
+      if (customEndDate) {
+        const end = new Date(customEndDate);
+        end.setHours(23, 59, 59, 999);
+        if (dateToCheck > end) return false;
+      }
+      return true;
     }
 
     default:
@@ -2007,39 +2025,56 @@ export default function DailyTasks() {
 
           {/* Custom date range pickers */}
           {dateRange === "custom" && (
-            <div style={{ marginTop: "12px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <input
-                type="date"
-                value={customStartDate}
-                onChange={(e) => setCustomStartDate(e.target.value)}
-                style={{
-                  flex: "1 1 120px",
-                  padding: "10px 12px",
-                  borderRadius: "10px",
-                  border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                  backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
-                  color: isDarkMode ? "#fff" : "#1a1a24",
-                  fontSize: "13px",
-                  fontWeight: "500",
-                  outline: "none",
-                }}
-              />
-              <input
-                type="date"
-                value={customEndDate}
-                onChange={(e) => setCustomEndDate(e.target.value)}
-                style={{
-                  flex: "1 1 120px",
-                  padding: "10px 12px",
-                  borderRadius: "10px",
-                  border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                  backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
-                  color: isDarkMode ? "#fff" : "#1a1a24",
-                  fontSize: "13px",
-                  fontWeight: "500",
-                  outline: "none",
-                }}
-              />
+            <div style={{ marginTop: "12px" }}>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <input
+                  type="date"
+                  aria-label="Custom range start date"
+                  value={customStartDate}
+                  max={customEndDate || undefined}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  style={{
+                    flex: "1 1 120px",
+                    padding: "10px 12px",
+                    borderRadius: "10px",
+                    border: `2px solid ${customRangeError ? "#dc2626" : isDarkMode ? "#444" : "#e5e7eb"}`,
+                    backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
+                    color: isDarkMode ? "#fff" : "#1a1a24",
+                    fontSize: "13px",
+                    fontWeight: "500",
+                    outline: "none",
+                  }}
+                />
+                <input
+                  type="date"
+                  aria-label="Custom range end date"
+                  value={customEndDate}
+                  min={customStartDate || undefined}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  style={{
+                    flex: "1 1 120px",
+                    padding: "10px 12px",
+                    borderRadius: "10px",
+                    border: `2px solid ${customRangeError ? "#dc2626" : isDarkMode ? "#444" : "#e5e7eb"}`,
+                    backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
+                    color: isDarkMode ? "#fff" : "#1a1a24",
+                    fontSize: "13px",
+                    fontWeight: "500",
+                    outline: "none",
+                  }}
+                />
+              </div>
+              {customRangeError && (
+                <p
+                  style={{
+                    margin: "6px 0 0",
+                    fontSize: "12px",
+                    color: "#dc2626",
+                  }}
+                >
+                  {customRangeError}
+                </p>
+              )}
             </div>
           )}
 

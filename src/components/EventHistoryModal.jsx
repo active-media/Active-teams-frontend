@@ -4,7 +4,7 @@ import {
     TextField, Button, Box, Typography,
     Table, TableBody, TableCell, TableHead, TableRow,
     TablePagination, Chip, useMediaQuery, useTheme,
-    Card, CardContent, Stack, Divider, Tooltip
+    Card, CardContent, Stack, Divider, Tooltip, Select, MenuItem
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import * as XLSX from 'xlsx';
@@ -23,6 +23,58 @@ const EventHistoryModal = React.memo(({
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(25);
 
+    const DATE_FILTER_OPTIONS = [
+        { value: 'all', label: 'All Dates' },
+        { value: 'thisWeek', label: 'This Week' },
+        { value: 'thisMonth', label: 'This Month' },
+        { value: 'previousWeek', label: 'Previous Week' },
+        { value: 'previousMonth', label: 'Previous Month' },
+        { value: 'custom', label: 'Custom Range' },
+    ];
+    const [dateFilter, setDateFilter] = useState('all');
+    const [customStartDate, setCustomStartDate] = useState('');
+    const [customEndDate, setCustomEndDate] = useState('');
+
+    const customRangeError =
+        dateFilter === 'custom' && customStartDate && customEndDate && customStartDate > customEndDate
+            ? 'Start date is after end date'
+            : '';
+
+    // Weeks start Monday, dates formatted en-CA so they match Events / Stats.
+    const resolveDateRange = useMemo(() => {
+        const iso = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
+        const now = new Date();
+        const mondayOf = (d) => {
+            const copy = new Date(d);
+            copy.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+            return copy;
+        };
+
+        switch (dateFilter) {
+            case 'thisWeek': return { start: iso(mondayOf(now)), end: iso(now) };
+            case 'thisMonth':
+                return { start: iso(new Date(now.getFullYear(), now.getMonth(), 1)), end: iso(now) };
+            case 'previousWeek': {
+                const lastWeek = new Date(now);
+                lastWeek.setDate(now.getDate() - 7);
+                return { start: iso(mondayOf(lastWeek)), end: iso(lastWeek) };
+            }
+            case 'previousMonth':
+                return {
+                    start: iso(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+                    end: iso(new Date(now.getFullYear(), now.getMonth(), 0)),
+                };
+            case 'custom': {
+                if (!customStartDate && !customEndDate) return null;
+                const range = {};
+                if (customStartDate) range.start = customStartDate;
+                if (customEndDate) range.end = customEndDate;
+                return range;
+            }
+            default: return null;
+        }
+    }, [dateFilter, customStartDate, customEndDate]);
+
 
     useEffect(() => {
         if (open) {
@@ -33,10 +85,33 @@ const EventHistoryModal = React.memo(({
 
     const filteredData = useMemo(() => {
         if (!Array.isArray(data)) return [];
-        if (!searchTerm.trim()) return data;
+
+        let out = data;
+
+        // Rows here are people, not events, so filter on whichever date field
+        // the record carries (check-in / first-seen / consolidation date).
+        const range = resolveDateRange();
+        if (range) {
+            out = out.filter(item => {
+                if (!item) return false;
+                const raw =
+                    item.check_in_date ||
+                    item.checkInDate ||
+                    item.date ||
+                    item.created_at ||
+                    item.consolidated_at;
+                if (!raw) return false;
+                const iso = new Date(raw).toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
+                if (range.start && iso < range.start) return false;
+                if (range.end && iso > range.end) return false;
+                return true;
+            });
+        }
+
+        if (!searchTerm.trim()) return out;
 
         const term = searchTerm.toLowerCase().trim();
-        return data.filter(item => {
+        return out.filter(item => {
             if (!item) return false;
 
 
@@ -59,7 +134,7 @@ const EventHistoryModal = React.memo(({
 
             return searchString.includes(term);
         });
-    }, [data, searchTerm]);
+    }, [data, searchTerm, resolveDateRange]);
 
     const paginatedData = useMemo(() => {
         return filteredData.slice(
@@ -359,6 +434,57 @@ const EventHistoryModal = React.memo(({
                     fullWidth
                     sx={{ mb: 2, boxShadow: 1 }}
                 />
+
+                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
+                    <Select
+                        size="small"
+                        value={dateFilter}
+                        onChange={(e) => { setDateFilter(e.target.value); setPage(0); }}
+                        aria-label="Filter by date"
+                        sx={{
+                            minWidth: 150,
+                            borderRadius: '8px',
+                            ...(dateFilter !== 'all' && { color: 'primary.main', fontWeight: 600 }),
+                        }}
+                    >
+                        {DATE_FILTER_OPTIONS.map((opt) => (
+                            <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+                        ))}
+                    </Select>
+
+                    {dateFilter === 'custom' && (
+                        <>
+                            <TextField
+                                type="date"
+                                size="small"
+                                value={customStartDate}
+                                onChange={(e) => { setCustomStartDate(e.target.value); setPage(0); }}
+                                inputProps={{ 'aria-label': 'Custom range start date', max: customEndDate || undefined }}
+                                error={!!customRangeError}
+                                sx={{ width: isSmDown ? 132 : 165 }}
+                            />
+                            <TextField
+                                type="date"
+                                size="small"
+                                value={customEndDate}
+                                onChange={(e) => { setCustomEndDate(e.target.value); setPage(0); }}
+                                inputProps={{ 'aria-label': 'Custom range end date', min: customStartDate || undefined }}
+                                error={!!customRangeError}
+                                helperText={customRangeError || ' '}
+                                sx={{ width: isSmDown ? 132 : 165 }}
+                            />
+                        </>
+                    )}
+
+                    {dateFilter !== 'all' && (
+                        <Button
+                            size="small"
+                            onClick={() => { setDateFilter('all'); setCustomStartDate(''); setCustomEndDate(''); setPage(0); }}
+                        >
+                            Clear
+                        </Button>
+                    )}
+                </Stack>
 
                 {filteredData.length === 0 ? (
                     <Typography variant="body2" color="text.secondary" textAlign="center" py={4}>
