@@ -1,4 +1,5 @@
 import React, { useContext, useMemo, useState } from "react";
+import { useTheme } from "@mui/material/styles";
 import {
   Box,
   Breadcrumbs,
@@ -22,7 +23,6 @@ import {
   MenuItem,
   Chip,
   Stack,
-  Divider,
 } from "@mui/material";
 import {
   Search as SearchIcon,
@@ -47,54 +47,66 @@ const REPORT_TYPES = [
     name: "Overall Church Performance",
     description: "High-level leadership report combining all major metrics",
     accent: "#3b82f6",
+    available: false,
   },
   {
     id: "cells_report",
     name: "Cells Report",
     description: "Cell attendance, growth and active cells",
     accent: "#3b82f6",
+    available: false,
   },
   {
     id: "life_class_report",
     name: "Life Class Report",
     description: "Registered, attended and completion rates",
     accent: "#22c55e",
+    available: true,
+    endpoint: "/reports/life_class_report/generate",
   },
   {
     id: "school_of_leaders_report",
     name: "School of Leaders Report",
     description: "Enrolled, attendance and completion trends",
     accent: "#a855f7",
+    available: false,
   },
   {
     id: "plan_40_report",
     name: "Plan 40 Report",
     description: "Plan 40 participation and progress",
     accent: "#f59e0b",
+    available: false,
   },
   {
     id: "school_cell_report",
     name: "School Cell Report",
     description: "School cell attendance and completion",
     accent: "#14b8a6",
+    available: false,
   },
   {
     id: "service_target_report",
     name: "Service Target Report",
     description: "Target vs actual attendance and achievement",
     accent: "#ef4444",
+    available: true,
+    dataEndpoint: "/stats/service-target-report",
   },
   {
     id: "twelve_tasks_report",
     name: "Twelve Tasks Report",
     description: "Task completion and outstanding items",
     accent: "#6b7280",
+    available: false,
+    note: "Report generation endpoint not available; data accessible via /stats/twelve-tasks",
   },
   {
     id: "staff_interns_youth_report",
     name: "Staff, Interns & Youth Report",
     description: "People statistics by category and campus",
     accent: "#ec4899",
+    available: false,
   },
 ];
 
@@ -112,20 +124,7 @@ const CAMPUS_OPTIONS = ["All Campuses", "Main Campus", "North Campus", "East Cam
 
 const FORMAT_OPTIONS = ["PDF", "CSV"];
 
-// ---------------------------------------------------------------------------
-// Styling helpers — dark, card-based surface matching the mock.
-// ---------------------------------------------------------------------------
-const surface = {
-  page: "#000000",
-  card: "#0d0d0d",
-  cardBorder: "#242424",
-  input: "#111111",
-  inputBorder: "#2a2a2a",
-  textPrimary: "#f5f5f5",
-  textSecondary: "#9a9a9a",
-};
-
-function ReportCard({ report, onGenerate }) {
+function ReportCard({ report, onGenerate, surface }) {
   return (
     <Card
       sx={{
@@ -147,7 +146,7 @@ function ReportCard({ report, onGenerate }) {
           left: 0,
           right: 0,
           height: 3,
-          bgcolor: report.accent,
+          bgcolor: report.available ? report.accent : "#6b7280",
         },
       }}
       elevation={0}
@@ -161,7 +160,7 @@ function ReportCard({ report, onGenerate }) {
           alignItems: "center",
           justifyContent: "center",
           bgcolor: `${report.accent}22`,
-          color: report.accent,
+          color: report.available ? report.accent : "#9ca3af",
         }}
       >
         <DescriptionIcon fontSize="small" />
@@ -177,24 +176,25 @@ function ReportCard({ report, onGenerate }) {
       </Box>
 
       <Button
-        onClick={() => onGenerate(report)}
+        onClick={report.available ? () => onGenerate(report) : undefined}
         startIcon={<PlayArrowIcon />}
         variant="contained"
         sx={{
-          bgcolor: "#2563eb",
+          bgcolor: report.available ? "#2563eb" : "#6b7280",
           textTransform: "none",
           fontWeight: 600,
           borderRadius: 1.5,
           "&:hover": { bgcolor: "#1d4ed8" },
         }}
+        disabled={!report.available}
       >
-        Generate
+        {report.available ? "Generate" : "Unavailable"}
       </Button>
     </Card>
   );
 }
 
-function GenerateReportDialog({ report, open, onClose, onGenerated }) {
+function GenerateReportDialog({ report, open, onClose, onGenerated, surface, authFetch, backendUrl }) {
   const [period, setPeriod] = useState("This Month");
   const [campus, setCampus] = useState("All Campuses");
   const [format, setFormat] = useState("PDF");
@@ -204,12 +204,89 @@ function GenerateReportDialog({ report, open, onClose, onGenerated }) {
 
   const handleGenerate = async () => {
     setSubmitting(true);
-    await authFetch(`${backendUrl}/reports/${report.id}/generate`, {
-      method: "POST",
-      body: JSON.stringify({ period, campus, format }),
-    });
+    try {
+      if (report.id === "life_class_report") {
+        // Life Class report generation - returns Excel file via the confirmed endpoint
+        const res = await authFetch(`${backendUrl}/reports/${report.id}/generate`, {
+          method: "POST",
+          body: JSON.stringify({ period, campus, format }),
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || `Request failed (${res.status})`);
+        }
+        // For file responses from the confirmed life_class_report endpoint,
+        // trigger a blob download rather than parsing as JSON.
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `LifeClass_Report_${period}_${campus}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        // After successful download, mark as generated
+        onGenerated({ report, period, campus, format });
+      } else if (report.id === "service_target_report") {
+        // Service target report - use the data endpoint instead of generation
+        // since no generation endpoint exists for this type
+        // Fetch the actual service target data from the backend
+        const res = await authFetch(`${backendUrl}/stats/service-target-report`);
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || `Request failed (${res.status})`);
+        }
+        const data = await res.json();
+        // Create entry with dataAvailable flag and the actual data
+        const entry = {
+          id: `${report.id}-${Date.now()}`,
+          report,
+          period,
+          campus,
+          format,
+          generatedAt: new Date(),
+          status: "Ready",
+          dataAvailable: true,
+          targets: data.targets,
+          total_target: data.total_target,
+          total_targets: data.total_targets,
+        };
+        setHistory((prev) => [entry, ...prev]);
+        onGenerated({ report, period, campus, format, dataAvailable: true });
+      } else if (!report.available) {
+        // Unsupported report type - do not attempt generation
+        throw new Error(`Report "${report.name}" is currently unavailable. Its backend endpoint is not implemented.`);
+      } else {
+        // Other reports with generation endpoint
+        const res = await authFetch(`${backendUrl}/reports/${report.id}/generate`, {
+          method: "POST",
+          body: JSON.stringify({ period, campus, format }),
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || `Request failed (${res.status})`);
+        }
+        const result = await res.json();
+        const entry = {
+          id: `${report.id}-${Date.now()}`,
+          report,
+          period,
+          campus,
+          format,
+          generatedAt: new Date(),
+          status: "Ready",
+        };
+        setHistory((prev) => [entry, ...prev]);
+        setDialogReport(null);
+        onGenerated({ report, period, campus, format, result });
+      }
+    } catch (err) {
+      // Do NOT add to history, do NOT open preview on failure
+      // Do NOT mark as "Ready" when generation failed
+      console.error("Report generation failed:", err.message);
+    }
     setSubmitting(false);
-    onGenerated({ report, period, campus, format });
   };
 
   return (
@@ -319,7 +396,7 @@ function GenerateReportDialog({ report, open, onClose, onGenerated }) {
   );
 }
 
-const fieldSx = {
+const getFieldSx = (surface) => ({
   "& .MuiOutlinedInput-root": {
     bgcolor: surface.input,
     color: surface.textPrimary,
@@ -328,40 +405,98 @@ const fieldSx = {
     "&.Mui-focused fieldset": { borderColor: "#2563eb" },
   },
   "& .MuiSvgIcon-root": { color: surface.textSecondary },
-};
+});
 
 // ---------------------------------------------------------------------------
 // Report preview / detail screen — shown after a report is generated.
 // Wire the SUMMARY + MINISTRY PERFORMANCE values to the real payload
 // returned by the backend once the endpoint exists.
 // ---------------------------------------------------------------------------
-function ReportPreview({ entry, onBack }) {
-  const { report, period, format } = entry;
+function ReportPreview({ entry, onBack, surface }) {
+  const { report, period, format, result, dataAvailable, fileUrl, fileName, targets, total_target, total_targets } = entry;
+  const colors = useColors();
 
-  const summaryCards = [
-    { label: "Total Attendance", sub: "new visitors", value: "—" },
-    { label: "Active Cells", sub: "cell attendance", value: "—" },
-    { label: "Life Class", sub: "attendance", value: "—" },
-    { label: "School of Leaders", sub: "attendance", value: "—" },
-    { label: "Plan 40", sub: "completion", value: "—" },
-    { label: "Service Target", sub: "target", value: "—" },
-    { label: "Twelve Tasks", sub: "complete", value: "—" },
-    { label: "Staff / Interns / Youth", sub: "people tracked", value: "—" },
-  ];
+  let summaryCards = [];
+  let ministryRows = [];
 
-  const ministryRows = [
-    "Life Class",
-    "School of Leaders",
-    "Plan 40",
-    "School Cell",
-  ].map((name) => ({
-    name,
-    registered: 0,
-    attended: 0,
-    completed: 0,
-    attendanceRate: "—",
-    completionRate: "—",
-  }));
+  if (dataAvailable && targets) {
+    // Service target report data from backend
+    summaryCards = [
+      { label: "Total Attendance", sub: "new visitors", value: "—" },
+      { label: "Active Cells", sub: "cell attendance", value: "—" },
+      { label: "Life Class", sub: "attendance", value: "—" },
+      { label: "School of Leaders", sub: "attendance", value: "—" },
+      { label: "Plan 40", sub: "completion", value: "—" },
+      { label: "Service Target", sub: "target", value: total_target ?? "—" },
+      { label: "Twelve Tasks", sub: "complete", value: "—" },
+      { label: "Staff / Interns / Youth", sub: "people tracked", value: "—" },
+    ];
+
+    ministryRows = [
+      "Life Class",
+      "School of Leaders",
+      "Plan 40",
+      "School Cell",
+    ].map((name) => ({
+      name,
+      registered: "—",
+      attended: "—",
+      completed: "—",
+      attendanceRate: "—",
+      completionRate: "—"
+    }));
+  } else if (fileUrl) {
+    // Life Class report with generated Excel file
+    summaryCards = [
+      { label: "Total Attendance", sub: "new visitors", value: "Not available" },
+      { label: "Active Cells", sub: "cell attendance", value: "Not available" },
+      { label: "Life Class", sub: "attendance", value: "Not available" },
+      { label: "School of Leaders", sub: "attendance", value: "Not available" },
+      { label: "Plan 40", sub: "completion", value: "Not available" },
+      { label: "Service Target", sub: "target", value: "—" },
+      { label: "Twelve Tasks", sub: "complete", value: "Not available" },
+      { label: "Staff / Interns / Youth", sub: "people tracked", value: "Not available" },
+    ];
+
+    ministryRows = [
+      "Life Class",
+      "School of Leaders",
+      "Plan 40",
+      "School Cell",
+    ].map((name) => ({
+      name,
+      attended: "Not available",
+      completed: "Not available",
+      attendanceRate: "—",
+      completionRate: "—"
+    }));
+  } else {
+    // No backend data available - show unavailable state
+    summaryCards = [
+      { label: "Total Attendance", sub: "new visitors", value: "Not available" },
+      { label: "Active Cells", sub: "cell attendance", value: "Not available" },
+      { label: "Life Class", sub: "attendance", value: "Not available" },
+      { label: "School of Leaders", sub: "attendance", value: "Not available" },
+      { label: "Plan 40", sub: "completion", value: "Not available" },
+      { label: "Service Target", sub: "target", value: "—" },
+      { label: "Twelve Tasks", sub: "complete", value: "Not available" },
+      { label: "Staff / Interns / Youth", sub: "people tracked", value: "Not available" },
+    ];
+
+    ministryRows = [
+      "Life Class",
+      "School of Leaders",
+      "Plan 40",
+      "School Cell",
+    ].map((name) => ({
+      name,
+      registered: "Not available",
+      attended: "Not available",
+      completed: "Not available",
+      attendanceRate: "—",
+      completionRate: "—",
+    }));
+  }
 
   return (
     <Box>
@@ -505,9 +640,24 @@ function ReportPreview({ entry, onBack }) {
 // Main Reports page
 // ---------------------------------------------------------------------------
 export default function Reports() {
-  const { user, authFetch } = useContext(AuthContext) || {};
-  const [layout, setLayout] = useState("grid"); // 'grid' | 'table'
+  const { authFetch } = useContext(AuthContext) || {};
+  const backendUrl = import.meta.env.VITE_BACKEND_URL;
+  const theme = useTheme();
+  const mode = theme.palette.mode;
+  const surface = useMemo(
+    () => ({
+      page: mode === "dark" ? "#000000" : "#ffffff",
+      card: mode === "dark" ? "#0d0d0d" : "#ffffff",
+      cardBorder: mode === "dark" ? "#242424" : "#e0e0e0",
+      input: mode === "dark" ? "#111111" : "#f5f5f5",
+      inputBorder: mode === "dark" ? "#2a2a2a" : "#e0e0e0",
+      textPrimary: mode === "dark" ? "#f5f5f5" : "#111111",
+      textSecondary: mode === "dark" ? "#9a9a9a" : "#666666",
+    }),
+    [mode]
+  );
   const [search, setSearch] = useState("");
+  const [layout, setLayout] = useState("grid");
   const [dialogReport, setDialogReport] = useState(null);
   const [history, setHistory] = useState([]); // { id, report, period, campus, format, generatedAt, status }
   const [previewEntry, setPreviewEntry] = useState(null);
@@ -520,7 +670,7 @@ export default function Reports() {
     );
   }, [search]);
 
-  const handleGenerated = ({ report, period, campus, format }) => {
+  const handleGenerated = async ({ report, period, campus, format }) => {
     const entry = {
       id: `${report.id}-${Date.now()}`,
       report,
@@ -530,9 +680,85 @@ export default function Reports() {
       generatedAt: new Date(),
       status: "Ready",
     };
-    setHistory((prev) => [entry, ...prev]);
-    setDialogReport(null);
-    setPreviewEntry(entry);
+    try {
+      if (report.id === "life_class_report") {
+        // Life Class report generation - returns Excel file via the confirmed endpoint
+        const res = await authFetch(`${backendUrl}/reports/${report.id}/generate`, {
+          method: "POST",
+          body: JSON.stringify({ period, campus, format }),
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || `Request failed (${res.status})`);
+        }
+        // For file responses from the confirmed life_class_report endpoint,
+        // trigger a blob download rather than parsing as JSON.
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `LifeClass_Report_${period}_${campus}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        // After successful download, mark as generated
+        setHistory((prev) => [entry, ...prev]);
+        setDialogReport(null);
+        setPreviewEntry({ ...entry, fileUrl: url, fileName: `LifeClass_Report_${period}_${campus}.xlsx` });
+      } else if (report.id === "service_target_report") {
+        // Service target report - use the data endpoint instead of generation
+        // since no generation endpoint exists for this type
+        // Fetch the actual service target data from the backend
+        const res = await authFetch(`${backendUrl}/stats/service-target-report`);
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || `Request failed (${res.status})`);
+        }
+        const data = await res.json();
+        // Create entry with dataAvailable flag and the actual data
+        setHistory((prev) => [
+          {
+            ...entry,
+            status: "Completed",
+            dataAvailable: true,
+            targets: data.targets,
+            total_target: data.total_target,
+            total_targets: data.total_targets,
+          },
+          ...prev,
+        ]);
+        setDialogReport(null);
+        // Set preview entry with the actual service target data
+        setPreviewEntry({
+          ...entry,
+          dataAvailable: true,
+          report: { ...report, ...data },
+        });
+      } else if (!report.available) {
+        // Unsupported report type - do not attempt generation
+        throw new Error(`Report "${report.name}" is currently unavailable. Its backend endpoint is not implemented.`);
+      } else {
+        // Other reports with generation endpoint
+        const res = await authFetch(`${backendUrl}/reports/${report.id}/generate`, {
+          method: "POST",
+          body: JSON.stringify({ period, campus, format }),
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || `Request failed (${res.status})`);
+        }
+        const result = await res.json();
+        setHistory((prev) => [entry, ...prev]);
+        setDialogReport(null);
+        setPreviewEntry(entry);
+      }
+    } catch (err) {
+      // Do NOT add to history, do NOT open preview on failure
+      // Do NOT mark as "Ready" when generation failed
+      console.error("Report generation failed:", err.message);
+      // Error state will be shown in the UI - status will not be "Ready"
+    }
   };
 
   if (previewEntry) {
@@ -544,7 +770,7 @@ export default function Reports() {
           </Link>
           <Typography sx={{ color: surface.textPrimary, fontSize: 13 }}>Reports</Typography>
         </Breadcrumbs>
-        <ReportPreview entry={previewEntry} onBack={() => setPreviewEntry(null)} />
+        <ReportPreview entry={previewEntry} onBack={() => setPreviewEntry(null)} surface={surface} />
       </Box>
     );
   }
@@ -601,7 +827,7 @@ export default function Reports() {
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         size="small"
-        sx={{ mb: 3, ...fieldSx }}
+        sx={{ mb: 3, ...getFieldSx(surface) }}
         InputProps={{
           startAdornment: (
             <InputAdornment position="start">
@@ -626,7 +852,7 @@ export default function Reports() {
           }}
         >
           {filteredReports.map((report) => (
-            <ReportCard key={report.id} report={report} onGenerate={setDialogReport} />
+            <ReportCard key={report.id} report={report} onGenerate={setDialogReport} surface={surface} />
           ))}
         </Box>
       ) : (
@@ -707,42 +933,45 @@ export default function Reports() {
               ))}
             </TableRow>
           </TableHead>
-          <TableBody>
-            {history.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} sx={{ color: surface.textSecondary, borderColor: surface.cardBorder, fontSize: 13, py: 3 }}>
-                  No reports generated yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              history.map((entry) => (
-                <TableRow key={entry.id}>
-                  <TableCell sx={{ color: surface.textPrimary, borderColor: surface.cardBorder, fontSize: 13 }}>
-                    {entry.report.name}
-                  </TableCell>
-                  <TableCell sx={{ color: surface.textSecondary, borderColor: surface.cardBorder, fontSize: 13 }}>
-                    {entry.generatedAt.toLocaleString()}
-                  </TableCell>
-                  <TableCell sx={{ borderColor: surface.cardBorder }}>
-                    <Chip
-                      label={entry.status}
-                      size="small"
-                      sx={{ bgcolor: "#16a34a22", color: "#4ade80", fontWeight: 600, fontSize: 11 }}
-                    />
-                  </TableCell>
-                  <TableCell align="right" sx={{ borderColor: surface.cardBorder }}>
-                    <Button
-                      size="small"
-                      onClick={() => setPreviewEntry(entry)}
-                      sx={{ color: "#60a5fa", textTransform: "none" }}
-                    >
-                      View
-                    </Button>
+<TableBody>
+              {history.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} sx={{ color: surface.textSecondary, borderColor: surface.cardBorder, fontSize: 13, py: 3 }}>
+                    No reports generated yet.
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
+              ) : (
+                history.map((entry) => {
+                  const status = entry.status || (entry.dataAvailable || entry.fileUrl ? "Completed" : "—");
+                  return (
+                    <TableRow key={entry.id}>
+                      <TableCell sx={{ color: surface.textPrimary, borderColor: surface.cardBorder, fontSize: 13 }}>
+                        {entry.report.name}
+                      </TableCell>
+                      <TableCell sx={{ color: surface.textSecondary, borderColor: surface.cardBorder, fontSize: 13 }}>
+                        {entry.generatedAt.toLocaleString()}
+                      </TableCell>
+                      <TableCell sx={{ borderColor: surface.cardBorder }}>
+                        <Chip
+                          label={status}
+                          size="small"
+                          sx={{ bgcolor: "#16a34a22", color: "#4ade80", fontWeight: 600, fontSize: 11 }}
+                        />
+                      </TableCell>
+                      <TableCell align="right" sx={{ borderColor: surface.cardBorder }}>
+                        <Button
+                          size="small"
+                          onClick={() => setPreviewEntry(entry)}
+                          sx={{ color: "#60a5fa", textTransform: "none" }}
+                        >
+                          View
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
+            </TableBody>
         </Table>
       </Card>
 
@@ -751,6 +980,9 @@ export default function Reports() {
         open={Boolean(dialogReport)}
         onClose={() => setDialogReport(null)}
         onGenerated={handleGenerated}
+        surface={surface}
+        authFetch={authFetch}
+        backendUrl={backendUrl}
       />
     </Box>
   );
