@@ -755,27 +755,26 @@ const fetchPeople = async (q) => {
 
       console.log("Final Payload:", payload);
 
-      const token = localStorage.getItem("access_token");
-      const headers = {
-        Authorization: token ? `Bearer ${token}` : "",
-        "Content-Type": "application/json",
-      };
-      const response = eventId ?
-        await authFetch(`${BACKEND_URL}/events/${eventId}`, {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(formData)
-        })
-        : await axios.post(
-          `${BACKEND_URL.replace(/\/$/, "")}/events`,
-          payload,
-          { headers },
-        );
+      const response = await authFetch(
+        eventId
+          ? `${BACKEND_URL}/events/${eventId}`
+          : `${BACKEND_URL.replace(/\/$/, "")}/events`,
+        {
+          method: eventId ? "PUT" : "POST",
+          body: JSON.stringify(eventId ? formData : payload),
+        },
+      );
+      const responseData = await response.json().catch(() => ({}));
 
-      console.log("Response:", response.data);
+      if (!response.ok) {
+        const error = new Error(
+          responseData.detail || `HTTP ${response.status}: ${response.statusText}`,
+        );
+        error.response = { data: responseData };
+        throw error;
+      }
+
+      console.log("Response:", responseData);
 
       toast.success(
         eventId ? "Event updated successfully!" : "Event created successfully!",

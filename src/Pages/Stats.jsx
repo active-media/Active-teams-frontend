@@ -51,7 +51,6 @@ import {
   Refresh,
   Add,
   Close,
-  Visibility,
   ChevronLeft,
   ChevronRight,
   Save,
@@ -77,6 +76,64 @@ const toSATime = (d) => {
   }
 };
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+
+const getCellPeriodRange = (periodType) => {
+  const todayParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Johannesburg",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .formatToParts(new Date())
+    .reduce((parts, part) => {
+      if (part.type !== "literal") parts[part.type] = Number(part.value);
+      return parts;
+    }, {});
+  const today = new Date(
+    Date.UTC(todayParts.year, todayParts.month - 1, todayParts.day),
+  );
+  const todayDate = new Date(today);
+  const mondayOffset = (today.getUTCDay() + 6) % 7;
+  let end = new Date(today);
+
+  switch (periodType) {
+    case "thisWeek":
+      today.setUTCDate(today.getUTCDate() - mondayOffset);
+      break;
+    case "thisMonth":
+      today.setUTCDate(1);
+      break;
+    case "previousWeek":
+      today.setUTCDate(today.getUTCDate() - mondayOffset - 7);
+      end = new Date(today);
+      end.setUTCDate(end.getUTCDate() + 6);
+      break;
+    case "previousMonth":
+      today.setUTCMonth(today.getUTCMonth() - 1, 1);
+      end = new Date(today);
+      end.setUTCMonth(end.getUTCMonth() + 1, 0);
+      break;
+    default:
+      break;
+  }
+
+  return {
+    start: today.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+    today: todayDate.toISOString().slice(0, 10),
+  };
+};
+
+const getCellStatus = (cell) => {
+  const status = (cell.status || cell.Status || "incomplete")
+    .trim()
+    .toLowerCase()
+    .replace(/[ -]+/g, "_");
+
+  if (["complete", "completed", "closed"].includes(status)) return "completed";
+  if (["did_not_meet", "didnotmeet"].includes(status)) return "did_not_meet";
+  return "incomplete";
+};
 
 // Add this memoized component OUTSIDE StatsDashboard
 const TaskGroupRow = React.memo(
@@ -298,6 +355,8 @@ const StatsDashboard = () => {
 
   const [createEventModalOpen, setCreateEventModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
+  const [cellFilter, setCellFilter] = useState("overdue");
+  const [selectedCellPerson, setSelectedCellPerson] = useState("all");
   const [taskFilter, setTaskFilter] = useState("all");
   const [selectedTaskPerson, setSelectedTaskPerson] = useState("all");
   const [expandedUsers, setExpandedUsers] = useState([]);
@@ -319,7 +378,6 @@ const StatsDashboard = () => {
   });
   const [eventTypes, setEventTypes] = useState([]);
   const [, setEventTypesLoading] = useState(true);
-  const [overdueModalOpen, setOverdueModalOpen] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [viewMoreModalOpen, setViewMoreModalOpen] = useState(false);
@@ -369,35 +427,37 @@ const StatsDashboard = () => {
   }, [cells, cellsLoading]);
 
   const fetchCalendarEvents = useCallback(async () => {
-    if (calendarLoading) return;
     setCalendarLoading(true);
 
     try {
-      // Test with NO query params first
-      const url = `${BACKEND_URL}/events/eventsdata`;
-      console.log("[TEST FETCH] URL:", url);
-
+      const monthStart = new Date(
+        currentMonth.getFullYear(),
+        currentMonth.getMonth(),
+        1,
+      );
+      const monthEnd = new Date(
+        currentMonth.getFullYear(),
+        currentMonth.getMonth() + 1,
+        0,
+      );
+      const toDateParam = (date) =>
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      const url = `${BACKEND_URL}/stats/calendar-events?start_date=${toDateParam(monthStart)}&end_date=${toDateParam(monthEnd)}`;
       const res = await authFetch(url);
-      console.log("[TEST FETCH] Status:", res.status);
-
       if (!res.ok) {
         const errorBody = await res.text().catch(() => "No body");
-        console.error("[TEST FETCH] Error:", res.status, errorBody);
-        throw new Error(`Test failed: ${res.status} - ${errorBody}`);
+        throw new Error(`Calendar fetch failed: ${res.status} - ${errorBody}`);
       }
 
       const data = await res.json();
-      console.log("[TEST FETCH] Data keys:", Object.keys(data));
       const events = data.events || data.data || [];
-      console.log(`[TEST FETCH] Loaded ${events.length} events`);
-
       setCalendarEvents(events);
     } catch (err) {
-      console.error("Test calendar fetch failed:", err);
+      console.error("Stats calendar fetch failed:", err);
     } finally {
       setCalendarLoading(false);
     }
-  }, [authFetch]);
+  }, [authFetch, currentMonth]);
 
   const fetchOverdueCells = useCallback(
     async (forceRefresh = false) => {
@@ -410,126 +470,26 @@ const StatsDashboard = () => {
         return;
       }
 
-      console.log(">>> ENTERED fetchOverdueCells", { forceRefresh, period });
-
       setCellsLoading(true);
       setCellsError(null);
 
-      console.log("→ Starting fetchOverdueCells", {
-        forceRefresh,
-        period,
-        startDate: "2026-01-22",
-      });
-
       try {
-        const startDate = "2026-01-22"; // adjust as needed
-
-        let allEvents = [];
-        let page = 1;
-        const limit = 90;
-
-        while (true) {
-          console.log(
-            `   Fetching cells page ${page} (limit=${limit}, start=${startDate})`,
-          );
-
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 100000);
-
-          try {
-            const url = `${BACKEND_URL}/events/cells?page=${page}&limit=${limit}&start_date=${startDate}&status=incomplete`;
-            console.log(" → URL:", url);
-
-            const res = await authFetch(url, { signal: controller.signal });
-            clearTimeout(timeoutId);
-
-            console.log(` ← Response status: ${res.status}`);
-
-            if (!res.ok) {
-              const errText = await res.text().catch(() => "No error details");
-              console.warn(`Failed page ${page}: ${res.status} – ${errText}`);
-              throw new Error(
-                `Cells page ${page} failed: ${res.status} – ${errText}`,
-              );
-            }
-
-            const json = await res.json();
-            const pageEvents =
-              json.cells || json.data || json.events || json.results || [];
-
-            console.log(` ← Got ${pageEvents.length} cells on page ${page}`);
-
-            if (pageEvents.length === 0) break;
-
-            allEvents.push(...pageEvents);
-
-            if (pageEvents.length < limit) break;
-            page++;
-          } catch (err) {
-            if (err?.name === "AbortError") {
-              console.warn(`Cell fetch timeout on page ${page}`);
-            } else {
-              console.error(`Cell fetch error on page ${page}:`, err);
-            }
-            break;
-          }
+        const dateRange = getCellPeriodRange(period);
+        const url = `${BACKEND_URL}/stats/cells?start_date=${dateRange.start}&end_date=${dateRange.end}`;
+        const response = await authFetch(url);
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "No error details");
+          throw new Error(`Cells fetch failed: ${response.status} - ${errorText}`);
         }
-
-        console.log(`← Total cells fetched: ${allEvents.length}`);
-        if (allEvents.length > 0) console.table(allEvents.slice(0, 5));
-
-        // ────────────────────────────────────────────────
-        // Filter only incomplete / overdue / missed cells
-        // ────────────────────────────────────────────────
-        const overdueCells = allEvents.filter((cell) => {
-          if ("is_overdue" in cell) {
-            return !!cell.is_overdue; // true → show, false/null/undefined → hide
-          }
-
-          const raw = (cell.status || cell.Status || "").trim();
-          const status = raw.toLowerCase();
-
-          const isIncomplete =
-            status === "incomplete" ||
-            status.includes("incomplete") ||
-            status === "incomp" ||
-            status === "not completed";
-
-          const cellDate = cell.date ? new Date(cell.date) : null;
-          const isValidDate = cellDate && !isNaN(cellDate.getTime());
-
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-
-          const isPast = isValidDate && cellDate < today;
-
-          return isIncomplete && isPast;
-        });
-        console.log(
-          `Filtered down to ${overdueCells.length} overdue/incomplete cells (from ${allEvents.length} total)`,
-        );
-
-        if (overdueCells.length > 0) {
-          console.table(overdueCells.slice(0, 5), [
-            "eventName",
-            "date",
-            "status",
-            "eventLeaderName",
-          ]);
-        }
-
-        setCells(overdueCells);
-        console.log(
-          `Set cells state with ${overdueCells.length} overdue cells`,
-        );
+        const data = await response.json();
+        setCells(Array.isArray(data.cells) ? data.cells : []);
       } catch (err) {
-        console.error("Overdue cells fetch failed:", err);
+        console.error("Stats cells fetch failed:", err);
         setCellsError(err.message || "Failed to load overdue cells");
         toast.error("Could not load overdue cells");
       } finally {
         setCellsLoading(false);
         cellsLockRef.current = false;
-        console.log("fetchOverdueCells finished / released lock");
       }
     },
     [authFetch, period],
@@ -646,8 +606,27 @@ const StatsDashboard = () => {
     fetchStats(false);
   }, [period, fetchOverdueCells, fetchStats]);
 
-  const filteredOverdueCells = useMemo(() => {
-    return [...cells].sort((a, b) => {
+  const cellPeople = useMemo(
+    () =>
+      [...new Set(cells.map((cell) => cell.eventLeaderName?.trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b)),
+    [cells],
+  );
+
+  const filteredCells = useMemo(() => {
+    return cells
+      .filter((cell) => {
+        const status = getCellStatus(cell);
+        const matchesStatus =
+          cellFilter === "all" ||
+          (cellFilter === "overdue" && isOverdue(cell)) ||
+          (cellFilter !== "overdue" && cellFilter === status);
+        const matchesPerson =
+          selectedCellPerson === "all" ||
+          cell.eventLeaderName?.trim() === selectedCellPerson;
+        return matchesStatus && matchesPerson;
+      })
+      .sort((a, b) => {
       const dateA = a.date
         ? new Date(a.date).getTime()
         : Number.MAX_SAFE_INTEGER;
@@ -655,8 +634,35 @@ const StatsDashboard = () => {
         ? new Date(b.date).getTime()
         : Number.MAX_SAFE_INTEGER;
       return dateB - dateA;
-    });
-  }, [cells]);
+      });
+  }, [cells, cellFilter, selectedCellPerson, isOverdue]);
+
+  const overdueCellCount = useMemo(
+    () => cells.filter((cell) => isOverdue(cell)).length,
+    [cells, isOverdue],
+  );
+
+  const cellFilterCounts = useMemo(() => {
+    const peopleFiltered = cells.filter(
+      (cell) =>
+        selectedCellPerson === "all" ||
+        cell.eventLeaderName?.trim() === selectedCellPerson,
+    );
+    const count = (filter) =>
+      filter === "all"
+        ? peopleFiltered.length
+        : filter === "overdue"
+          ? peopleFiltered.filter((cell) => isOverdue(cell)).length
+        : peopleFiltered.filter((cell) => getCellStatus(cell) === filter).length;
+
+    return {
+      all: count("all"),
+      overdue: count("overdue"),
+      incomplete: count("incomplete"),
+      completed: count("completed"),
+      didNotMeet: count("did_not_meet"),
+    };
+  }, [cells, selectedCellPerson, isOverdue]);
 
   const taskPeople = useMemo(
     () =>
@@ -778,14 +784,14 @@ const StatsDashboard = () => {
       let fileName = "";
 
       if (activeTab === 0) {
-        if (!filteredOverdueCells || filteredOverdueCells.length === 0) {
+        if (!filteredCells || filteredCells.length === 0) {
           toast.info(
             "No overdue cells data to download for the selected period.",
           );
           return;
         }
 
-        dataToExport = filteredOverdueCells.map((cell) => ({
+        dataToExport = filteredCells.map((cell) => ({
           "Event ID": cell._id || "",
           "Event Name": cell.eventName || "Unnamed",
           "Event Type": cell.eventTypeName || "",
@@ -963,6 +969,36 @@ const StatsDashboard = () => {
     toast.success(`Exported ${rows.length} tasks to Excel`);
   };
 
+  const downloadCellsExcel = () => {
+    if (filteredCells.length === 0) {
+      toast.info("No cells data to export for the selected filters.");
+      return;
+    }
+
+    const rows = filteredCells.map((cell) => ({
+      "Cell ID": cell._id || "",
+      "Cell Name": cell.eventName || "Unnamed Cell",
+      Date: cell.date ? formatDateForExcel(cell.date) : "",
+      Day: cell.day || "",
+      Leader: cell.eventLeaderName || "",
+      Location: cell.location || "",
+      Status: cell.status || cell.Status || "incomplete",
+      "Did Not Meet": cell.did_not_meet ? "Yes" : "No",
+      "Attendee Count": cell.attendee_count ?? cell.attendees?.length ?? 0,
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(rows),
+      "Cells",
+    );
+    XLSX.writeFile(
+      workbook,
+      `cells_${period}_${cellFilter}_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    );
+    toast.success(`Exported ${rows.length} cells to Excel`);
+  };
+
   const _handleDownloadCalendar = useCallback(() => {
     if (_isDownloading) return;
 
@@ -1028,9 +1064,6 @@ const StatsDashboard = () => {
   useEffect(() => {
     fetchCalendarEvents();
   }, [fetchCalendarEvents]);
-  useEffect(() => {
-    fetchCalendarEvents();
-  }, [currentMonth.getFullYear(), currentMonth.getMonth()]);
 
   useEffect(() => {
     const fetchEventTypes = async () => {
@@ -1608,7 +1641,7 @@ const StatsDashboard = () => {
             title="Overdue Cells"
             color="warning"
             subtitle={getPeriodDisplayText(period)}
-            value={filteredOverdueCells.length}
+            value={overdueCellCount}
             icon={<Warning />}
           />
         </Grid>
@@ -1631,7 +1664,7 @@ const StatsDashboard = () => {
           value={activeTab}
           onChange={(_, v) => setActiveTab(v)}
         >
-          <Tab label={`OVERDUE CELLS (${filteredOverdueCells.length})`} />
+          <Tab label={`OVERDUE CELLS (${overdueCellCount})`} />
           <Tab label={`TASKS (${stats.allTasks.length})`} />
           <Tab label={`CALENDAR (${calendarEvents.length} EVENTS)`} />
         </Tabs>
@@ -1651,24 +1684,25 @@ const StatsDashboard = () => {
               boxShadow: 1,
             }}
           >
-            <Box
-              display="flex"
-              justifyContent="space-between"
-              alignItems="center"
-              mb={2.5}
-              flexWrap="wrap"
-              gap={2}
-            >
+            <Box mb={1.5}>
               <Box>
                 <Typography variant="h6" component="div" fontWeight={600}>
-                  Overdue Cells
+                  Cells
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {getPeriodDisplayText(period)} • {filteredOverdueCells.length}{" "}
-                  found
+                  {getPeriodDisplayText(period)} • {filteredCells.length} found
                 </Typography>
               </Box>
-              <Box display="flex" gap={1.5} alignItems="center">
+            </Box>
+
+            <Box
+              display="flex"
+              justifyContent="flex-start"
+              gap={1.5}
+              alignItems="center"
+              flexWrap="wrap"
+              mb={1.5}
+            >
                 <FormControl size="small" sx={{ minWidth: 150 }}>
                   <InputLabel id="overdue-period-label">Period</InputLabel>
                   <Select
@@ -1684,18 +1718,71 @@ const StatsDashboard = () => {
                     ))}
                   </Select>
                 </FormControl>
+                <FormControl size="small" sx={{ minWidth: 180 }}>
+                  <InputLabel id="cell-person-label">All People</InputLabel>
+                  <Select
+                    labelId="cell-person-label"
+                    value={selectedCellPerson}
+                    label="All People"
+                    onChange={(event) => setSelectedCellPerson(event.target.value)}
+                  >
+                    <MenuItem value="all">All People</MenuItem>
+                    {cellPeople.map((person) => (
+                      <MenuItem key={person} value={person}>
+                        {person}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
                 <Button
-                  color="warning"
-                  variant="outlined"
                   size="small"
-                  disabled={filteredOverdueCells.length === 0}
-                  onClick={() => setOverdueModalOpen(true)}
-                  startIcon={<Visibility fontSize="small" />}
+                  variant="outlined"
+                  startIcon={<Download />}
+                  onClick={downloadCellsExcel}
+                  disabled={filteredCells.length === 0}
+                  sx={{ textTransform: "none", height: 40 }}
                 >
-                  View All
+                  Export Excel
                 </Button>
-              </Box>
             </Box>
+
+            <Tabs
+              value={cellFilter}
+              onChange={(_, value) => setCellFilter(value)}
+              variant={isSmDown ? "scrollable" : "standard"}
+              scrollButtons="auto"
+              sx={{
+                minHeight: 36,
+                mb: 1.5,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                "& .MuiTabs-flexContainer": { justifyContent: "flex-start" },
+                "& .MuiTab-root": {
+                  minHeight: 36,
+                  minWidth: "auto",
+                  px: { xs: 1, sm: 1.5, md: 2 },
+                  py: 0.5,
+                  fontSize: "0.75rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  color: "text.secondary",
+                  "&.Mui-selected": {
+                    color: "text.primary",
+                    fontWeight: 600,
+                  },
+                },
+                "& .MuiTabs-indicator": {
+                  backgroundColor: "primary.main",
+                  height: 3,
+                },
+              }}
+            >
+              <Tab value="overdue" label={`OVERDUE (${cellFilterCounts.overdue})`} />
+              <Tab value="incomplete" label={`INCOMPLETE (${cellFilterCounts.incomplete})`} />
+              <Tab value="completed" label={`COMPLETED (${cellFilterCounts.completed})`} />
+              <Tab value="did_not_meet" label={`DID NOT MEET (${cellFilterCounts.didNotMeet})`} />
+              <Tab value="all" label={`ALL (${cellFilterCounts.all})`} />
+            </Tabs>
 
             {cellsLoading ? (
               <Box
@@ -1725,7 +1812,7 @@ const StatsDashboard = () => {
               >
                 {cellsError}
               </Alert>
-            ) : filteredOverdueCells.length === 0 ? (
+            ) : filteredCells.length === 0 ? (
               <Box
                 sx={{
                   px: 3,
@@ -1747,16 +1834,16 @@ const StatsDashboard = () => {
                   }}
                 />
                 <Typography variant="h6" gutterBottom>
-                  No overdue cells
+                  No cells found
                 </Typography>
                 <Typography variant="body1" sx={{ maxWidth: 480 }}>
-                  All cells are up to date for the selected period.
+                  No cells match the selected period, person, and status.
                 </Typography>
               </Box>
             ) : (
               <Box sx={{ flexGrow: 1, overflowY: "auto", pr: 1 }}>
                 <Stack spacing={2}>
-                  {filteredOverdueCells.map((cell) => (
+                  {filteredCells.map((cell) => (
                     <Card
                       key={cell._id}
                       variant="outlined"
@@ -1887,15 +1974,15 @@ const StatsDashboard = () => {
                                 sx={{ minWidth: 110, fontWeight: 600 }}
                               />
                             )}
-                            {cell.attendees?.length > 0 && (
+                            {(cell.attendee_count ?? cell.attendees?.length ?? 0) > 0 && (
                               <Typography
                                 variant="caption"
                                 color="text.secondary"
                                 display="block"
                                 mt={1}
                               >
-                                {cell.attendees.length} attendee
-                                {cell.attendees.length !== 1 ? "s" : ""}
+                                {cell.attendee_count ?? cell.attendees.length} attendee
+                                {(cell.attendee_count ?? cell.attendees.length) !== 1 ? "s" : ""}
                               </Typography>
                             )}
                           </Box>
@@ -2455,92 +2542,6 @@ const StatsDashboard = () => {
     </Box>
   </DialogContent>
 </Dialog>
-
-      {/* OVERDUE CELLS MODAL */}
-      <Dialog
-        open={overdueModalOpen}
-        onClose={() => setOverdueModalOpen(false)}
-        maxWidth="md"
-        fullWidth
-        fullScreen={isXsDown}
-      >
-        <DialogTitle sx={{ background: "warning", color: "white", p: 3 }}>
-          <Box
-            display="flex"
-            alignItems="center"
-            justifyContent="space-between"
-          >
-            <Box display="flex" alignItems="center" gap={2}>
-              <Warning sx={{ fontSize: 32 }} />
-              <Box>
-                <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                  Overdue / Incomplete Cells ({filteredOverdueCells.length})
-                </Typography>
-                <Typography variant="body2" sx={{ opacity: 0.9 }}>
-                  Cells that need attention
-                </Typography>
-              </Box>
-            </Box>
-            <IconButton
-              onClick={() => setOverdueModalOpen(false)}
-              sx={{ color: "white" }}
-            >
-              <Close />
-            </IconButton>
-          </Box>
-        </DialogTitle>
-
-        <DialogContent dividers sx={{ p: 3 }}>
-          {filteredOverdueCells.length === 0 ? (
-            <Typography color="text.secondary" align="center" py={4}>
-              No overdue cells — great job!
-            </Typography>
-          ) : (
-            <Stack spacing={2}>
-              {filteredOverdueCells.map((cell) => (
-                <Card
-                  key={cell._id}
-                  variant="outlined"
-                  sx={{ p: 2, backgroundColor: "error.50" }}
-                >
-                  <Box display="flex" alignItems="center" gap={2}>
-                    <Avatar sx={{ bgcolor: "warning.main" }}>
-                      <Warning />
-                    </Avatar>
-                    <Box flex={1}>
-                      <Typography variant="subtitle1" fontWeight="bold">
-                        {cell.eventName || "Unnamed Cell"}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Leader: {cell.eventLeaderName || "Not assigned"}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        color="error"
-                        fontWeight="medium"
-                      >
-                        {formatDate(cell.date)} —{" "}
-                        {(
-                          cell.status ||
-                          cell.Status ||
-                          "INCOMPLETE"
-                        ).toUpperCase()}
-                      </Typography>
-                    </Box>
-                    <Chip label={cell.attendees?.length || 0} size="small" />
-                  </Box>
-                </Card>
-              ))}
-            </Stack>
-          )}
-        </DialogContent>
-
-        <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setOverdueModalOpen(false)} variant="outlined">
-            Close
-          </Button>
-        </DialogActions>
-      </Dialog>
 
       <Snackbar
         open={snackbar.open}

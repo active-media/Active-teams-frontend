@@ -1033,7 +1033,7 @@ const isValidObjectId = (id) => {
   return /^[0-9a-fA-F]{24}$/.test(id);
 };
 const Events = () => {
-  const { authFetch, logout } = React.useContext(AuthContext);
+  const { authFetch } = React.useContext(AuthContext);
   const { orgConfig, configLoaded } = useOrgConfig();
   
   // Get user from localStorage immediately (available on login)
@@ -1642,12 +1642,6 @@ const fetchEventsFilters = (filters) => {
         }
 
         try {
-          const token = localStorage.getItem("access_token");
-          if (!token) {
-            logout();
-            window.location.href = "/login";
-            return;
-          }
           const [params, endpoint] = fetchEventsFilters(filters);
 
           const queryString = new URLSearchParams(params).toString();
@@ -1696,7 +1690,6 @@ const fetchEventsFilters = (filters) => {
         isAdmin,
         isRegistrant,
         viewFilter,
-        logout,
         selectedEventTypeFilter,
         selectedStatus,
       ],
@@ -3228,87 +3221,6 @@ const getFilteredEventTypes = (allEventTypes) => {
       handlePageChange(currentPage - 1);
     }
   }, [currentPage, isLoading, handlePageChange]);
-
-  useEffect(() => {
-    const checkAccess = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      const token = localStorage.getItem("access_token");
-      const userProfile = localStorage.getItem("userProfile");
-
-      if (!token || !userProfile) {
-        toast.error("Please log in to access events");
-        setTimeout(() => (window.location.href = "/login"), 2000);
-        return;
-      }
-
-      try {
-        const currentUser = JSON.parse(userProfile);
-        const userRole = currentUser?.role?.toLowerCase() || "";
-        const email = currentUser?.email || "";
-        console.log(email);
-
-        const isAdmin = userRole === "admin";
-        const isLeaderAt12 =
-          userRole.includes("leader at 12") ||
-          userRole.includes("leader@12") ||
-          userRole.includes("leader @12") ||
-          userRole.includes("leader at12") ||
-          userRole === "leader at 12";
-        const isRegistrant = userRole === "registrant";
-        const isLeader144or1728 =
-          userRole.includes("leader at 144") ||
-          userRole.includes("leader at 1278") ||
-          userRole.includes("leader at 1728");
-
-        const isAnyLeader =
-          userRole.includes("leader") || isLeaderAt12 || isLeader144or1728;
-
-        const isUser = userRole === "user";
-
-        if (isUser) {
-          try {
-            const response = await authFetch(
-              `${BACKEND_URL}/check-leader-status`,
-              {
-                headers: { Authorization: `Bearer ${token}` },
-              },
-            );
-
-            const { hasCell, canAccessEvents } = response.data;
-
-            if (!canAccessEvents || !hasCell) {
-              toast.warning("You must have a cell to access the Events page");
-              setTimeout(() => (window.location.href = "/"), 2000);
-              return;
-            }
-          } catch (error) {
-            console.error(" Error checking cell status:", error);
-            toast.error("Unable to verify access. Please contact support.");
-            setTimeout(() => (window.location.href = "/"), 2000);
-            return;
-          }
-        }
-        const hasAccess =
-          isAdmin ||
-          isLeaderAt12 ||
-          isRegistrant ||
-          isLeader144or1728 ||
-          isAnyLeader ||
-          isUser;
-
-        if (!hasAccess) {
-          toast.warning("You do not have permission to access the Events page");
-          setTimeout(() => (window.location.href = "/"), 2000);
-        }
-      } catch (error) {
-        console.error(" Error in access check:", error);
-        toast.error("Error verifying access");
-      }
-    };
-
-    checkAccess();
-  }, [BACKEND_URL]);
 
   useEffect(() => {
     if (eventTypes.length > 0 && !selectedEventTypeFilter) {
