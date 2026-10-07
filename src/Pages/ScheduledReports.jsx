@@ -40,9 +40,11 @@ const cardBg = "#16181d";
 const cardBorder = "#25272e";
 const textPrimary = "#f4f4f5";
 const textSecondary = "#9a9ba3";
-const accent = "#3b82f6";
 const success = "#22c55e";
 const danger = "#ef4444";
+
+// Total tasks each leader is expected to schedule per period (see "out of 12 tasks")
+const TASKS_PER_LEADER = 12;
 
 const formatDate = (date) => {
   if (!date) return "-";
@@ -103,7 +105,7 @@ export default function ScheduledReports() {
   const [period, setPeriod] = useState("thisMonth");
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = state("");
+  const [error, setError] = useState("");
 
   const fetchReport = useCallback(async () => {
     setLoading(true);

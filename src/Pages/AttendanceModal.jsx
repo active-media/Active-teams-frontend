@@ -961,7 +961,6 @@ const LeaderSelectionModal = ({
   onBack,
   onSubmit,
   preloadedPeople = [],
-  autoFilledLeaders,
 }) => {
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
@@ -1723,10 +1722,6 @@ const AttendanceModal = ({
       return;
     }
 
-    const actualEventId = eventId.includes("_")
-      ? eventId.split("_")[0]
-      : eventId;
-
     try {
       const token = localStorage.getItem("token");
 
@@ -2051,7 +2046,7 @@ const AttendanceModal = ({
       const data = await res.json();
       const attendeesArray = data.common_attendees || [];
 
-      const formatted = attendeesArray.map((p) => ({
+      const _formatted = attendeesArray.map((p) => ({
         id: p._id,
         fullName:
           `${p.Name || p.name || ""} ${p.Surname || p.surname || ""}`.trim(),

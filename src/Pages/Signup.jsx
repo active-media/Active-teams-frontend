@@ -401,7 +401,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
 
     try {
       // 1. Create Supabase Auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const { error: authError } = await supabase.auth.signUp({
         email: form.email,
         password: form.password,
       });
@@ -449,7 +449,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
       // 3. Auto-login
       try {
         await login(form.email, form.password);
-      } catch (loginErr) {
+      } catch {
         toast.error(
           "Signup successful, but auto-login failed. Please log in manually.",
           {

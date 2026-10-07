@@ -160,7 +160,7 @@ function ServiceCheckIn() {
   const [consolidationOpen, setConsolidationOpen] = useState(false);
   const [sortModel, setSortModel] = useState([]);
   const [realTimeData, setRealTimeData] = useState(null);
-  const [hasDataLoaded, setHasDataLoaded] = useState(attendees.length > 0);
+  const [_hasDataLoaded, setHasDataLoaded] = useState(attendees.length > 0);
   const [isLoadingPeople, setIsLoadingPeople] = useState(attendees.length === 0);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
@@ -181,7 +181,7 @@ function ServiceCheckIn() {
   const [deleteConfirmation, setDeleteConfirmation] = useState({ open: false, personId: null, personName: "" });
   const [eventHistoryModal, setEventHistoryModal] = useState({ open: false, event: null, type: null, data: [] });
   const [formData, setFormData] = useState(emptyForm);
-  const [contextMenu, setContextMenu] = useState({ mouseX: null, mouseY: null, data: null, type: null });
+  const [_contextMenu, setContextMenu] = useState({ mouseX: null, mouseY: null, data: null, type: null });
 
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down("xs"));
@@ -211,38 +211,6 @@ function ServiceCheckIn() {
       const data = await res.json();
       return data.success ? data : null;
     } catch { return null; }
-  }, [authFetch]);
-
-  const fetchAllPeople = useCallback(async () => {
-    const cache = window.globalPeopleCache;
-    const ts = window.globalCacheTimestamp;
-    if (cache && ts && (Date.now() - ts < CACHE_DURATION) && window.globalPeopleCacheOrg) {
-      const normalised = cache.map(normalisePerson);
-      setAttendees(normalised);
-      setHasDataLoaded(true);
-      setIsLoadingPeople(false);
-      return normalised;
-    }
-
-    setIsLoadingPeople(true);
-    try {
-      const res = await authFetch(`${BASE_URL}/cache/people`);
-      if (!res.ok) throw new Error("Failed to fetch people");
-      const data = await res.json();
-      if (data.success && data.cached_data) {
-        const normalised = data.cached_data.map(normalisePerson);
-        window.globalPeopleCache = data.cached_data;
-        window.globalCacheTimestamp = Date.now();
-        setAttendees(normalised);
-        setHasDataLoaded(true);
-        return normalised;
-      }
-    } catch (err) {
-      toast.error("Failed to load people data. Please refresh.");
-    } finally {
-      setIsLoadingPeople(false);
-    }
-    return [];
   }, [authFetch]);
 
   const transformEvents = useCallback((eventsData, normalisedPeople) => {
@@ -543,7 +511,7 @@ const sortedFilteredAttendees = useMemo(() => {
     const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
     // Score how well a value matches the search terms
-    const matchScore = (value, field) => {
+    const matchScore = (value) => {
       if (!terms.length || !value) return 0;
       const v = value.toString().toLowerCase();
       let score = 0;
@@ -561,8 +529,8 @@ const sortedFilteredAttendees = useMemo(() => {
         result.sort((a, b) => {
           // If there's an active search, boost higher-scoring rows to the top
           if (terms.length > 0) {
-            const sa = matchScore(a[field], field);
-            const sb = matchScore(b[field], field);
+            const sa = matchScore(a[field]);
+            const sb = matchScore(b[field]);
             if (sa !== sb) return sort === "desc" ? sa - sb : sb - sa;
           }
           // Fall back to normal alphabetical sort
@@ -747,9 +715,6 @@ const sortedFilteredAttendees = useMemo(() => {
   const handleContextMenu = useCallback((event, person, type) => {
     event.preventDefault();
     setContextMenu({ mouseX: event.clientX - 2, mouseY: event.clientY - 4, data: person, type });
-  }, []);
-  const handleCloseContextMenu = useCallback(() => {
-    setContextMenu({ mouseX: null, mouseY: null, data: null, type: null });
   }, []);
 
   const handleToggleCheckIn = useCallback(async (attendee) => {
@@ -1023,7 +988,7 @@ const sortedFilteredAttendees = useMemo(() => {
             return { ...base, new_people: newPeopleArr, new_people_count: newPeopleArr.length };
           });
 
-          try { await authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }); } catch { }
+          try { await authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }); } catch { /* best-effort cache refresh */ }
           fetchRealTimeEventData(cleanEventId(currentEventId)).then(fd => { if (fd) setRealTimeData(fd); });
 
           // Create task for leader when new person is added
@@ -1202,7 +1167,7 @@ const sortedFilteredAttendees = useMemo(() => {
         const newPeople = (prev.new_people || []).filter(filterFn);
         return { ...prev, present_attendees: newPresent, new_people: newPeople, present_count: newPresent.length, new_people_count: newPeople.length };
       });
-      try { await authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }); } catch { }
+      try { await authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }); } catch { /* best-effort cache refresh */ }
       toast.success(`"${personName}" deleted successfully`);
     } catch { toast.error("An error occurred while deleting the person"); }
     finally { setIsDeleting(false); setDeleteConfirmation({ open: false, personId: null, personName: "" }); }

@@ -921,7 +921,6 @@ export default function DailyTasks() {
   };
 
   const handleChange = (e) => {
-    const { name, value } = e.target;
     setTaskData({ ...taskData, [e.target.name]: e.target.value });
   };
 
@@ -1214,9 +1213,6 @@ export default function DailyTasks() {
     : (followupDate || fallbackDate);
 
   if (!dateToCheck) return false;
-
-  const getStart = getStartOfWeek;
-  const getEnd = getEndOfWeek;
 
   switch (dateRange) {
     case "today":

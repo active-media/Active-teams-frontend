@@ -1,6 +1,6 @@
 import React from "react";
 import { useMemo, useState, useEffect, useContext, useRef } from "react";
-import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { createTheme, ThemeProvider, CssBaseline } from "@mui/material";
 
 import { AuthContext } from "./contexts/AuthContext";
@@ -52,7 +52,6 @@ const ProtectedEventDetails = withAuthCheck(EventDetails, ['admin', 'leader', 'l
 function App() {
   const { user, loading, authFetch } = useContext(AuthContext);
   const { loadUserProfile, setUserProfile, setProfilePic } = useContext(UserContext);
-  const navigate = useNavigate();
   const location = useLocation();
   const profileRefreshDone = useRef(false);
   const [mode, setMode] = useState(() => localStorage.getItem("themeMode") || "light");
@@ -111,7 +110,7 @@ function App() {
         try {
           const payload = JSON.parse(atob(token.split(".")[1]));
           userId = payload.user_id || payload.sub || payload.id;
-        } catch (e) {
+        } catch {
           return;
         }
       }

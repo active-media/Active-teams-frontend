@@ -87,7 +87,7 @@ export const AuthProvider = ({ children }) => {
   const [loading,         setLoading]         = useState(true);
   const [leaders,         setLeadersState]    = useState(null);
   const [isLeader,        setIsLeader]        = useState(false);
-  const [jwtToken,        setJwtToken]        = useState(null);
+  const [_jwtToken,        _setJwtToken]      = useState(null);
 
   // ── Persistence helpers ────────────────────────────────────────────────────
   const persistUser = (u) => {
@@ -177,7 +177,7 @@ export const AuthProvider = ({ children }) => {
         }
 
         // Legacy credentials valid — create Supabase Auth account
-        const { data: signUpData, error: signUpError } =
+        const { data: _signUpData, error: signUpError } =
           await supabase.auth.signUp({ email, password });
 
         if (signUpError) {

@@ -654,7 +654,10 @@ const MobileEventCard = ({
   isAdmin,
 
   selectedEventTypeFilter,
+  findEventTypeByName,
 }) => {
+  const { authFetch } = React.useContext(AuthContext);
+  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
   if (!theme) {
     return <Box sx={{ height: 100 }} />;
   }
@@ -1016,7 +1019,7 @@ const normalizeEventAttendance = (event) => {
         )}
         <Tooltip title="Download Event Attendance" arrow>
           <IconButton
-            onClick={() => downloadEventAttendance(params.row)}
+            onClick={() => downloadEventAttendance(event)}
             size="small"
             sx={{ color: "#1976d2" }}
           >
@@ -1542,7 +1545,7 @@ const normalizeEventAttendance = (event) => {
         toast.info("No attendees found for selected events.");
         return;
       }
-      console.log("Full event",fullEvent)
+      console.log("Full event",fullEvents)
       buildXlsFromRows(allRows, `events_${status}_${period}`);
       toast.dismiss(TOAST_ID);
       toast.success(`Downloaded ${allRows.length} rows for ${status} (${period})`);
@@ -4611,6 +4614,7 @@ const getTypeValue = (type) => {
                           isLeaderAt12={isLeaderAt12}
                           currentUserLeaderAt1={currentUserLeaderAt1}
                           selectedEventTypeFilter={selectedEventTypeFilter}
+                          findEventTypeByName={findEventTypeByName}
                         />
                       </>
                     ))
@@ -4630,6 +4634,7 @@ const getTypeValue = (type) => {
                           isLeaderAt12={isLeaderAt12}
                           currentUserLeaderAt1={currentUserLeaderAt1}
                           selectedEventTypeFilter={selectedEventTypeFilter}
+                          findEventTypeByName={findEventTypeByName}
                         />
                       </>
                     ))}

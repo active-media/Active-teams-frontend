@@ -172,7 +172,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
     let isActive = true;
     const controller = new AbortController();
 
-    const timer = setTimeout(async () => {
+    setTimeout(async () => {
       try {
         setLocationLoading(true);
         setLocationError("");
@@ -253,7 +253,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
         hasPersonSteps: et.hasPersonSteps,
       })),
     });
-    const hierarchyLevels = getAllHierarchyLevels();
     const determineEventType = () => {
       if (selectedEventTypeObj) {
         return {
