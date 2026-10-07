@@ -385,7 +385,7 @@ const StatsDashboard = () => {
   const [_isDownloading, setIsDownloading] = useState(false);
   const [cellsLoading, setCellsLoading] = useState(false);
   const [cellsError, setCellsError] = useState(null);
-  const { authFetch } = useContext(AuthContext);
+  const { authFetch, user } = useContext(AuthContext);
   const statsLockRef = useRef(false);
   const cellsLockRef = useRef(false);
 
@@ -407,9 +407,100 @@ const StatsDashboard = () => {
     { value: "previousMonth", label: "Previous Month" },
   ];
 
+  // Extract hierarchy information from user profile (similar to Events.jsx)
+  const currentUserLeaderAt1 = useMemo(() => {
+    if (!user) return "";
+    return (
+      user.leaderAt1 ||
+      user.leader_at_1 ||
+      user.leaderAt1Identifier ||
+      user.leaderAt1Name ||
+      ""
+    );
+  }, [user]);
+
+  const currentUserLeaderAt12 = useMemo(() => {
+    if (!user) return "";
+    return (
+      user.leaderAt12 ||
+      user.leader_at_12 ||
+      user.leaderAt12Name ||
+      user.leader12 ||
+      ""
+    );
+  }, [user]);
+
+  const currentUserLeaderAt144 = useMemo(() => {
+    if (!user) return "";
+    return (
+      user.leaderAt144 ||
+      user.leader_at_144 ||
+      user.leaderAt144Name ||
+      user.leader144 ||
+      ""
+    );
+  }, [user]);
+
+  const currentUserRole = useMemo(() => {
+    if (!user) return "";
+    return user.role?.toLowerCase() || "";
+  }, [user]);
+
+  // Check if user has people under them (hierarchy data)
+  const hasDownline = useMemo(() => {
+    if (!user) return false;
+    // Check various indicators that user has a downline
+    return !!(
+      user.LeaderId ||                    // Direct leader ID
+      user.leader12 || user.leader_at_12 || user.leaderAt12 || // Has leader@12
+      user.leader144 || user.leader_at_144 || user.leaderAt144 || // Has leader@144
+      user.leader1728 || user.leader_at_1728 || user.leaderAt1728 || // Has leader@1728
+      currentUserLeaderAt12 ||          // leader@12 name variants (e.g. leaderAt12Name)
+      currentUserLeaderAt144 ||         // leader@144 name variants (e.g. leaderAt144Name)
+      user['LeaderPath[0]'] || user.LeaderPath?.[0] || // Has LeaderPath array
+      user['LeaderPath[1]'] || user.LeaderPath?.[1] ||
+      user['LeaderPath[2]'] || user.LeaderPath?.[2]
+    );
+  }, [user, currentUserLeaderAt12, currentUserLeaderAt144]);
+
+  const isAdmin = useMemo(() => currentUserRole === "admin", [currentUserRole]);
+
+  // Build hierarchy params for API calls (similar to Events.jsx)
+  const buildHierarchyParams = useCallback(() => {
+    const params = new URLSearchParams();
+    
+    // Admin sees everything
+    if (isAdmin) {
+      params.set("leader_at_12_view", "true");
+      params.set("include_subordinate_cells", "true");
+      params.set("show_all_authorized", "true");
+      
+      if (currentUserLeaderAt1) {
+        params.set("leader_at_1_identifier", currentUserLeaderAt1);
+      }
+    } 
+    // Users with downline (leaders at any level) can see their downline
+    else if (hasDownline) {
+      params.set("leader_at_12_view", "true");
+      params.set("include_subordinate_cells", "true");
+      params.set("show_all_authorized", "true");
+      
+      if (currentUserLeaderAt1) {
+        params.set("leader_at_1_identifier", currentUserLeaderAt1);
+      }
+    }
+    // Everyone else sees only their personal data
+    else {
+      params.set("show_personal_cells", "true");
+      params.set("personal", "true");
+    }
+    
+    return params.toString();
+  }, [isAdmin, hasDownline, currentUserLeaderAt1]);
+
   useEffect(() => {
     if (cells.length > 0) {
-      console.group("📅 Overdue Cells — " + cells.length + " found");
+      console.group(" Overdue Cells — " + cells.length + " found");
       console.table(
         cells.map((cell) => ({
           name: cell.eventName || "—",
@@ -474,12 +565,58 @@ const StatsDashboard = () => {
       setCellsError(null);
 
       try {
-        const dateRange = getCellPeriodRange(period);
-        const url = `${BACKEND_URL}/stats/cells?start_date=${dateRange.start}&end_date=${dateRange.end}`;
-        const response = await authFetch(url);
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => "No error details");
-          throw new Error(`Cells fetch failed: ${response.status} - ${errorText}`);
+        const startDate = "2026-01-22"; // adjust as needed
+
+        let allEvents = [];
+        let page = 1;
+        const limit = 90;
+
+        while (true) {
+          console.log(
+            `   Fetching cells page ${page} (limit=${limit}, start=${startDate})`,
+          );
+
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 100000);
+
+          try {
+            const hierarchyParams = buildHierarchyParams();
+            const url = `${BACKEND_URL}/events/cells?page=${page}&limit=${limit}&start_date=${startDate}&status=incomplete${hierarchyParams ? `&${hierarchyParams}` : ""}`;
+            console.log(" → URL:", url);
+
+            const res = await authFetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            console.log(` ← Response status: ${res.status}`);
+
+            if (!res.ok) {
+              const errText = await res.text().catch(() => "No error details");
+              console.warn(`Failed page ${page}: ${res.status} – ${errText}`);
+              throw new Error(
+                `Cells page ${page} failed: ${res.status} – ${errText}`,
+              );
+            }
+
+            const json = await res.json();
+            const pageEvents =
+              json.cells || json.data || json.events || json.results || [];
+
+            console.log(` ← Got ${pageEvents.length} cells on page ${page}`);
+
+            if (pageEvents.length === 0) break;
+
+            allEvents.push(...pageEvents);
+
+            if (pageEvents.length < limit) break;
+            page++;
+          } catch (err) {
+            if (err?.name === "AbortError") {
+              console.warn(`Cell fetch timeout on page ${page}`);
+            } else {
+              console.error(`Cell fetch error on page ${page}:`, err);
+            }
+            break;
+          }
         }
         const data = await response.json();
         setCells(Array.isArray(data.cells) ? data.cells : []);
@@ -492,7 +629,7 @@ const StatsDashboard = () => {
         cellsLockRef.current = false;
       }
     },
-    [authFetch, period],
+    [authFetch, period, buildHierarchyParams],
   );
   const isOverdue = useCallback((cell) => {
     if (!cell) return false;
@@ -531,8 +668,12 @@ const StatsDashboard = () => {
       setStats((prev) => ({ ...prev, loading: true, error: null }));
 
       try {
+        const hierarchyParams = buildHierarchyParams();
+        const url = `${BACKEND_URL}/stats/dashboard-comprehensive?period=${period}${hierarchyParams ? `&${hierarchyParams}` : ""}`;
+        console.log("[Stats] Fetching with hierarchy params:", hierarchyParams);
+        
         const response = await authFetch(
-          `${BACKEND_URL}/stats/dashboard-comprehensive?period=${period}`,
+          url,
           { retryOnAuthFailure: true, maxRetries: 1 },
         );
 
@@ -579,7 +720,7 @@ const StatsDashboard = () => {
         releaseFetchLock(statsLockRef);
       }
     },
-    [period, authFetch],
+    [period, authFetch, buildHierarchyParams],
   );
 
   const handlePeriodChange = (e) => {
