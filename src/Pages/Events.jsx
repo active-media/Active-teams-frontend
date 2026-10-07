@@ -2484,6 +2484,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   const handleCaptureClick = useCallback(async (event) => {
     try {
       const token = localStorage.getItem("access_token");
+      console.log("CAPTURE",event)
       let eventId = event._id || event.id;
       const originalId = eventId;
       if (eventId && eventId.includes("_")) {
@@ -2817,7 +2818,7 @@ const getFilteredEventTypes = (allEventTypes) => {
             }
           }
 
-          const response = await authFetch(`${BACKEND_URL}/events/${eventId}`, {
+          const response = await authFetch(`${BACKEND_URL}/events/${event?.event_id}/${event?.eventName}`, {
             method: "DELETE",
             headers: {
               Authorization: `Bearer ${token}`,

@@ -201,7 +201,8 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
 
       const params = new URLSearchParams({
         weeks: deactivationWeeks.toString(),
-        "is_permanent_deact": isPermanent
+        "is_permanent_deact": isPermanent,
+        "event_id": event.event_id
       });
 
       if (deactivationReason) {
@@ -276,6 +277,7 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
       }
 
       const params = new URLSearchParams();
+      params.append('event_id', event.event_id);
       let endpoint = '/cells/reactivate';
 
       if (editScope === 'single' || !isCellEvent) {
@@ -345,7 +347,7 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
     } else {
       // Immediate reactivation
       handleReactivateCell();
-    }
+    } 
   };
 
   const prepareUpdateData = () => {
@@ -533,7 +535,7 @@ const handleSubmit = async (e, isDeactivating = false) => {
         return;
       }
 
-      endpoint = `/events/person/${encodeURIComponent(originalPersonIdentifier)}/event/${encodeURIComponent(originalEventName)}/day/${encodeURIComponent(originalDay)}`;
+      endpoint = `/events/person/${encodeURIComponent(originalPersonIdentifier)}/event/${encodeURIComponent(originalEventName)}/day/${encodeURIComponent(originalDay)}/event_id/${event?.event_id}/session_id/${event?.session_id}`;
       method = 'PUT';
       body = JSON.stringify(updateData);
 

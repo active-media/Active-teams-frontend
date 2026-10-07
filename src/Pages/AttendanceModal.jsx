@@ -1443,6 +1443,10 @@ const AttendanceModal = ({
     [],
   );
   const [preloadedPeople, setPreloadedPeople] = useState([]);
+  const [peoplePage, setPeoplePage] = useState(1);
+  const [peopleHasMore, setPeopleHasMore] = useState(false);
+  const [peopleTotal, setPeopleTotal] = useState(0);
+  const [isLoadingMorePeople, setIsLoadingMorePeople] = useState(false);
 
   // ─── NEW: flag to prevent duplicate consolidation calls if Save is clicked twice ───
   const [consolidationsCreated, setConsolidationsCreated] = useState(false);
@@ -1926,7 +1930,7 @@ const AttendanceModal = ({
       console.error("Error loading event statistics:", error);
     }
   };
-console.log("NEW CHECKED IN",decisionTypes)
+
   const loadPersistentAttendees = async (eventId) => {
     
     if (!eventId || eventId === "undefined") {
@@ -1946,6 +1950,7 @@ console.log("NEW CHECKED IN",decisionTypes)
       }).toString();
     
       const event_id= event.event_id;
+      console.log("PAYLOAD?",event)
 
       // 2. Append it to your endpoint URL
       const response = await authFetch(
@@ -1968,7 +1973,9 @@ console.log("NEW CHECKED IN",decisionTypes)
 
       const persistentList = data.persistent_attendees || [];
       const checkedInList = data.attendees || [];
-      
+      console.log("PERSISTENT LIST:", persistentList);
+      console.log("CHECKED-IN LIST:", checkedInList);
+
       setPersistentCommonAttendees(persistentList);
 
       const isCompleted = true
@@ -2103,7 +2110,7 @@ console.log("NEW CHECKED IN",decisionTypes)
     try {
       const token = localStorage.getItem("access_token");
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await authFetch(`${BACKEND_URL}/people?perPage=5000`, {
+      const res = await authFetch(`${BACKEND_URL}/people/paginated?page=1&perPage=100`, {
         headers,
       });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -2200,47 +2207,29 @@ console.log("NEW CHECKED IN",decisionTypes)
   }, [isOpen, event?._id, event?.id, event?.date]);
 
   const fetchPeople = useCallback(
-    (q) => {
-      const query = (q || "").trim().toLowerCase();
+    (q, page = 1, append = false) => {
+      const query = (q || "").trim();
 
-      if (!query) {
-        const source =
-          preloadedPeople.length > 0
-            ? preloadedPeople
-            : window.globalPeopleCache?.data || [];
-        setPeople(source.slice(0, 50));
-        setIsSearching(false);
-        return;
+      if (page === 1) {
+        setIsSearching(true);
+      } else {
+        setIsLoadingMorePeople(true);
       }
 
-      const cachedData =
-        preloadedPeople.length > 0
-          ? preloadedPeople
-          : window.globalPeopleCache?.data || [];
+      const params = new URLSearchParams({
+        page: String(page),
+        perPage: "50",
+      });
+      if (query) params.set("name", query);
 
-      if (cachedData.length > 0) {
-        const cachedResults = cachedData
-          .filter((p) => (p.searchText || "").includes(query))
-          .slice(0, 100);
-
-        if (cachedResults.length > 0) {
-          setPeople(cachedResults);
-          setIsSearching(false);
-          return;
-        }
-      }
-      setIsSearching(true);
-      authFetch(
-        `${BACKEND_URL}/people?name=${encodeURIComponent(q)}&perPage=200`,
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-          },
+      authFetch(`${BACKEND_URL}/people/paginated?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
         },
-      )
+      })
         .then((res) => res.json())
         .then((data) => {
-          const arr = data.results || data.people || [];
+          const arr = data.results || [];
           const formatted = arr.map((p) => {
             const leader1 =
               p["Leader @1"] ||
@@ -2269,6 +2258,7 @@ console.log("NEW CHECKED IN",decisionTypes)
 
             return {
               id: p._id,
+              person_id:p.person_id,
               fullName: `${p.Name || ""} ${p.Surname || ""}`.trim(),
               email: p.Email || "",
               leader1: leader1,
@@ -2281,13 +2271,33 @@ console.log("NEW CHECKED IN",decisionTypes)
                 `${p.Name || ""} ${p.Surname || ""} ${p.Email || ""} ${leader1} ${leader12} ${leader144} ${leader1728}`.toLowerCase(),
             };
           });
-          setPeople(formatted);
+          setPeople((prev) => (append ? [...prev, ...formatted] : formatted));
+          setPeoplePage(page);
+          setPeopleHasMore(Boolean(data.hasMore));
+          setPeopleTotal(data.total || 0);
         })
-        .catch(() => setPeople([]))
-        .finally(() => setIsSearching(false));
+        .catch(() => {
+          if (!append) setPeople([]);
+        })
+        .finally(() => {
+          setIsSearching(false);
+          setIsLoadingMorePeople(false);
+        });
     },
-    [preloadedPeople, authFetch, BACKEND_URL],
+    [authFetch, BACKEND_URL],
   );
+
+  const loadMorePeople = useCallback(() => {
+    if (isLoadingMorePeople || isSearching || !peopleHasMore) return;
+    fetchPeople(associateSearch, peoplePage + 1, true);
+  }, [
+    associateSearch,
+    peoplePage,
+    peopleHasMore,
+    isLoadingMorePeople,
+    isSearching,
+    fetchPeople,
+  ]);
 
   useEffect(() => {
     setIsSearching(true);
@@ -2373,7 +2383,7 @@ console.log("NEW CHECKED IN",decisionTypes)
             const headers = { Authorization: `Bearer ${token}` };
 
             const res = await authFetch(
-              `${BACKEND_URL}/people/all-with-fields?perPage=200`,
+              `${BACKEND_URL}/people/paginated?page=1&perPage=200`,
               {
                 headers,
               },
@@ -2383,6 +2393,8 @@ console.log("NEW CHECKED IN",decisionTypes)
             const data = await res.json();
 
             const peopleArray = data.results || data.people || [];
+            setPeopleHasMore(Boolean(data.hasMore));
+            setPeopleTotal(data.total || 0);
 
             const formatted = peopleArray.map((person) => {
               const fullName =
@@ -2498,7 +2510,7 @@ console.log("NEW CHECKED IN",decisionTypes)
   const saveAllAttendees = async (attendees, ticketInfoOverride = null) => {
     if (!event) return false;
 
-    let eventId = event.original_event_id || event._id || event.id;
+    let eventId = event?.event_id
 
     if (!eventId || eventId === "undefined") {
       console.error(
@@ -2589,13 +2601,14 @@ console.log("NEW CHECKED IN",decisionTypes)
     console.log("PERSON ID",data)
     const personWithLeaders = {
       id: data,
-      fullName: person.fullName,
+      person_id:data,
+      full_name: person.fullName,
       email: person.email,
       leader12: person.leader12 || "",
       leader144: person.leader144 || "",
       phone: person.phone || "",
-      invitedBy: person.invitedBy || "",
-      uniqueKey: `${person.id}_${Date.now()}`,
+      // invitedBy: person.invitedBy || "",
+      // uniqueKey: `${person.id}_${Date.now()}`,
       ...(isTicketedEvent && {
         priceName: "",
         price: 0,
@@ -2606,6 +2619,7 @@ console.log("NEW CHECKED IN",decisionTypes)
     };
 
     const updatedAttendees = [...persistentCommonAttendees, personWithLeaders];
+    console.log("NEW ASSOCIATE", personWithLeaders);
     setPersistentCommonAttendees(updatedAttendees);
     setCheckedIn((prev) => ({ ...prev, [person.id]: false }));
 
@@ -2626,10 +2640,35 @@ console.log("NEW CHECKED IN",decisionTypes)
     }
 
     toast.success(`${person.fullName} added to attendees list`);
-    saveAllAttendees(updatedAttendees, attendeeTicketInfo).catch((error) => {
-      console.error("Background save failed:", error);
+    try {
+      const payload = {
+        "associate": true,
+        "attendee":personWithLeaders,
+        "session_id": event?.session_id,
+        "event_name": event?.event_name
+      }
+ 
+      const response = await authFetch(
+          `${BACKEND_URL}/events/${event?.event_id}/persistent-attendees`,
+          { method: "PUT",
+            headers: { 
+              Authorization: `Bearer ${token}`,
+              // "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+          }
+        );
+        if (!response.ok){
+          toast.error("Failed to save to database, but person is added locally");
+        }
+    }catch(e){
       toast.error("Failed to save to database, but person is added locally");
-    });
+    }
+    // save new associated person
+    // saveAllAttendees([personWithLeaders], attendeeTicketInfo).catch((error) => {
+    //   console.error("Background save failed:", error);
+    //   
+    // });
   };
 
   const handleRemoveAttendee = async (personId, personName) => {
@@ -2638,6 +2677,7 @@ console.log("NEW CHECKED IN",decisionTypes)
         (p) => p.id !== personId,
       );
       setPersistentCommonAttendees(updatedAttendees);
+      console.log("HEReeeE",personId)
 
       setCheckedIn((prev) => {
         const newState = { ...prev };
@@ -2664,14 +2704,34 @@ console.log("NEW CHECKED IN",decisionTypes)
           return newState;
         });
       }
-
-      const success = await saveAllAttendees(updatedAttendees);
-
-      if (success) {
-        toast.success(`${personName} removed from attendees`);
-      } else {
-        toast.error("Failed to remove attendee from database");
+      toast.success("Removed associated attendee")
+      try {
+      const payload = {
+        "associate": false,
+        "attendee":{"person_id":personId},
+        "session_id": event?.session_id,
+        "event_name": event?.event_name
       }
+      
+      const token = localStorage.getItem("token"); 
+      const response = await authFetch(
+          `${BACKEND_URL}/events/${event?.event_id}/persistent-attendees`,
+          { method: "PUT",
+            headers: { 
+              Authorization: `Bearer ${token}`,
+              // "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+          }
+        );
+        if (!response.ok){
+          toast.error("Failed to save to database, but person is added locally");
+        }
+    }catch(e){
+      console.error("Failed to remove associate",e)
+      toast.error("Failed to save to database, but person is added locally");
+    }
+
     } catch (error) {
       console.error("Error removing attendee:", error);
       toast.error("Error removing attendee");
@@ -2691,14 +2751,15 @@ console.log("NEW CHECKED IN",decisionTypes)
     }
 
     const combinedMap = new Map();
-
+    
     persistent.forEach((att) => {
       if (att && att.id) {
         const attendeeId = att.id;
         if (attendeeId && !combinedMap.has(attendeeId)) {
           combinedMap.set(attendeeId, {
             id: attendeeId,
-            fullName: att.fullName || att.name || "Unknown Person",
+            person_id: att.person_id || "",
+            fullName: att.fullName || att.full_name || "Unknown Person",
             email: att.email || "",
             leader12: att.leader12 || "",
             leader144: att.leader144 || "",
@@ -2715,29 +2776,29 @@ console.log("NEW CHECKED IN",decisionTypes)
       }
     });
 
-    // savedAttendees.forEach((savedAtt) => {
-    //   if (savedAtt && savedAtt.id) {
-    //     const attendeeId = savedAtt.id;
-    //     if (attendeeId && !combinedMap.has(attendeeId)) {
-    //       combinedMap.set(attendeeId, {
-    //         id: attendeeId,
-    //         fullName: savedAtt.fullName || savedAtt.name || "Unknown Person",
-    //         email: savedAtt.email || "",
-    //         leader12: savedAtt.leader12 || "",
-    //         leader144: savedAtt.leader144 || "",
-    //         phone: savedAtt.phone || "",
-    //         priceName: savedAtt.priceName || "",
-    //         price: savedAtt.price || 0,
-    //         ageGroup: savedAtt.ageGroup || "",
-    //         paymentMethod: savedAtt.paymentMethod || "",
-    //         paidAmount: savedAtt.paidAmount || 0,
-    //         checked_in: savedAtt.checked_in !== false,
-    //         decision: savedAtt.decision || "",
-    //         isPersistent: false,
-    //       });
-    //     }
-    //   }
-    // });
+    savedAttendees.forEach((savedAtt) => {
+      if (savedAtt && savedAtt.id) {
+        const attendeeId = savedAtt.id;
+        if (attendeeId && !combinedMap.has(attendeeId)) {
+          combinedMap.set(attendeeId, {
+            id: attendeeId,
+            fullName: savedAtt.fullName || savedAtt.name || "Unknown Person",
+            email: savedAtt.email || "",
+            leader12: savedAtt.leader12 || "",
+            leader144: savedAtt.leader144 || "",
+            phone: savedAtt.phone || "",
+            priceName: savedAtt.priceName || "",
+            price: savedAtt.price || 0,
+            ageGroup: savedAtt.ageGroup || "",
+            paymentMethod: savedAtt.paymentMethod || "",
+            paidAmount: savedAtt.paidAmount || 0,
+            checked_in: savedAtt.checked_in !== false,
+            decision: savedAtt.decision || "",
+            isPersistent: false,
+          });
+        }
+      }
+    });
 
     return Array.from(combinedMap.values());
   };
@@ -2759,11 +2820,16 @@ console.log("NEW CHECKED IN",decisionTypes)
   ).length;
   console.log("Re-commitment decisions count:", reCommitmentCount);
 
-  const filteredCommonAttendees = getAllCommonAttendees().filter(
-    (person) =>
-      person.fullName.toLowerCase().includes(searchName.toLowerCase()) ||
-      person.email.toLowerCase().includes(searchName.toLowerCase()),
-  );
+  const [filteredCommonAttendees, setFilteredCommonAttendees] = useState([])
+  useEffect(()=>{
+     const filtered = getAllCommonAttendees().filter(
+      (person) =>
+        person.fullName.toLowerCase().includes(searchName.toLowerCase()) ||
+        person.email.toLowerCase().includes(searchName.toLowerCase()),
+    );
+   
+    setFilteredCommonAttendees(filtered);
+  },[persistentCommonAttendees])
 
   const handleSave = async () => {
     if (isSaving) return;
@@ -2806,7 +2872,7 @@ console.log("NEW CHECKED IN",decisionTypes)
             owing = price;
             change = 0;
           }
-          console.log("davido", person)
+          
           const attendee = {
             id: person.id,
             name: person.fullName || "",
@@ -2926,8 +2992,7 @@ console.log("NEW CHECKED IN",decisionTypes)
         result = await response.json();
       }
 
-      // if (result && result.success) {
-      if (true) {
+      if (result && result.success) {
         // ─── NEW: Fire consolidation tasks for each person who made a decision ───
         // Only fire if we haven't already done so (prevents double-fire on double-click)
         if (!consolidationsCreated) {
@@ -4203,7 +4268,7 @@ console.log("NEW CHECKED IN",decisionTypes)
                           const financials = isTicketedEvent
                             ? calculateFinancials(person.id)
                             : null;
-                          const nameParts = (person.fullName || "").split(" ");
+                          const nameParts = (person.fullName || person.full_name || "").split(" ");
                           const firstName = nameParts[0] || "";
                           const lastName = nameParts.slice(1).join(" ") || "";
 
@@ -4525,7 +4590,7 @@ console.log("NEW CHECKED IN",decisionTypes)
                         color: theme.palette.info.main,
                       }}
                     >
-                      {persistentCommonAttendees.length}
+                      {filteredCommonAttendees.length}
                     </div>
                     <div style={styles.statLabel}>Associated People</div>
                   </div>
@@ -4764,7 +4829,7 @@ console.log("NEW CHECKED IN",decisionTypes)
                           people.map((person) => {
                             const isAlreadyAdded =
                               persistentCommonAttendees.some(
-                                (p) => p.id === person.id,
+                                (p) => p.id === person.person_id,
                               );
                             const nameParts = (person.fullName || "").split(
                               " ",
@@ -4825,6 +4890,45 @@ console.log("NEW CHECKED IN",decisionTypes)
                         )}
                       </tbody>
                     </table>
+                  </div>
+                )}
+
+                {peopleHasMore && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "12px 0",
+                    }}
+                  >
+                    <button
+                      onClick={loadMorePeople}
+                      disabled={isLoadingMorePeople}
+                      style={{
+                        padding: "10px 20px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: "#6366f1",
+                        color: "#fff",
+                        cursor: isLoadingMorePeople
+                          ? "not-allowed"
+                          : "pointer",
+                        opacity: isLoadingMorePeople ? 0.6 : 1,
+                        fontSize: 14,
+                        fontWeight: 500,
+                      }}
+                    >
+                      {isLoadingMorePeople ? "Loading..." : "Load more"}
+                    </button>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: theme.palette.text.secondary }}
+                    >
+                      Showing {people.length}
+                      {peopleTotal > 0 ? ` of ${peopleTotal}` : ""}
+                    </Typography>
                   </div>
                 )}
               </>
