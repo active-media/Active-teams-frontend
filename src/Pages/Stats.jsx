@@ -39,6 +39,10 @@ import {
   Tooltip,
   Tabs,
   Tab,
+  Popover,
+  List,
+  ListItemButton,
+  InputAdornment,
   Container,
   CircularProgress,
 } from "@mui/material";
@@ -56,6 +60,9 @@ import {
   Save,
   Event,
   Download,
+  Search,
+  KeyboardArrowDown,
+  Check,
 } from "@mui/icons-material";
 import { toast } from "react-toastify";
 import * as XLSX from "xlsx";
@@ -67,7 +74,6 @@ const toSATime = (d) => {
   try {
     const date = new Date(d);
     if (isNaN(date.getTime())) return null;
-    // South Africa is UTC+2, no daylight saving
     return new Date(
       date.toLocaleString("en-US", { timeZone: "Africa/Johannesburg" }),
     );
@@ -99,9 +105,13 @@ const getCellPeriodRange = (periodType) => {
   switch (periodType) {
     case "thisWeek":
       today.setUTCDate(today.getUTCDate() - mondayOffset);
+      end = new Date(today);
+      end.setUTCDate(end.getUTCDate() + 6);
       break;
     case "thisMonth":
       today.setUTCDate(1);
+      end = new Date(today);
+      end.setUTCMonth(end.getUTCMonth() + 1, 0);
       break;
     case "previousWeek":
       today.setUTCDate(today.getUTCDate() - mondayOffset - 7);
@@ -135,7 +145,82 @@ const getCellStatus = (cell) => {
   return "incomplete";
 };
 
-// Add this memoized component OUTSIDE StatsDashboard
+const normalizePersonSearch = (value) =>
+  String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+
+const taskMatchesPerson = (task, search, scope, people, userId, teamLeaderId) => {
+  const assignedFor = normalizePersonSearch(task.assignedfor);
+  const person = people.find(
+    (candidate) =>
+      normalizePersonSearch(candidate.email) === assignedFor ||
+      normalizePersonSearch(candidate.fullName) === assignedFor,
+  );
+  const normalizedSearch = normalizePersonSearch(search);
+  const exactPerson = normalizedSearch
+    ? people.find(
+        (candidate) =>
+          normalizePersonSearch(candidate.fullName) === normalizedSearch ||
+          normalizePersonSearch(candidate.email) === normalizedSearch,
+      )
+    : null;
+  const matchesSearch =
+    !search ||
+    (exactPerson
+      ? person?.value === exactPerson.value
+      : normalizePersonSearch(
+          `${task.assignedfor} ${person?.fullName} ${person?.email}`,
+        ).includes(normalizedSearch));
+  const selectedLeaderId = scope === "mine" ? userId : teamLeaderId;
+  const matchesScope =
+    scope === "all" ||
+    (!!selectedLeaderId &&
+      [person?.leader12, person?.leader144, person?.leader1728]
+        .filter(Boolean)
+        .some((leaderId) => String(leaderId) === String(selectedLeaderId)));
+
+  return matchesSearch && matchesScope;
+};
+
+const peopleFilterItemSx = (theme) => ({
+  minHeight: 32,
+  px: 1,
+  gap: 0.9,
+  borderRadius: 0.75,
+  color: "inherit",
+  "&:hover": {
+    bgcolor: theme.palette.mode === "dark" ? "#22232c" : "action.hover",
+  },
+  "&.Mui-selected": {
+    bgcolor: theme.palette.mode === "dark" ? "#20212a" : "action.selected",
+  },
+  "&.Mui-selected:hover": {
+    bgcolor: theme.palette.mode === "dark" ? "#282a34" : "action.hover",
+  },
+});
+
+const peopleFilterSectionSx = (theme) => ({
+  px: 1.1,
+  pt: 1.25,
+  pb: 0.45,
+  color: theme.palette.mode === "dark" ? "#747886" : "text.secondary",
+  fontSize: "0.55rem",
+  fontWeight: 700,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+});
+
+const peopleFilterAvatarSx = (index) => ({
+  width: 18,
+  height: 18,
+  fontSize: "0.58rem",
+  fontWeight: 700,
+  bgcolor: ["#9b5cf6", "#ff7a18", "#3986f6", "#d845e8", "#f0a300", "#10b981", "#ef4444"][index % 7],
+});
+
 const TaskGroupRow = React.memo(
   ({ group, isExpanded, onToggle, formatDate }) => {
     const {
@@ -355,10 +440,14 @@ const StatsDashboard = () => {
 
   const [createEventModalOpen, setCreateEventModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
-  const [cellFilter, setCellFilter] = useState("overdue");
+  const [cellFilter, setCellFilter] = useState("all");
   const [selectedCellPerson, setSelectedCellPerson] = useState("all");
   const [taskFilter, setTaskFilter] = useState("all");
-  const [selectedTaskPerson, setSelectedTaskPerson] = useState("all");
+  const [taskPersonSearch, setTaskPersonSearch] = useState("");
+  const [taskPeopleScope, setTaskPeopleScope] = useState("all");
+  const [selectedTeamLeader, setSelectedTeamLeader] = useState(null);
+  const [peopleFilterAnchor, setPeopleFilterAnchor] = useState(null);
+  const taskListRef = useRef(null);
   const [expandedUsers, setExpandedUsers] = useState([]);
   const [newEventData, setNewEventData] = useState({
     eventName: "",
@@ -385,7 +474,7 @@ const StatsDashboard = () => {
   const [_isDownloading, setIsDownloading] = useState(false);
   const [cellsLoading, setCellsLoading] = useState(false);
   const [cellsError, setCellsError] = useState(null);
-  const { authFetch } = useContext(AuthContext);
+  const { authFetch, user } = useContext(AuthContext);
   const statsLockRef = useRef(false);
   const cellsLockRef = useRef(false);
 
@@ -406,25 +495,6 @@ const StatsDashboard = () => {
     { value: "previousWeek", label: "Previous Week" },
     { value: "previousMonth", label: "Previous Month" },
   ];
-
-  useEffect(() => {
-    if (cells.length > 0) {
-      console.group("📅 Overdue Cells — " + cells.length + " found");
-      console.table(
-        cells.map((cell) => ({
-          name: cell.eventName || "—",
-          date: cell.date ? new Date(cell.date).toLocaleDateString() : "—",
-          leader: cell.eventLeaderName || "—",
-          status: cell.status || cell.Status || "incomplete",
-          location: cell.location || "—",
-          id: cell._id?.slice(-6) + "...",
-        })),
-      );
-      console.groupEnd();
-    } else if (!cellsLoading) {
-      console.log("No overdue cells right now");
-    }
-  }, [cells, cellsLoading]);
 
   const fetchCalendarEvents = useCallback(async () => {
     setCalendarLoading(true);
@@ -461,12 +531,7 @@ const StatsDashboard = () => {
 
   const fetchOverdueCells = useCallback(
     async (forceRefresh = false) => {
-      /** CHANGE:
-       * Use the CELLS lock only.
-       * This prevents duplicate CELLS calls, but does NOT affect STATS.
-       */
       if (!canStartFetch(cellsLockRef, forceRefresh)) {
-        console.log("   Already fetching CELLS — skipping duplicate call");
         return;
       }
 
@@ -519,12 +584,7 @@ const StatsDashboard = () => {
 
   const fetchStats = useCallback(
     async (forceRefresh = false) => {
-      /** CHANGE:
-       * Use the STATS lock only.
-       * This prevents duplicate STATS calls, but does NOT affect CELLS.
-       */
       if (!canStartFetch(statsLockRef, forceRefresh)) {
-        console.log("   Already fetching STATS — skipping duplicate call");
         return;
       }
 
@@ -550,10 +610,6 @@ const StatsDashboard = () => {
         setStats({
           overview: data.overview,
           events: data.events || [],
-          /** CHANGE:
-           * The old code had data.fetchOverdueCells which was incorrect.
-           * This keeps it safer by checking common backend field names.
-           */
           overdueCells: data.overdueCells || data.overdue_cells || [],
           allTasks: data.allTasks || [],
           allUsers: data.allUsers || [],
@@ -573,9 +629,6 @@ const StatsDashboard = () => {
         console.error("Fetch stats error:", err);
         setStats((prev) => ({ ...prev, loading: false, error: err.message }));
       } finally {
-        /** CHANGE:
-         * Always release only the stats lock here.
-         */
         releaseFetchLock(statsLockRef);
       }
     },
@@ -583,25 +636,10 @@ const StatsDashboard = () => {
   );
 
   const handlePeriodChange = (e) => {
-    /** CHANGE:
-     * Before, period changes were blocked during fetch.
-     * Now, period changes are safe.
-     */
-
     setPeriod(e.target.value);
   };
 
-  /**
-   * CHANGE:
-   * When the period changes, fetch stats and cells.
-   * They won’t block each other because they use different locks.
-   */
   useEffect(() => {
-    console.log("[OVERDUE + STATS FETCH TRIGGER]", {
-      period,
-      timestamp: new Date().toISOString(),
-    });
-
     fetchOverdueCells(false);
     fetchStats(false);
   }, [period, fetchOverdueCells, fetchStats]);
@@ -665,13 +703,76 @@ const StatsDashboard = () => {
   }, [cells, selectedCellPerson, isOverdue]);
 
   const taskPeople = useMemo(
-    () =>
-      stats.groupedTasks
-        .map((group) => group.user)
+    () => {
+      const peopleByValue = new Map();
+      [...stats.allUsers, ...stats.groupedTasks.map((group) => group.user)]
         .filter(Boolean)
-        .sort((a, b) => (a.fullName || "").localeCompare(b.fullName || "")),
-    [stats.groupedTasks],
+        .forEach((person) => {
+          const fullName = person.fullName || [person.name, person.surname].filter(Boolean).join(" ");
+          const value = person.email || person._id || fullName;
+          if (fullName && value) {
+            peopleByValue.set(value, {
+              ...peopleByValue.get(value),
+              ...person,
+              fullName,
+              value,
+            });
+          }
+        });
+      return [...peopleByValue.values()].sort((a, b) =>
+        a.fullName.localeCompare(b.fullName),
+      );
+    },
+    [stats.allUsers, stats.groupedTasks],
   );
+
+  const taskPeopleLeaders = useMemo(() => {
+    const membersByLeader = new Map();
+    taskPeople.forEach((person) => {
+      [person.leader12, person.leader144, person.leader1728]
+        .filter(Boolean)
+        .forEach((leaderId) => {
+          const key = String(leaderId);
+          membersByLeader.set(key, (membersByLeader.get(key) || 0) + 1);
+        });
+    });
+    return taskPeople
+      .map((person) => ({
+        ...person,
+        teamSize: membersByLeader.get(String(person._id)) || 0,
+      }))
+      .filter((person) => person.teamSize > 0)
+      .sort((a, b) => a.fullName.localeCompare(b.fullName));
+  }, [taskPeople]);
+  const isCurrentUserLeader = taskPeopleLeaders.some(
+    (leader) => String(leader._id) === String(user?._id || user?.id),
+  );
+
+  const matchingTaskPeople = useMemo(() => {
+    const query = normalizePersonSearch(taskPersonSearch);
+    if (!query) return taskPeople;
+    const rankMatch = (person) => {
+      const fullName = normalizePersonSearch(person.fullName);
+      const email = normalizePersonSearch(person.email);
+      if (fullName === query || email === query) return 0;
+      if (fullName.startsWith(query) || email.startsWith(query)) return 1;
+      return 2;
+    };
+    return taskPeople
+      .filter((person) =>
+        normalizePersonSearch(`${person.fullName} ${person.email}`).includes(query),
+      )
+      .sort((a, b) => rankMatch(a) - rankMatch(b) || a.fullName.localeCompare(b.fullName));
+  }, [taskPeople, taskPersonSearch]);
+
+  const matchingTaskLeaders = useMemo(() => {
+    const matchingValues = new Set(matchingTaskPeople.map((person) => person.value));
+    return taskPeopleLeaders.filter((leader) => matchingValues.has(leader.value));
+  }, [matchingTaskPeople, taskPeopleLeaders]);
+
+  useEffect(() => {
+    taskListRef.current?.scrollTo({ top: 0 });
+  }, [taskPersonSearch, taskPeopleScope, selectedTeamLeader, taskFilter]);
 
   const filteredTasks = useMemo(() => {
     return stats.allTasks.filter((task) => {
@@ -685,17 +786,18 @@ const StatsDashboard = () => {
         (taskFilter === "pending" && !isCompleted) ||
         (taskFilter === "incomplete" && !isCompleted) ||
         (taskFilter === "consolidation" && isConsolidation);
-      const matchesPerson =
-        selectedTaskPerson === "all" ||
-        task.assignedfor === selectedTaskPerson ||
-        task.assignedfor ===
-          taskPeople.find(
-            (person) => (person.email || person.fullName) === selectedTaskPerson,
-          )?.fullName;
+      const matchesPerson = taskMatchesPerson(
+        task,
+        taskPersonSearch,
+        taskPeopleScope,
+        taskPeople,
+        user?._id || user?.id,
+        selectedTeamLeader?._id,
+      );
 
       return matchesFilter && matchesPerson;
     });
-  }, [stats.allTasks, taskFilter, selectedTaskPerson, taskPeople]);
+  }, [stats.allTasks, taskFilter, taskPersonSearch, taskPeopleScope, taskPeople, user, selectedTeamLeader]);
 
   const visibleGroupedTasks = useMemo(() => {
     const visibleIds = new Set(filteredTasks.map((task) => task._id));
@@ -722,7 +824,14 @@ const StatsDashboard = () => {
             (filter === "completed" && isCompleted) ||
             (filter !== "completed" && filter !== "consolidation" && !isCompleted) ||
             (filter === "consolidation" && isConsolidation)) &&
-          (selectedTaskPerson === "all" || task.assignedfor === selectedTaskPerson)
+          taskMatchesPerson(
+            task,
+            taskPersonSearch,
+            taskPeopleScope,
+            taskPeople,
+            user?._id || user?.id,
+            selectedTeamLeader?._id,
+          )
         );
       }).length;
 
@@ -733,7 +842,7 @@ const StatsDashboard = () => {
       incomplete: count("incomplete"),
       consolidation: count("consolidation"),
     };
-  }, [stats.allTasks, selectedTaskPerson]);
+  }, [stats.allTasks, taskPersonSearch, taskPeopleScope, taskPeople, user, selectedTeamLeader]);
   const filteredEvents = useMemo(() => stats.events, [stats.events]);
 
   const getPeriodDisplayText = (periodType) => {
@@ -753,7 +862,6 @@ const StatsDashboard = () => {
     }
   };
 
-  // Excel helpers
   const formatDateForExcel = (dateStr) => {
     if (!dateStr) return "";
     try {
@@ -773,7 +881,6 @@ const StatsDashboard = () => {
     }
   };
 
-  // Excel Download Function
   const _downloadFilteredStats = () => {
     try {
       const currentPeriod = getPeriodDisplayText(period);
@@ -1094,7 +1201,6 @@ const StatsDashboard = () => {
 
   useEffect(() => {
     const handleTaskUpdate = () => {
-      console.log("Task update detected, refreshing stats...");
       fetchStats(true);
       fetchOverdueCells(true);
     };
@@ -1146,22 +1252,14 @@ const StatsDashboard = () => {
 
   const getEventsForDate = useCallback(
     (date) => {
-      console.log("Filtering for date:", date);
-
       return calendarEvents.filter((e) => {
         if (!e.date) return false;
 
-        // Create date at local midnight
         const eventDate = new Date(e.date);
         const eventYear = eventDate.getFullYear();
         const eventMonth = String(eventDate.getMonth() + 1).padStart(2, "0");
         const eventDay = String(eventDate.getDate()).padStart(2, "0");
         const eventDateStr = `${eventYear}-${eventMonth}-${eventDay}`;
-
-        console.log(
-          `Comparing event date ${eventDateStr} with selected date ${date} for event:`,
-          e,
-        );
 
         return eventDateStr === date;
       });
@@ -1169,7 +1267,6 @@ const StatsDashboard = () => {
     [calendarEvents],
   );
 
-  // And in eventCounts calculation:
   const eventCounts = {};
   calendarEvents.forEach((e) => {
     if (e.date) {
@@ -1190,15 +1287,9 @@ const StatsDashboard = () => {
   if (shouldRefresh) {
     toast.success("Event created successfully!");
 
-    // Refresh all relevant data
     fetchStats(true);
     fetchOverdueCells(true);
     fetchCalendarEvents();
-
-    // Optional: small delay for better UX
-    setTimeout(() => {
-      console.log("✅ Event created - data refreshed");
-    }, 300);
   }
 }, [fetchStats, fetchOverdueCells, fetchCalendarEvents]);
 
@@ -1222,11 +1313,10 @@ const StatsDashboard = () => {
     });
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // force local midnight
+    today.setHours(0, 0, 0, 0);
     const todayStr = new Date().toLocaleDateString("en-CA", {
       timeZone: "Africa/Johannesburg",
     });
-    console.log("[EnhancedCalendar] todayStr calculated as:", todayStr);
 
     const goToPreviousMonth = () =>
       setCurrentMonth((prev) => {
@@ -1246,10 +1336,6 @@ const StatsDashboard = () => {
       const now = new Date();
       now.setHours(0, 0, 0, 0);
       const todayStr = now.toISOString().split("T")[0];
-      console.log(
-        "[goToToday] Setting currentMonth and selectedDate to:",
-        todayStr,
-      );
       setCurrentMonth(now);
       setSelectedDate(todayStr);
     };
@@ -1359,9 +1445,7 @@ const StatsDashboard = () => {
               <Box
                 key={d.date}
                 onClick={() => {
-                  console.log("User clicked:", d.date);
                   setSelectedDate(d.date);
-                  // Optional: force scroll or focus
                   window.scrollTo(0, 0);
                 }}
                 sx={{
@@ -1664,7 +1748,7 @@ const StatsDashboard = () => {
           value={activeTab}
           onChange={(_, v) => setActiveTab(v)}
         >
-          <Tab label={`OVERDUE CELLS (${overdueCellCount})`} />
+          <Tab label={`CELLS (${cells.length})`} />
           <Tab label={`TASKS (${stats.allTasks.length})`} />
           <Tab label={`CALENDAR (${calendarEvents.length} EVENTS)`} />
         </Tabs>
@@ -1744,6 +1828,19 @@ const StatsDashboard = () => {
                 >
                   Export Excel
                 </Button>
+                <Tooltip title="Refresh cells">
+                  <span>
+                    <IconButton
+                      aria-label="Refresh cells"
+                      onClick={() => fetchOverdueCells(true)}
+                      disabled={cellsLoading}
+                      size="small"
+                      sx={{ ml: "auto", width: 38, height: 38 }}
+                    >
+                      <Refresh />
+                    </IconButton>
+                  </span>
+                </Tooltip>
             </Box>
 
             <Tabs
@@ -1997,7 +2094,6 @@ const StatsDashboard = () => {
         )}
 
         {/* TASKS TAB */}
-               {/* TASKS TAB */}
         {activeTab === 1 && (
           <Paper
             sx={{
@@ -2021,12 +2117,26 @@ const StatsDashboard = () => {
               }}
             >
               <FormControl size="small" sx={{ minWidth: 140 }}>
-                <InputLabel>Period</InputLabel>
                 <Select
                   value={period}
-                  label="Period"
+                  displayEmpty
+                  renderValue={(value) => (
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.8 }}>
+                      <Event sx={{ fontSize: 15, color: "text.secondary" }} />
+                      <span>Period: {periodOptions.find((option) => option.value === value)?.label}</span>
+                    </Box>
+                  )}
                   onChange={handlePeriodChange}
                   disabled={stats.loading}
+                  sx={{
+                    height: 38,
+                    borderRadius: 1.5,
+                    fontSize: "0.78rem",
+                    bgcolor: theme.palette.mode === "dark" ? "#15161c" : "background.paper",
+                    "& .MuiOutlinedInput-notchedOutline": {
+                      borderColor: theme.palette.mode === "dark" ? "#292b35" : "divider",
+                    },
+                  }}
                 >
                   {periodOptions.map((opt) => (
                     <MenuItem key={opt.value} value={opt.value}>
@@ -2036,21 +2146,167 @@ const StatsDashboard = () => {
                 </Select>
               </FormControl>
 
-              <FormControl size="small" sx={{ minWidth: 150 }}>
-                <InputLabel>All People</InputLabel>
-                <Select
-                  value={selectedTaskPerson}
-                  label="All People"
-                  onChange={(event) => setSelectedTaskPerson(event.target.value)}
-                >
-                  <MenuItem value="all">All People</MenuItem>
-                  {taskPeople.map((person) => (
-                    <MenuItem key={person.email || person.fullName} value={person.email || person.fullName}>
-                      {person.fullName}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Button
+                size="small"
+                onClick={(event) => setPeopleFilterAnchor(event.currentTarget)}
+                endIcon={<KeyboardArrowDown sx={{ fontSize: 17 }} />}
+                aria-haspopup="true"
+                aria-expanded={Boolean(peopleFilterAnchor)}
+                sx={{
+                  height: 38,
+                  minWidth: 148,
+                  justifyContent: "space-between",
+                  px: 1.4,
+                  color: "text.primary",
+                  border: "1px solid",
+                  borderColor: theme.palette.mode === "dark" ? "#292b35" : "divider",
+                  borderRadius: 1.5,
+                  bgcolor: theme.palette.mode === "dark" ? "#15161c" : "background.paper",
+                  fontSize: "0.78rem",
+                  fontWeight: 500,
+                  textTransform: "none",
+                  "&:hover": {
+                    bgcolor: theme.palette.mode === "dark" ? "#20212a" : "action.hover",
+                    borderColor: theme.palette.mode === "dark" ? "#3b3e4b" : "text.secondary",
+                  },
+                }}
+              >
+                {taskPeopleScope === "mine"
+                  ? "My People"
+                  : taskPeopleScope === "team"
+                    ? selectedTeamLeader?.fullName || "My People"
+                    : taskPersonSearch || "All People"}
+              </Button>
+              <Popover
+                open={Boolean(peopleFilterAnchor)}
+                anchorEl={peopleFilterAnchor}
+                onClose={() => setPeopleFilterAnchor(null)}
+                anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+                transformOrigin={{ vertical: "top", horizontal: "left" }}
+                PaperProps={{
+                  sx: {
+                    mt: 0.75,
+                    width: 252,
+                    maxHeight: 380,
+                    overflow: "hidden",
+                    color: theme.palette.mode === "dark" ? "#f4f5f8" : "text.primary",
+                    bgcolor: theme.palette.mode === "dark" ? "#191a22" : "background.paper",
+                    border: "1px solid",
+                    borderColor: theme.palette.mode === "dark" ? "#292b35" : "divider",
+                    borderRadius: 1.5,
+                    boxShadow: "0 12px 32px rgba(0,0,0,0.28)",
+                  },
+                }}
+              >
+                <Box sx={{ px: 1.25, pt: 1, pb: 0.5 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    value={taskPersonSearch}
+                    onChange={(event) => setTaskPersonSearch(event.target.value)}
+                    placeholder="Search people"
+                    aria-label="Search people"
+                    InputProps={{
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <Search sx={{ fontSize: 17, color: "#12a5b5" }} />
+                        </InputAdornment>
+                      ),
+                    }}
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        height: 32,
+                        color: "inherit",
+                        fontSize: "0.72rem",
+                        bgcolor: theme.palette.mode === "dark" ? "#15161c" : "action.hover",
+                        "& fieldset": { borderColor: "transparent" },
+                        "&:hover fieldset": { borderColor: "#343744" },
+                        "&.Mui-focused fieldset": { borderColor: "#12a5b5" },
+                      },
+                    }}
+                  />
+                </Box>
+                <Box sx={{ maxHeight: 325, overflowY: "auto", px: 0.75, pb: 0.75 }}>
+                  <List dense disablePadding>
+                    <ListItemButton
+                      selected={taskPeopleScope === "all" && !taskPersonSearch}
+                      onClick={() => {
+                        setTaskPeopleScope("all");
+                        setSelectedTeamLeader(null);
+                        setTaskPersonSearch("");
+                        setPeopleFilterAnchor(null);
+                      }}
+                      sx={peopleFilterItemSx(theme)}
+                    >
+                      <Typography variant="caption" sx={{ flex: 1, fontWeight: 600 }}>
+                        All People
+                      </Typography>
+                      {taskPeopleScope === "all" && !taskPersonSearch && <Check sx={{ fontSize: 15, color: "#12a5b5" }} />}
+                    </ListItemButton>
+                    {matchingTaskLeaders.length > 0 && (
+                      <>
+                        <Typography sx={peopleFilterSectionSx(theme)}>
+                          Leaders (includes their team)
+                        </Typography>
+                        {matchingTaskLeaders.map((leader, index) => (
+                          <ListItemButton
+                            key={`leader-${leader.value}`}
+                            selected={taskPeopleScope === "team" && selectedTeamLeader?.value === leader.value}
+                            onClick={() => {
+                              setTaskPeopleScope("team");
+                              setSelectedTeamLeader(leader);
+                              setTaskPersonSearch("");
+                              setPeopleFilterAnchor(null);
+                            }}
+                            sx={peopleFilterItemSx(theme)}
+                          >
+                            <Avatar sx={peopleFilterAvatarSx(index)}>{leader.fullName.charAt(0).toUpperCase()}</Avatar>
+                            <Typography variant="caption" noWrap sx={{ flex: 1, fontSize: "0.7rem" }}>
+                              {leader.fullName}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: "text.disabled", fontSize: "0.62rem" }}>
+                              +{leader.teamSize} people
+                            </Typography>
+                          </ListItemButton>
+                        ))}
+                      </>
+                    )}
+
+                    {matchingTaskPeople.length > 0 && (
+                      <>
+                        <Typography sx={peopleFilterSectionSx(theme)}>
+                          Individual Members
+                        </Typography>
+                        {matchingTaskPeople.map((person, index) => (
+                          <ListItemButton
+                            key={`person-${person.value}`}
+                            onClick={() => {
+                              setTaskPeopleScope("all");
+                              setSelectedTeamLeader(null);
+                              setTaskPersonSearch(person.fullName);
+                              setPeopleFilterAnchor(null);
+                            }}
+                            sx={peopleFilterItemSx(theme)}
+                          >
+                            <Avatar sx={peopleFilterAvatarSx(index + matchingTaskLeaders.length)}>
+                              {person.fullName.charAt(0).toUpperCase()}
+                            </Avatar>
+                            <Typography variant="caption" noWrap sx={{ flex: 1, fontSize: "0.7rem" }}>
+                              {person.fullName}
+                            </Typography>
+                          </ListItemButton>
+                        ))}
+                      </>
+                    )}
+
+                    {!matchingTaskPeople.length && taskPersonSearch && (
+                      <Typography sx={{ px: 1.5, py: 2, color: "text.secondary", fontSize: "0.7rem" }}>
+                        No matching people
+                      </Typography>
+                    )}
+                  </List>
+                </Box>
+              </Popover>
 
               <Button
                 size="small"
@@ -2062,6 +2318,19 @@ const StatsDashboard = () => {
               >
                 Export CSV
               </Button>
+              <Tooltip title="Refresh tasks">
+                <span>
+                  <IconButton
+                    aria-label="Refresh tasks"
+                    onClick={() => fetchStats(true)}
+                    disabled={stats.loading}
+                    size="small"
+                    sx={{ ml: "auto", width: 38, height: 38 }}
+                  >
+                    <Refresh />
+                  </IconButton>
+                </span>
+              </Tooltip>
             </Box>
 
             {/* Bottom Filter Row: Tabs */}
@@ -2107,6 +2376,7 @@ const StatsDashboard = () => {
 
             {/* Task List Content */}
             <Box
+              ref={taskListRef}
               sx={{
                 flexGrow: 1,
                 overflow: "auto",

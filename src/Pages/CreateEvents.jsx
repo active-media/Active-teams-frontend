@@ -18,7 +18,7 @@ import {
   Autocomplete,
   CircularProgress,
 } from "@mui/material";
-import { useContext } from "react"; // if not already
+import { useContext } from "react";
 import { AuthContext } from "../contexts/AuthContext"
 import LocationOnIcon from "@mui/icons-material/LocationOn";
 import PersonIcon from "@mui/icons-material/Person";
@@ -38,7 +38,6 @@ function generateUUID() {
   });
 }
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-// Geoapify
 const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
 const GEOAPIFY_COUNTRY_CODE = (
   import.meta.env.VITE_GEOAPIFY_COUNTRY_CODE || "za"
@@ -72,6 +71,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
   const [isSearchingPeople, setIsSearchingPeople] = useState(false);
+  const [peopleSearchError, setPeopleSearchError] = useState("");
   const [eventTypeFlags, setEventTypeFlags] = useState({
     isGlobal: false,
     isTicketed: false,
@@ -89,9 +89,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   const [priceTiers, setPriceTiers] = useState([]);
 
   const isSelectingFromDropdown = useRef(false);
-
-  const isAdmin = user?.role === "admin";
-  console.log("view role", isAdmin);
+  const peopleSearchRequestRef = useRef(0);
 
   const [formData, setFormData] = useState({
     eventType: selectedEventTypeObj?.name || selectedEventType || "",
@@ -243,16 +241,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   ];
 
   useEffect(() => {
-    console.log("CreateEvents - Props received:", {
-      selectedEventTypeObj,
-      selectedEventType,
-      eventTypes: eventTypes.map((et) => ({
-        name: et.name,
-        isGlobal: et.isGlobal,
-        isTicketed: et.isTicketed,
-        hasPersonSteps: et.hasPersonSteps,
-      })),
-    });
     const hierarchyLevels = getAllHierarchyLevels();
     const determineEventType = () => {
       if (selectedEventTypeObj) {
@@ -265,7 +253,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
         };
       }
       if (selectedEventType) {
-        console.log("Looking for event type:", selectedEventType);
         if (selectedEventType === "all" || selectedEventType.toUpperCase() === "ALL CELLS") {
           return {
             eventType: "CELLS",
@@ -286,7 +273,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
           );
         });
         if (foundEventType) {
-          console.log("Found event type:", foundEventType);
           return {
             eventType:
               foundEventType.name ||
@@ -297,7 +283,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
             hasPersonSteps: !!foundEventType.hasPersonSteps,
           };
         } else {
-          console.log("Event type not found, using defaults");
           const isCellsType = selectedEventType.toUpperCase() === "CELLS";
           return {
             eventType: selectedEventType,
@@ -318,13 +303,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
     const { eventType, isGlobal, isTicketed, hasPersonSteps } =
       determineEventType();
 
-    console.log("Final event type settings:", {
-      eventType,
-      isGlobal,
-      isTicketed,
-      hasPersonSteps,
-    });
-
     setEventTypeFlags({
       isGlobal,
       isTicketed,
@@ -343,27 +321,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   }, [selectedEventTypeObj, selectedEventType, eventTypes]);
 
   useEffect(() => {
-    console.log("Leader fields debug:", {
-      hasPersonSteps,
-      isGlobalEvent,
-      shouldShowLeaderFields: hasPersonSteps && !isGlobalEvent,
-      formData: {
-        leader1: formData.leader1,
-        leader12: formData.leader12,
-      },
-    });
-  }, [hasPersonSteps, isGlobalEvent, formData.leader1, formData.leader12]);
-
-  useEffect(() => {
-    console.log("Price tier debug:", {
-      isTicketedEvent,
-      isGlobalEvent,
-      shouldShowPriceTiers: isTicketedEvent && !isGlobalEvent,
-      priceTiersCount: priceTiers.length,
-    });
-  }, [isTicketedEvent, isGlobalEvent, priceTiers]);
-
-  useEffect(() => {
     if (isTicketedEvent && priceTiers.length === 0) {
       setPriceTiers([
         {
@@ -378,30 +335,28 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   }, [isTicketedEvent]);
 
 const fetchPeople = async (q) => {
-  console.log("fetchPeople called with:", q);
   if (!q?.trim() || q.trim().length < 2) {
     setPeopleData([]);
     return;
   }
 
+  const requestId = ++peopleSearchRequestRef.current;
   try {
     setIsSearchingPeople(true);
-    console.log("Hitting URL:", `${BACKEND_URL}/people/search-fast?query=${encodeURIComponent(q.trim())}&limit=25`);
+    setPeopleSearchError("");
 
     const res = await authFetch(
       `${BACKEND_URL}/people/search-fast?query=${encodeURIComponent(q.trim())}&limit=25`
     );
-
-    console.log("Response status:", res.status);
+    if (!res.ok) {
+      throw new Error(`People search failed (${res.status})`);
+    }
     const data = await res.json();
-    console.log("Raw API response:", data);
-    console.log("Results count:", data?.results?.length);
-
     const people = data?.results || [];
     const formatted = people.map((p) => ({
       id:            p._id,
       fullName:      p.FullName || `${p.Name || ""} ${p.Surname || ""}`.trim(),
-      email:         p.Email || "",
+      email:         p.Email || p.email || "",
       leader1:       p["Leader @1"] || p.leader1 || "",
       leader12:      p["Leader @12"] || p.leader12 || "",
       leader144:     p["Leader @144"] || p.leader144 || "",
@@ -410,14 +365,20 @@ const fetchPeople = async (q) => {
       isDifferentOrg: false,
     }));
 
-    console.log("Formatted people:", formatted);
-    console.log("Setting peopleData to:", formatted.length, "items");
-    setPeopleData(formatted);
+    if (requestId === peopleSearchRequestRef.current) {
+      setPeopleData(formatted);
+      setPeopleSearchError("");
+    }
   } catch (err) {
     console.error("fetchPeople error:", err);
-    setPeopleData([]);
+    if (requestId === peopleSearchRequestRef.current) {
+      setPeopleData([]);
+      setPeopleSearchError("Could not search people. Check your connection and try again.");
+    }
   } finally {
-    setIsSearchingPeople(false);
+    if (requestId === peopleSearchRequestRef.current) {
+      setIsSearchingPeople(false);
+    }
   }
 };
 
@@ -425,19 +386,15 @@ const fetchPeople = async (q) => {
     const queryString = window.location.search
     const queries = new URLSearchParams(queryString)
     if (selectedEventTypeObj.isTicketed === true) {
-      console.log("Event ID", queries.get("eventId"))
       setEventId(queries.get("eventId"))
     }
   }, [])
   useEffect(() => {
-    console.log("dd", eventId)
     if (!eventId) return;
     const fetchEventData = async () => {
       try {
         const response = await axios.get(`${BACKEND_URL}/events/${eventId}`);
         const data = response.data;
-
-        console.log("Fetched event data:", data);
 
         if (data.date) {
           const dt = new Date(data.date);
@@ -464,10 +421,6 @@ const fetchPeople = async (q) => {
         }
 
         if (data.isTicketed) {
-          console.log(
-            "Setting price tiers for ticketed event:",
-            data.priceTiers,
-          );
           if (
             data.priceTiers &&
             Array.isArray(data.priceTiers) &&
@@ -516,6 +469,9 @@ const fetchPeople = async (q) => {
       return {
         ...prev,
         [field]: value,
+        ...(field === "eventLeader" && !eventId
+          ? { eventLeaderEmail: "" }
+          : {}),
       };
     });
   };
@@ -581,6 +537,14 @@ const fetchPeople = async (q) => {
     if (!formData.location) newErrors.location = "Location is required";
     if (!formData.eventLeader)
       newErrors.eventLeader = "Event leader is required";
+    else if (!eventId && !formData.eventLeaderEmail?.trim())
+      newErrors.eventLeader =
+        "Select an event leader with an email address from the suggestions";
+    else if (
+      !eventId &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.eventLeaderEmail.trim())
+    )
+      newErrors.eventLeader = "The selected event leader must have a valid email address";
     if (!formData.description)
       newErrors.description = "Description is required";
     if (!formData.date) newErrors.date = "Date is required";
@@ -682,8 +646,6 @@ const fetchPeople = async (q) => {
         return;
       }
 
-      console.log("Creating event with type:", eventTypeToSend);
-
       let dayValue = "";
 
       if (!formData.recurringDays || formData.recurringDays.length === 0) {
@@ -705,7 +667,7 @@ const fetchPeople = async (q) => {
         location: formData.location,
         eventLeader: formData.eventLeader,
         eventLeaderName: formData.eventLeader,
-        eventLeaderEmail: formData.eventLeaderEmail || "",
+        eventLeaderEmail: formData.eventLeaderEmail?.trim() || "",
         description: formData.description,
         userEmail: user?.email || "",
         recurring_day: formData.recurringDays,
@@ -753,8 +715,6 @@ const fetchPeople = async (q) => {
         payload.leader12 = formData.leader12 || "";
       }
 
-      console.log("Final Payload:", payload);
-
       const response = await authFetch(
         eventId
           ? `${BACKEND_URL}/events/${eventId}`
@@ -773,8 +733,6 @@ const fetchPeople = async (q) => {
         error.response = { data: responseData };
         throw error;
       }
-
-      console.log("Response:", responseData);
 
       toast.success(
         eventId ? "Event updated successfully!" : "Event created successfully!",
@@ -1456,6 +1414,8 @@ const fetchPeople = async (q) => {
                     setAutoPopulatedFields(new Set());
                   }
                   if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+                  peopleSearchRequestRef.current += 1;
+                  setPeopleSearchError("");
                   if (value.trim().length >= 2) {
                     searchDebounceRef.current = setTimeout(() => {
                       fetchPeople(value);
@@ -1482,6 +1442,7 @@ const fetchPeople = async (q) => {
                 error={!!errors.eventLeader}
                 helperText={
                   errors.eventLeader ||
+                  peopleSearchError ||
                   (isSearchingPeople
                     ? "Searching..."
                     : "Type at least 2 characters to search")
@@ -1582,6 +1543,33 @@ const fetchPeople = async (q) => {
                   ))}
                 </Box>
               )}
+
+              {!isSearchingPeople &&
+                !peopleSearchError &&
+                formData.eventLeader.trim().length >= 2 &&
+                peopleData.length === 0 && (
+                  <Box
+                    role="status"
+                    sx={{
+                      position: "absolute",
+                      top: "100%",
+                      left: 0,
+                      right: 0,
+                      zIndex: 20000,
+                      p: 1.5,
+                      mt: 0.5,
+                      border: "1px solid",
+                      borderColor: "divider",
+                      borderRadius: 1,
+                      bgcolor: "background.paper",
+                      boxShadow: 2,
+                    }}
+                  >
+                    <Typography variant="body2" color="text.secondary">
+                      No matching people found in your organization.
+                    </Typography>
+                  </Box>
+                )}
             </Box>
 
             {hasPersonSteps && !isGlobalEvent && (
