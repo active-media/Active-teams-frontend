@@ -21,6 +21,7 @@ import AttendanceModal from "./Pages/AttendanceModal";
 import EventDetails from "./Pages/EventDetails";
 import Login from "./Pages/Login";
 import Signup from "./Pages/Signup";
+import AuthLayout from "./components/AuthLayout"; // shared shell for /login + /signup
 import ForgotPassword from "./components/ForgotPassword";
 import ResetPassword from "./components/ResetPassword";
 import EventRegistrationForm from "./components/EventRegistrationForm";
@@ -49,7 +50,40 @@ function App() {
   const location = useLocation();
   const profileRefreshDone = useRef(false);
   const [mode, setMode] = useState(() => localStorage.getItem("themeMode") || "light");
-  const theme = useMemo(() => createTheme({ palette: { mode } }), [mode]);
+  const theme = useMemo(
+    () =>
+      createTheme({
+        palette: {
+          mode,
+          primary: {
+            main: mode === "dark" ? "#90caf9" : "#1565c0",
+          },
+          background: {
+            default: mode === "dark" ? "#121212" : "#f5f7fa",
+            paper: mode === "dark" ? "#1e1e1e" : "#ffffff",
+          },
+        },
+        shape: {
+          borderRadius: 10,
+        },
+        typography: {
+          fontFamily: "'DM Sans', sans-serif",
+        },
+        components: {
+          MuiButton: {
+            defaultProps: {
+              disableElevation: true,
+            },
+          },
+          MuiCard: {
+            defaultProps: {
+              elevation: 0,
+            },
+          },
+        },
+      }),
+    [mode],
+  );
 
   const [showSplash, setShowSplash] = useState(true);
   const [splashFinished, setSplashFinished] = useState(false);
@@ -161,7 +195,7 @@ function App() {
     return (
       <SplashScreen
         onFinish={handleSplashFinish}
-        duration={6000}
+        duration={2000}
       />
     );
   }
@@ -178,26 +212,16 @@ function App() {
         <div style={{ flexGrow: 1, minWidth: 0 }}>
           <Routes>
             {/* Public routes */}
-            <Route 
-              path="/login" 
-              element={
-                !user ? (
-                  <Login mode={mode} setMode={setMode} />
-                ) : (
-                  <Navigate to="/" replace />
-                )
-              } 
-            />
-            <Route 
-              path="/signup" 
-              element={
-                !user ? (
-                  <Signup mode={mode} setMode={setMode} />
-                ) : (
-                  <Navigate to="/" replace />
-                )
-              } 
-            />
+<Route element={<AuthLayout mode={mode} setMode={setMode} />}>
+  <Route
+    path="/login"
+    element={!user ? <Login mode={mode} /> : <Navigate to="/" replace />}
+  />
+  <Route
+    path="/signup"
+    element={!user ? <Signup mode={mode} /> : <Navigate to="/" replace />}
+  />
+</Route>
             <Route path="/forgot-password" element={<ForgotPassword mode={mode} />} />
             <Route path="/reset-password" element={<ResetPassword mode={mode} />} />
 

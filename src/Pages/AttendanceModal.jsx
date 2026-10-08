@@ -3915,6 +3915,11 @@ const AttendanceModal = ({
       gap: 12,
       flexWrap: "wrap",
     },
+    subtitle: {
+      margin: "4px 0 0",
+      fontSize: 13,
+      color: theme.palette.text.secondary,
+    },
     ticketBadge: {
       background: theme.palette.warning.main,
       color: theme.palette.warning.contrastText || "#000",
@@ -4431,11 +4436,14 @@ const AttendanceModal = ({
         <div style={styles.modal}>
           <div style={styles.header}>
             <h2 style={styles.title}>
-              ATTENDANCE
+              Attendance
               {isTicketedEvent && (
                 <span style={styles.ticketBadge}>Ticketed Event</span>
               )}
             </h2>
+            <p style={styles.subtitle}>
+              {event?.eventName || "Event"} {event?.date ? `· ${event.date}` : ""}
+            </p>
             <button
               style={styles.addPersonBtn}
               onClick={() => setShowAddPersonModal(true)}
@@ -4463,7 +4471,7 @@ const AttendanceModal = ({
                   }}
                   onClick={() => setActiveTab(0)}
                 >
-                  CAPTURE ATTENDEES
+                  Capture attendance
                 </button>
                 <button
                   style={{
@@ -4472,7 +4480,7 @@ const AttendanceModal = ({
                   }}
                   onClick={() => setActiveTab(1)}
                 >
-                  ASSOCIATE PERSON
+                  Add people
                 </button>
               </>
             )}
@@ -5307,7 +5315,7 @@ const AttendanceModal = ({
 
           <div style={styles.footer}>
             <button style={styles.closeBtn} onClick={onClose}>
-              CLOSE
+              Close
             </button>
 
             <button
@@ -5342,7 +5350,7 @@ const AttendanceModal = ({
                 <polyline points="7 10 12 15 17 10" />
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
-              Download Attendance
+              Download attendance
             </button>
 
             <div
@@ -5358,7 +5366,7 @@ const AttendanceModal = ({
                 onClick={handleDidNotMeet}
                 disabled={isSaving}
               >
-                {isSaving ? "SAVING..." : "DID NOT MEET"}
+                {isSaving ? "Saving..." : "Mark as did not meet"}
               </button>
               <button
                 style={{
@@ -5369,7 +5377,7 @@ const AttendanceModal = ({
                 onClick={handleSave}
                 disabled={isSaving}
               >
-                {isSaving ? "SAVING..." : "SAVE"}
+                {isSaving ? "Saving..." : "Save attendance"}
               </button>
             </div>
           </div>

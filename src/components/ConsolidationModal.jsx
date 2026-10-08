@@ -10,12 +10,14 @@ import {
   Box,
   Typography,
   Alert,
+  useTheme,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import dayjs from "dayjs";
 import Autocomplete from "@mui/material/Autocomplete";
 import { debounce } from "lodash";
 import { AuthContext } from "../contexts/AuthContext";
+import { getTokens, DISPLAY, BODY, inputSx, outlinedBtnSx, primaryBtnSx } from "../theme/checkinTokens";
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 const cleanEventId = (id) => id?.split("_")[0] ?? id;
@@ -122,6 +124,8 @@ const ConsolidationModal = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { authFetch } = useContext(AuthContext);
+  const theme = useTheme();
+  const tokens = getTokens(theme.palette.mode === "dark");
 
   const decisionTypes = ["First Time", "Recommitment"];
 
@@ -444,9 +448,7 @@ const ConsolidationModal = ({
     }
   };
 
-  const roundedInput = {
-    "& .MuiOutlinedInput-root": { borderRadius: "15px" },
-  };
+  const roundedInput = inputSx(tokens);
 
   const renderPersonOption = (props, option) => {
     const fullName =
@@ -454,23 +456,18 @@ const ConsolidationModal = ({
     const isConsolidated = checkIfAlreadyConsolidated(option);
     return (
       <li {...props} key={option._id || option.id}>
-        <Box>
-          <Typography variant="body1">
+        <Box sx={{ py: 0.4 }}>
+          <Typography sx={{ fontSize: "0.9rem", fontWeight: 600, color: tokens.ink }}>
             {fullName}
-            {isConsolidated && (
-              <Typography
-                component="span"
-                variant="caption"
-                color="error"
-                sx={{ ml: 1 }}
-              >
-                (Already Consolidated)
-              </Typography>
-            )}
           </Typography>
           {(option.Email || option.email) && (
-            <Typography variant="caption" color="text.secondary">
+            <Typography sx={{ fontSize: "0.72rem", color: tokens.mute }}>
               {option.Email || option.email}
+            </Typography>
+          )}
+          {isConsolidated && (
+            <Typography sx={{ fontSize: "0.7rem", color: "#d32f2f" }}>
+              Already consolidated
             </Typography>
           )}
         </Box>
@@ -493,131 +490,143 @@ const ConsolidationModal = ({
       onClose={onClose}
       fullWidth
       maxWidth="sm"
-      PaperProps={{ sx: { borderRadius: 3, m: 2, maxHeight: "90vh" } }}
+      PaperProps={{
+        sx: {
+          borderRadius: "18px",
+          bgcolor: tokens.cardBg,
+          border: `1px solid ${tokens.line}`,
+          backgroundImage: "none",
+          m: 2,
+          maxHeight: "90vh",
+        },
+      }}
     >
-      <DialogTitle sx={{ pb: 1 }}>
-        <Typography variant="h5" component="div">
-          Consolidation Assignment
+      <DialogTitle
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          p: "16px 20px",
+          borderBottom: `1px solid ${tokens.line}`,
+        }}
+      >
+        <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "1.25rem" }}>
+          Consolidation
         </Typography>
       </DialogTitle>
 
-      <DialogContent dividers>
+      <DialogContent sx={{ p: "16px 20px 12px", overflowY: "auto" }}>
         {error && (
-          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError("")}>
+          <Alert severity="error" sx={{ mb: 2, borderRadius: "12px" }} onClose={() => setError("")}>
             {error}
           </Alert>
         )}
 
-        <TextField
-          label="Task Type"
-          value="Church - Consolidation"
-          fullWidth
-          margin="normal"
-          disabled
-          sx={roundedInput}
-        />
+        <Box sx={{ mb: 2.5 }}>
+          <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>
+            Person who made a decision *
+          </Typography>
+          <Autocomplete
+            options={recipients}
+            loading={loadingRecipients}
+            getOptionLabel={(option) =>
+              `${option.Name || option.name || ""} ${option.Surname || option.surname || ""}`.trim()
+            }
+            value={recipient}
+            onChange={(e, newValue) => setRecipient(newValue)}
+            onInputChange={(e, newInputValue) => handleSearch(newInputValue)}
+            filterOptions={(x) => x}
+            renderOption={renderPersonOption}
+            noOptionsText={
+              searchQuery.length < 2
+                ? "Type at least 2 characters to search..."
+                : "No people found"
+            }
+            sx={{
+              "& .MuiOutlinedInput-root": {
+                height: 44,
+                borderRadius: "12px",
+                bgcolor: tokens.cardBg,
+                fontFamily: BODY,
+                color: tokens.ink,
+                "& fieldset": { borderColor: tokens.line, borderWidth: 1.5 },
+                "&:hover fieldset": { borderColor: tokens.accent },
+                "&.Mui-focused fieldset": { borderColor: tokens.accent, borderWidth: 1.5 },
+              },
+            }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                placeholder="Search by name"
+                sx={roundedInput}
+              />
+            )}
+            getOptionDisabled={(option) => checkIfAlreadyConsolidated(option)}
+          />
+        </Box>
 
-        <Autocomplete
-          options={recipients}
-          loading={loadingRecipients}
-          getOptionLabel={(option) =>
-            `${option.Name || option.name || ""} ${option.Surname || option.surname || ""}`.trim()
-          }
-          value={recipient}
-          onChange={(e, newValue) => setRecipient(newValue)}
-          onInputChange={(e, newInputValue) => handleSearch(newInputValue)}
-          filterOptions={(x) => x}
-          renderOption={renderPersonOption}
-          noOptionsText={
-            searchQuery.length < 2
-              ? "Type at least 2 characters to search..."
-              : "No people found"
-          }
-          renderInput={(params) => (
-            <TextField
-              {...params}
-              label="Search Person *"
-              margin="normal"
-              fullWidth
-              required
-              placeholder="Search by name..."
-              helperText="Search for the person who made a decision"
-              sx={roundedInput}
-            />
-          )}
-        />
+        <Box sx={{ mb: 2.5 }}>
+          <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>
+            Decision type *
+          </Typography>
+          <TextField
+            select
+            value={taskStage}
+            onChange={(e) => setTaskStage(e.target.value)}
+            fullWidth
+            required
+            error={!taskStage && isSubmitting}
+            sx={roundedInput}
+          >
+            {decisionTypes.map((type) => (
+              <MenuItem key={type} value={type}>
+                {type}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
 
-        <TextField
-          label="Assigned To Leader"
-          value={assignedTo}
-          fullWidth
-          margin="normal"
-          disabled
-          helperText={
-            assignedTo === "No Leader Assigned"
-              ? "Warning: No leader found for this person"
-              : "Automatically assigned to this person's direct leader"
-          }
-          color={assignedTo === "No Leader Assigned" ? "warning" : "primary"}
-          sx={roundedInput}
-        />
-
-        <TextField
-          label="Due Date & Time"
-          value={dateTime}
-          fullWidth
-          margin="normal"
-          disabled
-          helperText="Automatically set to current date/time"
-          sx={roundedInput}
-        />
-
-        <TextField
-          select
-          label="Decision Type *"
-          value={taskStage}
-          onChange={(e) => setTaskStage(e.target.value)}
-          fullWidth
-          margin="normal"
-          required
-          error={!taskStage && isSubmitting}
-          helperText={
-            !taskStage && isSubmitting ? "Please select the decision made" : ""
-          }
-          sx={roundedInput}
-        >
-          {decisionTypes.map((type) => (
-            <MenuItem key={type} value={type}>
-              {type}
-            </MenuItem>
-          ))}
-        </TextField>
-
-        <TextField
-          label="Status"
-          value="Open"
-          fullWidth
-          margin="normal"
-          disabled
-          sx={roundedInput}
-        />
+        <Box sx={{ bgcolor: tokens.fieldBg, border: `1px solid ${tokens.line}`, borderRadius: "14px", p: "12px 14px" }}>
+          <Box sx={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 1.5 }}>
+            <Box>
+              <Typography sx={{ fontSize: "0.75rem", color: tokens.mute, fontWeight: 600, fontFamily: BODY }}>Follow-up task</Typography>
+              <Typography sx={{ fontSize: "0.9rem", color: tokens.ink, fontWeight: 600, fontFamily: BODY }}>Church – Consolidation</Typography>
+            </Box>
+            <Box>
+              <Typography sx={{ fontSize: "0.75rem", color: tokens.mute, fontWeight: 600, fontFamily: BODY }}>Assigned to</Typography>
+              <Typography sx={{ fontSize: "0.9rem", color: assignedTo === "No Leader Assigned" ? "#d32f2f" : tokens.ink, fontWeight: 600, fontFamily: BODY }}>
+                {assignedTo || "Set when you pick a person"}
+              </Typography>
+            </Box>
+            <Box>
+              <Typography sx={{ fontSize: "0.75rem", color: tokens.mute, fontWeight: 600, fontFamily: BODY }}>Due</Typography>
+              <Typography sx={{ fontSize: "0.9rem", color: tokens.ink, fontWeight: 600, fontFamily: BODY }}>{dateTime || "—"}</Typography>
+            </Box>
+            <Box>
+              <Typography sx={{ fontSize: "0.75rem", color: tokens.mute, fontWeight: 600, fontFamily: BODY }}>Status</Typography>
+              <Typography sx={{ fontSize: "0.9rem", color: tokens.ink, fontWeight: 600, fontFamily: BODY }}>Open</Typography>
+            </Box>
+          </Box>
+        </Box>
       </DialogContent>
 
-      <DialogActions sx={{ p: 2 }}>
+      <DialogActions sx={{ p: "12px 20px", borderTop: `1px solid ${tokens.line}`, gap: 1 }}>
+        <Typography sx={{ mr: "auto", fontSize: "0.8125rem", color: tokens.mute, fontFamily: BODY }}>
+          The task is assigned to their direct leader.
+        </Typography>
         <Button
           onClick={onClose}
-          color="inherit"
           disabled={loading || isSubmitting}
+          sx={{ ...outlinedBtnSx(tokens), minWidth: 96 }}
         >
           Cancel
         </Button>
         <LoadingButton
           onClick={handleFinish}
           variant="contained"
-          color="primary"
           loading={loading}
           disabled={isSubmitDisabled}
-          sx={{ minWidth: 100 }}
+          sx={{ ...primaryBtnSx(tokens), minWidth: 100 }}
         >
           {isSubmitting ? "Saving..." : "Save"}
         </LoadingButton>

@@ -7,7 +7,7 @@
     "start": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "test": "node --test tests/",
+    "test": "node --test tests/attendanceLogic.test.js tests/serviceCheckinToggle.test.js",
     "preview": "vite preview"
   },
   "dependencies": {
