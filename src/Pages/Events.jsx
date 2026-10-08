@@ -34,6 +34,7 @@ import DialogActions from "@mui/material/DialogActions";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
 import GetAppIcon from "@mui/icons-material/GetApp";
+import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
 
 import Eventsfilter from "./AddPersonToEvents";
 import CreateEvents from "./CreateEvents";
@@ -43,6 +44,7 @@ import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { AuthContext } from "../contexts/AuthContext";
 import {supabase} from '../services/supabase-client'
+import { normalizeEventAttendance, resolveHeadcount } from "../utils/attendanceLogic";
 
 const formatRecurringDays = (recurringDays) => {
   if (!recurringDays || recurringDays.length === 0) {
@@ -124,6 +126,11 @@ const styles = {
     transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
     textTransform: "uppercase",
     whiteSpace: "nowrap",
+  },
+  statusBadgeAll: {
+    backgroundColor: "#fff",
+    color: "#333",
+    borderColor: "#333",
   },
   statusBadgeIncomplete: {
     backgroundColor: "#FFA500",
@@ -495,7 +502,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
     field: "overdue",
     headerName: "Status",
     flex: 0.8,
-    minWidth: 100,
+    minWidth: 90,
     renderCell: (params) => {
       const isOverdueEvent = isOverdue(params.row);
       const status = params.row.status || "incomplete";
@@ -521,7 +528,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
     field: "recurring_info",
     headerName: "Recurring",
     flex: 0.8,
-    minWidth: 120,
+    minWidth: 90,
     renderCell: (params) => {
       if (!params?.row) return <Box sx={{ color: "#6c757d", fontSize: "0.95rem" }}>-</Box>;
       const row = params.row;
@@ -544,7 +551,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
         field: "eventName",
         headerName: "Event Name",
         flex: 1.2,
-        minWidth: 160,
+        minWidth: 120,
         renderCell: (params) => (
           <Box sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 }} title={params.value || ""}>
             {params.value || "-"}
@@ -555,7 +562,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
         field: "eventLeaderName",
         headerName: "Event Leader Name",
         flex: 1,
-        minWidth: 160,
+        minWidth: 120,
         renderCell: (params) => (
           <Box sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 180 }} title={params.value || ""}>
             {params.value || "-"}
@@ -566,7 +573,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
         field: "eventLeaderEmail",
         headerName: "Event Leader Email",
         flex: 1,
-        minWidth: 180,
+        minWidth: 150,
         renderCell: (params) => (
           <Box sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200 }} title={params.value || ""}>
             {params.value || "-"}
@@ -577,14 +584,14 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
         field: "day",
         headerName: "Day",
         flex: 0.7,
-        minWidth: 100,
+        minWidth: 80,
         renderCell: (params) => params.value || "-",
       },
       {
         field: "date",
         headerName: "Date",
         flex: 0.9,
-        minWidth: 120,
+        minWidth: 115,
         renderCell: (params) => formatDate(params.value),
       },
     ];
@@ -620,13 +627,22 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
     return !(exactMatch || caseInsensitiveMatch || containsOverdue || containsDisplayDate || containsOriginated || containsLeader12 || shouldExcludeLeader1 || containsPersonSteps);
   });
 
+  // Keep every column that starts with "event" together (Event Name,
+  // Event Leader, Event Leader Email, ...) so they read as one block no
+  // matter what order the backend returns the fields in.
+  const groupedEventFields = [...filteredFields].sort((a, b) => {
+    const aEvent = a.toLowerCase().startsWith("event");
+    const bEvent = b.toLowerCase().startsWith("event");
+    return aEvent === bEvent ? 0 : aEvent ? -1 : 1;
+  });
+
   const columns = [statusCol, recurringCol];
   columns.push(
-    ...filteredFields.map((key) => ({
+    ...groupedEventFields.map((key) => ({
       field: key,
       headerName: key.replace(/_/g, " ").replace(/([A-Z])/g, " $1").replace(/^./, (str) => str.toUpperCase()),
       flex: 1,
-      minWidth: 150,
+      minWidth: 130,
       renderCell: (params) => {
         const value = params.value;
         if (key.toLowerCase().includes("date")) return formatDate(value);
@@ -655,13 +671,14 @@ const MobileEventCard = ({
   isAdmin,
 
   selectedEventTypeFilter,
+  eventTypes,
 }) => {
+  const { authFetch } = React.useContext(AuthContext);
   if (!theme) {
     return <Box sx={{ height: 100 }} />;
   }
   const isDark = theme.palette.mode === "dark";
   const borderColor = isDark ? theme.palette.divider : "#e9ecef";
-  const { authFetch} = React.useContext(AuthContext);
   const attendeesCount = event.attendees?.length || 0;
   const isCellEvent =
     selectedEventTypeFilter === "all" ||
@@ -708,11 +725,19 @@ const findEventTypeByName = (typeName) => {
       return;
     }
 
-    const headers = Object.keys(rows[0]);
+    // Build a union of all keys across all rows so that columns aren't
+    // omitted when the first row lacks some fields (common when merging
+    // ticketed/non-ticketed rows from multiple events).
+    const headerSet = rows.reduce((set, r) => {
+      Object.keys(r || {}).forEach((k) => set.add(k));
+      return set;
+    }, new Set());
+    const headers = Array.from(headerSet);
+
     const columnWidths = headers.map((header) => {
       let maxLength = header.length;
       rows.forEach((r) => {
-        const v = String(r[header] || "");
+        const v = String((r && r[header]) || "");
         if (v.length > maxLength) maxLength = v.length;
       });
       return Math.min(Math.max(maxLength * 7 + 5, 65), 350);
@@ -789,99 +814,6 @@ ${xmlCols}
     }, 100);
   };
 
-const normalizeEventAttendance = (event) => {
-  if (!event) return [];
-  const eventDate = event.date;
-
-  // 👇 Add this temporarily to see exact field names your API returns
-  console.log("FULL EVENT FIELDS:", JSON.stringify(event, null, 2));
-
-  const eventTypeName = event.eventType || event.event_type || event.type || "";
-  const eventTypeObj = findEventTypeByName(eventTypeName);
-  const isTicketed =
-    eventTypeObj?.isTicketed === true ||
-    event.isTicketed === true ||
-    event.is_ticketed === true ||
-    event.ticketed === true;
-
-  const peopleMap = new Map();
-
-  const addPeople = (list, checkedIn) => {
-    if (!Array.isArray(list)) return;
-    list.forEach((person) => {
-      const key = person.email || person.fullName || person.name || Math.random();
-      if (!peopleMap.has(key)) {
-        peopleMap.set(key, { ...person, checkedIn });
-      } else if (checkedIn) {
-        peopleMap.set(key, { ...peopleMap.get(key), checkedIn: true });
-      }
-    });
-  };
-
-  if (event.attendance && typeof event.attendance === "object") {
-    const dateAttendance = event.attendance[eventDate];
-    if (dateAttendance?.attendees) addPeople(dateAttendance.attendees, true);
-  }
-
-  addPeople(event.attendees, true);
-  addPeople(event.registrants, false);
-  addPeople(event.registered, false);
-  addPeople(event.invited, false);
-  addPeople(event.members, false);
-  addPeople(event.persistent_attendees, false);
-
-  if (event.attendance_data) {
-    addPeople(event.attendance_data.attendees, true);
-    addPeople(event.attendance_data.registrants, false);
-    addPeople(event.attendance_data.registered, false);
-  }
-
-  if (peopleMap.size === 0) return [];
-
-  const leaderKeys = Object.keys(event).filter(k =>
-    k.toLowerCase().includes("leader") || k.toLowerCase().includes("at1") || k.toLowerCase().includes("144")
-  );
-  console.log("LEADER  FIELDS:", leaderKeys.reduce((acc, k) => ({ ...acc, [k]: event[k] }), {}));
-
-  
-  const leaderAt12  = event.leader12 || event.leaderAt12 || event.leader_at_12 || "";
-  const leaderAt1   = event.leader1  || event.leaderAt1  || event.leader_at_1  || event.leaderAt1Name  || "";
-  const leaderAt144 = event.leader144 || event.leaderAt144 || event.leader_at_144 || event.leaderAt144Name || "";
-
-  const hasLeaderHierarchy = leaderAt1 || leaderAt12 || leaderAt144;
-
-  return Array.from(peopleMap.values()).map((person) => {
-    const row = {
-      "Event Name":        event.eventName || event["Event Name"] || "",
-      "Event Type":        eventTypeName,
-      "Is Ticketed":       isTicketed ? "Yes" : "No",
-      "Event Date":        eventDate,
-      "Checked In":        person.checkedIn ? "Yes" : "No",
-      "Name":              person.fullName || person.name || "",
-      "Email":             person.email || "",
-      "Phone":             person.phone || "",
-      "Decision":          person.decision || person.Decision || "",
-      "Event Leader Name": event.eventLeaderName || event.Leader || "",
-    };
-
-    if (hasLeaderHierarchy) {
-      if (leaderAt1)   row["Leader @1"]   = leaderAt1;
-      if (leaderAt12)  row["Leader @12"]  = leaderAt12;
-      if (leaderAt144) row["Leader @144"] = leaderAt144;
-    }
-
-    if (isTicketed) {
-      row["Price Tier"]     = person.priceTier || person.price_tier || person.PriceTier || "";
-      row["Payment Method"] = person.paymentMethod || person.payment_method || "";
-      row["Price"]          = person.price  !== undefined ? `R${Number(person.price).toFixed(2)}`  : "";
-      row["Paid"]           = person.paid   !== undefined ? `R${Number(person.paid).toFixed(2)}`   : "";
-      row["Owing"]          = person.owing  !== undefined ? `R${Number(person.owing).toFixed(2)}`  : "";
-    }
-
-    return row;
-  });
-};
-
   const fetchEventFull = async (event) => {
 
     try {
@@ -903,14 +835,17 @@ const normalizeEventAttendance = (event) => {
     }
   };
 
-  const downloadEventAttendance = async (event) => {
-  const TOAST_ID = `download-event-${event?._id || event?.id || Date.now()}`;
+  const downloadEventAttendance = async (event, { everyone = false } = {}) => {
+  const TOAST_ID = `download-event-${event?._id || event?.id || Date.now()}-${everyone ? "everyone" : "checked"}`;
   try {
     toast.info("Preparing event download…", { toastId: TOAST_ID, autoClose: false });
 
     const fullEvent = await fetchEventFull(event); // Always fetch full event
 
-    const rows = normalizeEventAttendance(fullEvent);
+    const rows = normalizeEventAttendance(fullEvent, {
+      getEventType: findEventTypeByName,
+      includeEveryone: everyone,
+    });
 
     if (!rows || rows.length === 0) {
       toast.dismiss(TOAST_ID);
@@ -920,11 +855,15 @@ const normalizeEventAttendance = (event) => {
     console.log("Full event",fullEvent)
     buildXlsFromRows(
       rows,
-      `attendance_${(fullEvent.eventName || "event").replace(/\s/g, "_")}`,
+      `${everyone ? "everyone" : "attendance"}_${(fullEvent.eventName || "event").replace(/\s/g, "_")}`,
     );
 
     toast.dismiss(TOAST_ID);
-    toast.success(`Downloaded ${rows.length} people for this event`);
+    toast.success(
+      everyone
+        ? `Downloaded ${rows.length} associated people for this event`
+        : `Downloaded ${rows.length} people for this event`,
+    );
   } catch (err) {
     console.error("Download event attendance failed:", err);
     toast.dismiss(TOAST_ID);
@@ -1009,10 +948,10 @@ const normalizeEventAttendance = (event) => {
           <span style={styles.mobileCardValue}>{event.leader1 || "N/A"}</span>
         </div>
       )}
-      {!event.isTicketed && <div style={styles.mobileCardRow}>
+      <div style={styles.mobileCardRow}>
         <span style={styles.mobileCardLabel}>Leader @12:</span>
         <span style={styles.mobileCardValue}>{event.leader12 || "N/A"}</span>
-      </div>}
+      </div>
       <div style={styles.mobileActions}>
         <Tooltip title={`View Attendance (${attendeesCount} people)`}>
           <IconButton
@@ -1050,6 +989,15 @@ const normalizeEventAttendance = (event) => {
             sx={{ color: "#1976d2" }}
           >
             <GetAppIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="Download Everyone (Event)" arrow>
+          <IconButton
+            onClick={() => downloadEventAttendance(event, { everyone: true })}
+            size="small"
+            sx={{ color: "#7b1fa2" }}
+          >
+            <PeopleAltIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       </div>
@@ -1105,7 +1053,17 @@ const Events = () => {
   const isLeader = normalizedRole === "leader" && !isLeaderAt12;
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-  const DEFAULT_API_START_DATE = "2025-11-30";
+  // Earliest date the API is asked for. This was hardcoded to "2025-11-30",
+  // which silently hid every event captured before that date from the Events
+  // list with no way for a user to widen it.
+  //
+  // The backend expands each recurring event into one instance per week in the
+  // window, so this value is the main cost lever. Measured against production:
+  //   2025-01-01 -> 3,202 instances    2015-01-01 -> 18,217 instances
+  // The oldest event in the database is 2025-12-25, so 2025-01-01 covers all
+  // existing history while keeping the instance count bounded. Revisit before
+  // 2027, or make this a rolling window.
+  const DEFAULT_API_START_DATE = "2025-01-01";
 
   const [showFilter, setShowFilter] = useState(false);
   const [events, setEvents] = useState([]);
@@ -1125,7 +1083,9 @@ const Events = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
-  const [selectedStatus, setSelectedStatus] = useState("incomplete");
+  // "all" by default: defaulting to "incomplete" hid every completed and
+  // did-not-meet event until the user manually changed the filter.
+  const [selectedStatus, setSelectedStatus] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -1154,6 +1114,29 @@ const Events = () => {
   }, [isLeaderAt12, isRegularUser, isRegistrant, isAdmin]);
 
   const [viewFilter, setViewFilter] = useState(initialViewFilter);
+
+  // Live refs so delayed/auto refreshes always use the CURRENT view scope
+  // instead of the scope that was active when the request was scheduled.
+  const viewFilterRef = useRef(initialViewFilter);
+  useEffect(() => {
+    viewFilterRef.current = viewFilter;
+  }, [viewFilter]);
+  const roleFlagsRef = useRef({
+    isAdmin,
+    isRegistrant,
+    isRegularUser,
+    isLeaderAt12,
+    isLeader,
+  });
+  useEffect(() => {
+    roleFlagsRef.current = {
+      isAdmin,
+      isRegistrant,
+      isRegularUser,
+      isLeaderAt12,
+      isLeader,
+    };
+  }, [isAdmin, isRegistrant, isRegularUser, isLeaderAt12, isLeader]);
   const [filterOptions, setFilterOptions] = useState({
     leader: "",
     day: "all",
@@ -1184,11 +1167,18 @@ const Events = () => {
       return;
     }
 
-    const headers = Object.keys(rows[0]);
+    // Build a union of all keys across all rows so exported files include
+    // columns that may be missing in the first row (e.g., Paid/Owing/etc).
+    const headerSet = rows.reduce((set, r) => {
+      Object.keys(r || {}).forEach((k) => set.add(k));
+      return set;
+    }, new Set());
+    const headers = Array.from(headerSet);
+
     const columnWidths = headers.map((header) => {
       let maxLength = header.length;
       rows.forEach((r) => {
-        const v = String(r[header] || "");
+        const v = String((r && r[header]) || "");
         if (v.length > maxLength) maxLength = v.length;
       });
       return Math.min(Math.max(maxLength * 7 + 5, 65), 350);
@@ -1265,7 +1255,7 @@ ${xmlCols}
     }, 100);
   };
 
-  const findEventTypeByName = (typeName) => {
+const findEventTypeByName = (typeName, eventTypes = []) => {
     if (!typeName || typeName === "all") {
       return {
         name: "Cells",
@@ -1276,7 +1266,7 @@ ${xmlCols}
     }
 
     // Look for the event type in your eventTypes array
-    const found = eventTypes.find((et) => {
+    const found = (eventTypes || []).find((et) => {
       const etName = et.name || et.eventTypeName || et.displayName || "";
       return etName.toLowerCase() === typeName.toLowerCase();
     });
@@ -1302,14 +1292,17 @@ ${xmlCols}
     }
     return results;
   };
-  const downloadEventAttendance = async (event) => {
-  const TOAST_ID = `download-event-${event?._id || event?.id || Date.now()}`;
+  const downloadEventAttendance = async (event, { everyone = false } = {}) => {
+  const TOAST_ID = `download-event-${event?._id || event?.id || Date.now()}-${everyone ? "everyone" : "checked"}`;
   try {
     toast.info("Preparing event download…", { toastId: TOAST_ID, autoClose: false });
 
     const fullEvent = await fetchEventFull(event); // Always fetch full event
 
-    const rows = normalizeEventAttendance(fullEvent);
+    const rows = normalizeEventAttendance(fullEvent, {
+      getEventType: findEventTypeByName,
+      includeEveryone: everyone,
+    });
 
     if (!rows || rows.length === 0) {
       toast.dismiss(TOAST_ID);
@@ -1319,111 +1312,20 @@ ${xmlCols}
 
     buildXlsFromRows(
       rows,
-      `attendance_${(fullEvent.eventName || "event").replace(/\s/g, "_")}`,
+      `${everyone ? "everyone" : "attendance"}_${(fullEvent.eventName || "event").replace(/\s/g, "_")}`,
     );
 
     toast.dismiss(TOAST_ID);
-    toast.success(`Downloaded ${rows.length} people for this event`);
+    toast.success(
+      everyone
+        ? `Downloaded ${rows.length} associated people for this event`
+        : `Downloaded ${rows.length} people for this event`,
+    );
   } catch (err) {
     console.error("Download event attendance failed:", err);
     toast.dismiss(TOAST_ID);
     toast.error("Failed to download event attendance");
   }
-};
-
-const normalizeEventAttendance = (event) => {
-  if (!event) return [];
-  const eventDate = event.date;
-
-  // Determine if this is a ticketed event
-  const eventTypeName = event.eventType || event.event_type || event.type || "";
-  const eventTypeObj = findEventTypeByName(eventTypeName);
-  const isTicketed = 
-    eventTypeObj?.isTicketed === true ||
-    event.isTicketed === true ||
-    event.is_ticketed === true ||
-    event.ticketed === true;
-
-  const peopleMap = new Map();
-
-  const addPeople = (list, checkedIn) => {
-    if (!Array.isArray(list)) return;
-    list.forEach((person) => {
-      const key = person.email || person.fullName || person.name || Math.random();
-      if (!peopleMap.has(key)) {
-        peopleMap.set(key, { ...person, checkedIn });
-      } else if (checkedIn) {
-        peopleMap.set(key, { ...peopleMap.get(key), checkedIn: true });
-      }
-    });
-  };
-
-  // 1. Attendance by date (checked-in)
-  if (event.attendance && typeof event.attendance === "object") {
-    const dateAttendance = event.attendance[eventDate];
-    if (dateAttendance?.attendees) addPeople(dateAttendance.attendees, true);
-  }
-
-  // 2. Top-level attendees (checked-in)
-  addPeople(event.attendees, true);
-
-  // 3. Registered/invited (not necessarily checked in)
-  addPeople(event.registrants, false);
-  addPeople(event.registered, false);
-  addPeople(event.invited, false);
-  addPeople(event.members, false);
-  addPeople(event.persistent_attendees, false);
-
-  // 4. attendance_data block
-  if (event.attendance_data) {
-    addPeople(event.attendance_data.attendees, true);
-    addPeople(event.attendance_data.registrants, false);
-    addPeople(event.attendance_data.registered, false);
-  }
-
-  if (peopleMap.size === 0) return [];
-
-  // Resolve leader hierarchy from the event itself
-  // Adjust these field names to match whatever your API actually returns
-  const leaderAt1   = event.leaderAt1   || event.leader_at_1   || event.leaderAt1Name   || "";
-  const leaderAt12  = event.leaderAt12  || event.leader_at_12  || event.leaderAt12Name  || event.leader12 || "";
-  const leaderAt144 = event.leaderAt144 || event.leader_at_144 || event.leaderAt144Name || "";
-
-  const hasLeaderHierarchy = leaderAt1 || leaderAt12 || leaderAt144;
-
-  return Array.from(peopleMap.values()).map((person) => {
-    // Base row — always present
-    const row = {
-      "Event Name":        event.eventName || event["Event Name"] || "",
-      "Event Type":        eventTypeName,
-      "Is Ticketed":       isTicketed ? "Yes" : "No",
-      "Event Date":        eventDate,
-      "Checked In":        person.checkedIn ? "Yes" : "No",
-      "Name":              person.fullName || person.name || "",
-      "Email":             person.email || "",
-      "Phone":             person.phone || "",
-      "Decision":          person.decision || person.Decision || "",
-      "Price Tier":        person.priceTier || person.price_tier || person.PriceTier || "",
-      "Event Leader Name": event.eventLeaderName || event.Leader || "",
-    };
-
-    // Leader hierarchy columns — only if the event has them
-    if (hasLeaderHierarchy) {
-      row["Leader @1"]   = leaderAt1;
-      row["Leader @12"]  = leaderAt12;
-      row["Leader @144"] = leaderAt144;
-    }
-
-    // Ticketed-only columns
-    if (isTicketed) {
-      row["Payment Method"] = person.paymentMethod || person.payment_method || "";
-      row["Price"]  = person.price  !== undefined ? `R${Number(person.price).toFixed(2)}`  : "";
-      row["Paid"]   = person.paid   !== undefined ? `R${Number(person.paid).toFixed(2)}`   : "";
-      row["Owing"]  = person.owing  !== undefined ? `R${Number(person.owing).toFixed(2)}`  : "";
-    }
-
-    return row;
-  });
 };
 
   const fetchEventFull = async (event) => {
@@ -1534,7 +1436,9 @@ const normalizeEventAttendance = (event) => {
 
       const allRows = [];
       for (const ev of fullEvents) {
-        const rows = normalizeEventAttendance(ev);
+        const rows = normalizeEventAttendance(ev, {
+          getEventType: findEventTypeByName,
+        });
         if (rows && rows.length > 0) {
           // For did_not_meet events, mark all rows as Did Not Meet
           if (status === "did_not_meet") {
@@ -1548,15 +1452,28 @@ const normalizeEventAttendance = (event) => {
         ) {
           allRows.push({
             "Event Name": ev.eventName || ev.Event_Name || ev.name || "",
+            "Event Type": ev.eventType || ev.event_type || ev.type || "",
             "Event Date": formatDate(ev.date),
+            "Event Leader Name":
+              ev.eventLeaderName || ev.leaderName || ev.eventLeader || ev.leader || "",
+            "Event Leader Email":
+              ev.eventLeaderEmail ||
+              ev.event_leader_email ||
+              ev.leaderEmail ||
+              ev.leader_email ||
+              "",
+            "Is Ticketed":
+              ev.isTicketed === true || ev.is_ticketed === true ? "Yes" : "No",
+            "Checked In": "No",
             Name: "",
             Email: "",
-            "Event Leader Name ": ev.eventLeaderName || ev.leaderName || ev.eventLeader || ev.leader || "",
-            "Leader @12": ev.leader12 || "",
-            "Leader @144": ev.leader144 || "",
             Phone: "",
             Decision: "",
             "Price Tier": "",
+            Headcount: resolveHeadcount(ev, ev.date),
+            "Leader @1": ev.leader1 || "",
+            "Leader @12": ev.leader12 || "",
+            "Leader @144": ev.leader144 || "",
             "Payment Method": "",
             Price: "",
             Paid: "",
@@ -1571,7 +1488,6 @@ const normalizeEventAttendance = (event) => {
         toast.info("No attendees found for selected events.");
         return;
       }
-      console.log("Full event",fullEvent)
       buildXlsFromRows(allRows, `events_${status}_${period}`);
       toast.dismiss(TOAST_ID);
       toast.success(`Downloaded ${allRows.length} rows for ${status} (${period})`);
@@ -1600,8 +1516,15 @@ const fetchEventsFilters = (filters) => {
     page: filters.page || currentPage,
     limit: filters.limit || rowsPerPage,
     start_date: filters.start_date || DEFAULT_API_START_DATE,
-    status: filters.status || selectedStatus || "incomplete",
   };
+
+  // Never send status="all". The backend treats any non-empty status as an exact
+  // match against the computed instance status, so "all" would match nothing and
+  // blank out the whole list. Omit the key instead.
+  const requestedStatus = filters.status || selectedStatus;
+  if (requestedStatus && requestedStatus !== "all") {
+    params.status = requestedStatus;
+  }
 
   if (filters.search) params.search = filters.search;
   if (filters.event_type) {
@@ -1630,11 +1553,14 @@ const fetchEventsFilters = (filters) => {
     params.firstName = userFirstName;
     params.userSurname = userSurname;
 
-    if (isLeaderAt12) {
+    const flags = roleFlagsRef.current;
+    const currentView = viewFilterRef.current;
+
+    if (flags.isLeaderAt12) {
       params.leader_at_12_view = true;
       params.isLeaderAt12 = true;
 
-      if (viewFilter === "personal") {
+      if (currentView === "personal") {
         params.personal = true;
         params.show_personal_cells = true;
       } else {
@@ -1642,8 +1568,8 @@ const fetchEventsFilters = (filters) => {
         params.include_subordinate_cells = true;
         params.show_all_authorized = true;
       }
-    } else if (isAdmin) {
-      if (viewFilter === "personal") params.personal = true;
+    } else if (flags.isAdmin) {
+      if (currentView === "personal") params.personal = true;
     } else {
       // For regular users, registrants, leaders - show personal cells only
       params.personal = true;
@@ -1781,9 +1707,12 @@ const fetchEventTypes = useCallback(async () => {
       }
     }, [fetchEventTypes, currentUser?.email]);
     useEffect(() => {
-      // When event type filter changes, reset to "incomplete" status
+      // When the event type filter changes, drop any status filter rather than
+      // imposing one. This previously reset to "incomplete", which meant that
+      // opening any event type silently hid every completed and did-not-meet
+      // event until the user manually re-selected a status.
       if (selectedEventTypeFilter && selectedEventTypeFilter !== "all") {
-        setSelectedStatus("incomplete");
+        setSelectedStatus("all");
       }
     }, [selectedEventTypeFilter]);
 
@@ -2392,17 +2321,26 @@ const getFilteredEventTypes = (allEventTypes) => {
     DEFAULT_API_START_DATE,
   ]);
 
+  // Refreshing the searchable set when the surrounding filters change *while*
+  // searching. `isSearching` is deliberately NOT a dependency: the searchable
+  // set is loaded by clicking the search bar (see the input's onClick), so
+  // merely starting to type must not trigger a load.
   useEffect(() => {
-    if (!isSearching) return
-    fetchAllCurrentEvents()
-  }, [selectedStatus, selectedEventTypeFilter, viewFilter, userRole])
+    if (!isSearching) return;
+    fetchAllCurrentEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStatus, selectedEventTypeFilter, viewFilter, userRole]);
 
-  const handleSearchSubmit = (searchText) => {
-    if (!searchText.trim()) return;
-    const trimmedSearch = searchText.trim();
+  // Pure filter over the set loaded by clicking the search bar. It must stay
+  // free of state writes because it runs inside a useMemo — setting state
+  // during render was discarding the result count and the rendered rows
+  // could disagree.
+  const filterEventsBySearch = (list, searchText) => {
+    const trimmedSearch = String(searchText || "").trim();
+    if (!trimmedSearch) return list || [];
+    const needle = trimmedSearch.toLowerCase();
 
-    const newArray = allCurrentEvents.filter((event) => {
-      let found = false;
+    return (list || []).filter((event) =>
       [
         "Event Name",
         "eventName",
@@ -2416,18 +2354,12 @@ const getFilteredEventTypes = (allEventTypes) => {
         "Leader at 12",
         "Leader @12",
         "leader12",
-      ].forEach((field) => {
-        if (event[field] && typeof event[field] === "string") {
-          found =
-            found ||
-            event[field].toLowerCase().includes(trimmedSearch.toLowerCase());
-        }
-      });
-      return found;
-    });
-    console.log("searched", allCurrentEvents, "with", trimmedSearch);
-    setTotalEvents(newArray.length || 0);
-    return newArray;
+      ].some(
+        (field) =>
+          typeof event?.[field] === "string" &&
+          event[field].toLowerCase().includes(needle),
+      ),
+    );
   };
 
   const searchDebounceRef = useRef(null);
@@ -2451,13 +2383,25 @@ const getFilteredEventTypes = (allEventTypes) => {
         clearTimeout(searchDebounceRef.current);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
 
   const filteredEvents = useMemo(() => {
     if (isSearching === null) return events;
     if (!debouncedSearchTerm.trim()) return events;
-    return handleSearchSubmit(debouncedSearchTerm) || [];
-  }, [allCurrentEvents, debouncedSearchTerm, selectedStatus]);
+    return filterEventsBySearch(allCurrentEvents, debouncedSearchTerm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allCurrentEvents, debouncedSearchTerm, selectedStatus, isSearching]);
+
+  // Keep the result counter in step with the rows. This has to be an effect,
+  // not a write inside the memo above: writing state during render discarded
+  // the count. Keying it on filteredEvents also covers the case where the
+  // click-loaded set lands *after* the user's keystroke, which would otherwise
+  // leave the counter stuck on zero.
+  useEffect(() => {
+    if (!isSearching) return;
+    setTotalEvents(filteredEvents.length);
+  }, [isSearching, filteredEvents]);
   console.log(
     "issearching",
     isSearching,
@@ -2614,11 +2558,42 @@ const getFilteredEventTypes = (allEventTypes) => {
     ],
   );
 
+  const getAttendanceEventId = (eventObject) => {
+    if (!eventObject) return "";
+
+    const rawId = eventObject._id || eventObject.id || "";
+    if (!rawId) return "";
+
+    const [baseId, ...suffixParts] = rawId.split("_");
+    const suffix = suffixParts.join("_");
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+    if (suffix && dateRegex.test(suffix)) {
+      return rawId;
+    }
+
+    const originalEventId = eventObject.original_event_id || baseId;
+    const dateSource =
+      eventObject.date ||
+      eventObject.event_date ||
+      eventObject.event_date_exact ||
+      eventObject.event_date_iso ||
+      "";
+    const cleanDate = String(dateSource).split("T")[0].split(" ")[0];
+
+    return originalEventId && cleanDate
+      ? `${originalEventId}_${cleanDate}`
+      : originalEventId || rawId;
+  };
+
   const handleAttendanceSubmit = useCallback(
     async (data) => {
       try {
         const token = localStorage.getItem("access_token");
-        const eventId = selectedEvent._id;
+        const eventId = getAttendanceEventId(selectedEvent);
+        if (!eventId) {
+          throw new Error("No valid event id found for attendance submission");
+        }
         const eventName = selectedEvent.eventName || "Event";
         const eventDate = selectedEvent.date || "";
 
@@ -2634,6 +2609,7 @@ const getFilteredEventTypes = (allEventTypes) => {
 
         if (data === "did_not_meet") {
           payload = {
+            event_id: eventId,
             attendees: [],
             all_attendees: [],
             leaderEmail,
@@ -2643,6 +2619,7 @@ const getFilteredEventTypes = (allEventTypes) => {
           };
         } else if (Array.isArray(data)) {
           payload = {
+            event_id: eventId,
             attendees: data,
             all_attendees: data,
             leaderEmail,
@@ -2653,6 +2630,7 @@ const getFilteredEventTypes = (allEventTypes) => {
         } else {
           payload = {
             ...data,
+            event_id: eventId,
             leaderEmail,
             leaderName,
             event_date: eventDate,
@@ -2798,7 +2776,6 @@ const getFilteredEventTypes = (allEventTypes) => {
       return;
     }
     setSelectedEvent(eventToEdit);
-    if (event.isTicketed === true) return //extra precaustion to not open edit event model if it is a ticketed event
     setEditModalOpen(true);
   }, []);
 
@@ -3287,7 +3264,12 @@ const getFilteredEventTypes = (allEventTypes) => {
               },
             );
 
-            const { hasCell, canAccessEvents } = response.data;
+            if (!response.ok) {
+              throw new Error(`Failed to check leader status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const { hasCell, canAccessEvents } = data;
 
             if (!canAccessEvents || !hasCell) {
               toast.warning("You must have a cell to access the Events page");
@@ -3454,7 +3436,11 @@ const getFilteredEventTypes = (allEventTypes) => {
       limit: 100,
       must_paginate: false,
       start_date: DEFAULT_API_START_DATE,
-      status: selectedStatus || "incomplete",
+      // "all" must not be sent: the backend treats any non-empty status as an
+      // exact match, so status=all would filter out every event.
+      ...(selectedStatus && selectedStatus !== "all"
+        ? { status: selectedStatus }
+        : {}),
       event_type:
         selectedEventTypeFilter === "all" ? "CELLS" : selectedEventTypeFilter,
     };
@@ -3549,6 +3535,14 @@ const getFilteredEventTypes = (allEventTypes) => {
     DEFAULT_API_START_DATE,
   }) => {
     const statuses = [
+      {
+        // Neutral option. Without it the three badges below imply a status is
+        // always selected, and the user has no way back to seeing every event
+        // once they have narrowed to one.
+        value: "all",
+        label: "ALL EVENTS",
+        style: styles.statusBadgeAll,
+      },
       {
         value: "incomplete",
         label: "INCOMPLETE",
@@ -3860,6 +3854,11 @@ const getFilteredEventTypes = (allEventTypes) => {
     const handleViewFilterChange = (newViewFilter) => {
       setViewFilter(newViewFilter);
       setCurrentPage(1);
+      eventsCache.current = {};
+      if (cacheRef.current) {
+        cacheRef.current.data.clear();
+        cacheRef.current.timestamp.clear();
+      }
     };
 
     const getAllLabel = () => {
@@ -4490,7 +4489,12 @@ const getTypeValue = (type) => {
                 }}
                 onKeyPress={(e) => {
                   if (e.key === "Enter") {
-                    handleSearchSubmit();
+                    // Apply straight away rather than waiting out the debounce.
+                    // The result counter is kept in sync by the effect above.
+                    if (searchDebounceRef.current) {
+                      clearTimeout(searchDebounceRef.current);
+                    }
+                    setDebouncedSearchTerm(searchQuery);
                   }
                 }}
                 InputProps={{
@@ -4711,6 +4715,7 @@ const getTypeValue = (type) => {
                           isLeaderAt12={isLeaderAt12}
                           currentUserLeaderAt1={currentUserLeaderAt1}
                           selectedEventTypeFilter={selectedEventTypeFilter}
+                          eventTypes={eventTypes}
                         />
                       </>
                     ))
@@ -4730,6 +4735,7 @@ const getTypeValue = (type) => {
                           isLeaderAt12={isLeaderAt12}
                           currentUserLeaderAt1={currentUserLeaderAt1}
                           selectedEventTypeFilter={selectedEventTypeFilter}
+                          eventTypes={eventTypes}
                         />
                       </>
                     ))}
@@ -5035,7 +5041,7 @@ const getTypeValue = (type) => {
                                 </Tooltip>
                               )}
                               <Tooltip
-                                title="Download Attendance (Event)"
+                                title="Download Event"
                                 arrow
                               >
                                 <IconButton
@@ -5046,6 +5052,19 @@ const getTypeValue = (type) => {
                                   sx={{ color: "#1976d2" }}
                                 >
                                   <GetAppIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Download Everyone (Event)" arrow>
+                                <IconButton
+                                  onClick={() =>
+                                    downloadEventAttendance(params.row, {
+                                      everyone: true,
+                                    })
+                                  }
+                                  size="small"
+                                  sx={{ color: "#7b1fa2" }}
+                                >
+                                  <PeopleAltIcon fontSize="small" />
                                 </IconButton>
                               </Tooltip>
                             </Box>
@@ -5745,6 +5764,7 @@ const getTypeValue = (type) => {
                 selectedTypeForMenu.name ||
                 selectedTypeForMenu.eventTypeName ||
                 selectedTypeForMenu,
+                eventTypes,
               );
               setEditingEventType(fullEventTypeObj);
               setEventTypesModalOpen(true);
@@ -5846,6 +5866,7 @@ const getTypeValue = (type) => {
                   setFabMenuOpen(false);
                   const eventTypeObj = findEventTypeByName(
                     selectedEventTypeFilter,
+                    eventTypes,
                   );
                   setSelectedEventTypeObj(eventTypeObj);
                   setCreateEventModalOpen(true);
@@ -5979,6 +6000,7 @@ const getTypeValue = (type) => {
                 onClose={handleCloseCreateEventModal}
                 selectedEventTypeObj={findEventTypeByName(
                   selectedEventTypeFilter,
+                  eventTypes,
                 )}
                 selectedEventType={selectedEventTypeFilter}
                 eventTypes={eventTypes}

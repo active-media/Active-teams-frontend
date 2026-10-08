@@ -26,46 +26,36 @@ import {
 } from '@mui/icons-material';
 import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
+import { normalizeRole, SYSTEM_ROLES, ROLE_HIERARCHY } from '../utils/roleNormalizer';
 import logo from "../assets/active-teams.png"
-
-const SYSTEM_ROLES = ['admin', 'leader', 'leaderAt12', 'user', 'registrant'];
-
-const ROLE_HIERARCHY = {
-  "registrant": 1,
-  "user": 2,
-  "leader": 3,
-  "leaderAt12": 4,
-  "admin": 5,
-  "supreme_admin": 6
-};
 
 const allMenuItems = [
   { 
     label: 'Home', 
     path: '/', 
     icon: Home, 
-    roles: ['admin', 'leader', 'leaderAt12', 'user', 'registrant'],
+    roles: ['admin', 'leader', 'leaderat12', 'user', 'registrant'],
     level: 1 
   },
   { 
     label: 'Profile', 
     path: '/profile', 
     icon: Person, 
-    roles: ['admin', 'leader', 'leaderAt12', 'user', 'registrant'],
+    roles: ['admin', 'leader', 'leaderat12', 'user', 'registrant'],
     level: 1
   },
   { 
     label: 'People', 
     path: '/people', 
     icon: Group, 
-    roles: ['admin', 'leader', 'leaderAt12'],
+    roles: ['admin', 'leader', 'leaderat12'],
     level: 3
   },
   { 
     label: 'Events', 
     path: '/events', 
     icon: Event, 
-    roles: ['admin', 'leader', 'leaderAt12', 'user', 'registrant'],
+    roles: ['admin', 'leader', 'leaderat12', 'user', 'registrant'],
     requiresCell: true,
     level: 1
   },
@@ -73,21 +63,21 @@ const allMenuItems = [
     label: 'Stats', 
     path: '/stats', 
     icon: BarChart, 
-    roles: ['admin', 'leader', 'leaderAt12'],
+    roles: ['admin', 'leader', 'leaderat12'],
     level: 3
   },
   { 
     label: 'Service Check-in', 
     path: '/service-check-in', 
     icon: HowToReg, 
-    roles: ['admin', 'registrant', 'leaderAt12', 'leader'],
+    roles: ['admin', 'registrant', 'leaderat12', 'leader'],
     level: 1
   },
   { 
     label: 'Daily Tasks', 
     path: '/daily-tasks', 
     icon: Assignment, 
-    roles: ['admin', 'leader', 'leaderAt12', 'user', 'registrant'],
+    roles: ['admin', 'leader', 'leaderat12', 'user', 'registrant'],
     level: 1
   },
   { 
@@ -102,7 +92,7 @@ const allMenuItems = [
     path: 'https://activemediahelpdesk.netlify.app/', 
     icon: SupportAgentIcon, 
     external: true, 
-    roles: ['admin', 'leader', 'leaderAt12', 'user', 'registrant'],
+    roles: ['admin', 'leader', 'leaderat12', 'user', 'registrant'],
     level: 1
   },
 ];
@@ -129,9 +119,12 @@ export default function Sidebar({ mode, setMode }) {
 
       const userRole = user?.role?.toLowerCase() || '';
       const isSupremeAdmin = user?.is_supreme_admin || user?.email === "tkgenia1234@gmail.com";
-      const isCustomRole = !SYSTEM_ROLES.includes(userRole);
+      const isCustomRole = !SYSTEM_ROLES.includes(normalizeRole(userRole));
       
-      console.log(` Sidebar - User role: ${userRole}, Custom: ${isCustomRole}, Supreme: ${isSupremeAdmin}`);
+      // Normalize user role for consistency
+      const normalizedUserRole = normalizeRole(userRole);
+      
+      console.log(` Sidebar - User role: ${userRole}, Normalized: ${normalizedUserRole}, Custom: ${isCustomRole}, Supreme: ${isSupremeAdmin}`);
 
       if (isSupremeAdmin) {
         setMenuItems(allMenuItems);
@@ -176,10 +169,12 @@ export default function Sidebar({ mode, setMode }) {
         } 
         
         else {
-          const itemRolesLower = item.roles.map(role => role.toLowerCase());
+          // Normalize both user role and item roles for comparison
+          const normalizedUserRole = normalizeRole(userRole);
+          const normalizedItemRoles = item.roles.map(normalizeRole);
           
-          if (!itemRolesLower.includes(userRole)) {
-            console.log(` ${item.label}: System role ${userRole} not in ${item.roles}`);
+          if (!normalizedItemRoles.includes(normalizedUserRole)) {
+            console.log(` ${item.label}: System role ${userRole} (normalized: ${normalizedUserRole}) not in ${item.roles} (normalized: ${normalizedItemRoles})`);
             return false;
           }
           
@@ -246,7 +241,8 @@ export default function Sidebar({ mode, setMode }) {
       </Box>
 
       <List sx={{ flexGrow: 1 }}>
-        {menuItems.map(({ label, path, icon: Icon, external }) => {
+        {menuItems.map(({ label, path, icon, external }) => {
+          const Icon = icon;
           const isActive = !external && location.pathname === path;
           return (
             <ListItemButton

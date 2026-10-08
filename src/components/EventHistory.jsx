@@ -33,14 +33,19 @@ const EventHistory = React.memo(function EventHistory({
   const isMd  = useMediaQuery(theme.breakpoints.down('md'));
 
   const canUnsaveEvent = React.useCallback((row) => {
-    if (!row?.date) return false;
+    if (!row) return false;
+    const HOURS = 48;
     try {
-      const ed = new Date(row.date);
-      const today = new Date();
-      return (
-        new Date(ed.getFullYear(), ed.getMonth(), ed.getDate()).getTime() ===
-        new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
-      );
+      const now = Date.now();
+      const candidates = [row.closed_at, row.closedAt, row.date, row.updated_at].filter(Boolean);
+      for (const c of candidates) {
+        const t = new Date(c).getTime();
+        if (!Number.isNaN(t)) {
+          const diff = now - t;
+          if (diff >= 0 && diff <= HOURS * 60 * 60 * 1000) return true;
+        }
+      }
+      return false;
     } catch { return false; }
   }, []);
 
@@ -244,7 +249,7 @@ const EventHistory = React.memo(function EventHistory({
         renderCell: (params) => {
           const canUnsave = canUnsaveEvent(params.row);
           return (
-            <Tooltip title={canUnsave ? 'Unsave event' : "Only today's events can be unsaved"}>
+            <Tooltip title={canUnsave ? 'Unsave event' : 'Events can only be unsaved within 48 hours'}>
               <span>
                 <IconButton size="small" color="warning" disabled={!canUnsave}
                   onClick={() => handleUnsave(params.row)}

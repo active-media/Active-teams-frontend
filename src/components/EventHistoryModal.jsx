@@ -8,6 +8,7 @@ import {
 } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import * as XLSX from 'xlsx';
+import { toast } from 'react-toastify';
 
 const EventHistoryModal = React.memo(({
     open,
@@ -18,7 +19,6 @@ const EventHistoryModal = React.memo(({
 }) => {
     const theme = useTheme();
     const isSmDown = useMediaQuery(theme.breakpoints.down('sm'));
-    const isMdDown = useMediaQuery(theme.breakpoints.down('md'));
     const [searchTerm, setSearchTerm] = useState('');
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(25);

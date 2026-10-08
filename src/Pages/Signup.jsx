@@ -223,6 +223,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
     setOrgUsersError("");
 
     const org = form.organization?.trim();
+    const org_id = organizations.find((o) => o.name === org)?.org_id;
     if (!org) return;
 
     let isActive = true;
@@ -231,7 +232,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
       setOrgUsersLoading(true);
       setOrgUsersError("");
       try {
-        const url = `${BACKEND_URL}/users?organization=${encodeURIComponent(org)}`;
+        const url = `${BACKEND_URL}/users?organization=${encodeURIComponent(org_id)}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error("Failed to fetch users");
         const data = await response.json();
@@ -432,15 +433,8 @@ const Signup = ({ onSignup, mode, setMode }) => {
     }
   };
 
-  const handleOrganizationChange = (e) => {
-    const orgValue = e.target.value;
-    setForm((prev) => ({ ...prev, organization: orgValue }));
-    if (errors.organization) {
-      setErrors((prev) => ({ ...prev, organization: "" }));
-    }
-  };
-
   const handleInvitedByChange = (event, newValue) => {
+    console.log("INVITEE", newValue);
     const invitedByValue =
       newValue && typeof newValue === "object" ? (newValue.label || "") : (newValue || "");
     const invitedById =
@@ -500,7 +494,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
         try {
           await login(submitData.email, submitData.password);
           toast.success("You've been signed up!", toastOptions);
-        } catch (loginErr) {
+        } catch {
           toast.error("Signup successful, but automatic login failed. Please log in.", {
             ...toastOptions,
             autoClose: 5000,
@@ -522,7 +516,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
           navigate("/");
         }, 2000);
       }
-    } catch (error) {
+    } catch {
       toast.error("Network or server error occurred.", toastOptions);
     } finally {
       setLoading(false);

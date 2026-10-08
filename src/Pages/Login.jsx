@@ -31,7 +31,7 @@ const Login = ({ mode, setMode }) => {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
-  const [userName, setUserName] = useState("");
+  const [userName] = useState("");
 
   const theme = useTheme();
   const navigate = useNavigate();

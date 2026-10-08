@@ -1,19 +1,9 @@
 import React, { useContext, useState, useEffect } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { AuthContext } from "../contexts/AuthContext";
+import { normalizeRole, SYSTEM_ROLES, ROLE_HIERARCHY, getRoleHierarchyLevel } from "../utils/roleNormalizer";
 import { Box, Typography, Paper, Button, CircularProgress } from "@mui/material";
 import { Block } from "@mui/icons-material";
-
-const SYSTEM_ROLES = ['admin', 'leader', 'leaderAt12', 'user', 'registrant'];
-
-const ROLE_HIERARCHY = {
-  "registrant": 1,
-  "user": 2,
-  "leader": 3,
-  "leaderAt12": 4,
-  "admin": 5,
-  "supreme_admin": 6
-};
 
 const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false) => {
   return function AuthenticatedComponent(props) {
@@ -78,8 +68,9 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
     }
 
     const userRole = user.role;
+    const normalizedUserRole = normalizeRole(userRole);
     const isSupremeAdmin = user.is_supreme_admin || user.email === "tkgenia1234@gmail.com";
-    const isCustomRole = !SYSTEM_ROLES.includes(userRole);
+    const isCustomRole = !SYSTEM_ROLES.includes(normalizedUserRole);
 
     if (isSupremeAdmin) {
       console.log('Supreme admin access granted for:', user.email);
@@ -92,12 +83,12 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
     }
 
     if (isCustomRole) {
-      console.log('Custom role detected:', userRole);
+      console.log('Custom role detected:', userRole, '(normalized:', normalizedUserRole + ')');
       
       const userLevel = ROLE_HIERARCHY['user'] || 2;
       
       const hasAccess = allowedRoles.some(role => {
-        const roleLevel = ROLE_HIERARCHY[role] || 0;
+        const roleLevel = ROLE_HIERARCHY[normalizeRole(role)] || 0;
         return userLevel >= roleLevel;
       });
       
@@ -113,11 +104,11 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
         return <WrappedComponent {...props} />;
       }
       
-      const isLeaderPage = allowedRoles.includes('leader') || allowedRoles.includes('leaderAt12');
+      const isLeaderPage = allowedRoles.includes('leader') || allowedRoles.includes('leaderat12');
       const isAdminPage = allowedRoles.includes('admin');
       
       if (isLeaderPage) {
-        const roleLower = userRole.toLowerCase();
+        const roleLower = normalizedUserRole;
         if (roleLower.includes('leader') || roleLower.includes('head') || roleLower.includes('manager')) {
           console.log('Custom role', userRole, 'granted leader access based on name');
           return <WrappedComponent {...props} />;
@@ -185,15 +176,17 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
       );
     }
 
-    if (allowedRoles.includes(userRole)) {
-      console.log('System role', userRole, 'access granted');
+    // Check if user role matches allowed roles (with normalization)
+    const normalizedAllowedRoles = allowedRoles.map(normalizeRole);
+    if (normalizedAllowedRoles.includes(normalizedUserRole)) {
+      console.log('System role', userRole, '(normalized:', normalizedUserRole + ') access granted');
       return <WrappedComponent {...props} />;
     }
 
-    const userLevel = ROLE_HIERARCHY[userRole] || 0;
+    const userLevel = getRoleHierarchyLevel(userRole);
     
     const hasHierarchyAccess = allowedRoles.some(role => {
-      const roleLevel = ROLE_HIERARCHY[role] || 0;
+      const roleLevel = getRoleHierarchyLevel(role);
       return userLevel >= roleLevel;
     });
     
@@ -202,7 +195,7 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
       return <WrappedComponent {...props} />;
     }
 
-    console.log('Access denied for role:', userRole, 'Required:', allowedRoles);
+    console.log('Access denied for role:', userRole, '(normalized:', normalizedUserRole + ') Required:', allowedRoles);
     return (
       <Box sx={{ 
         display: 'flex', 

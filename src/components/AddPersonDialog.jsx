@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useContext, useRef } from "react";
+import { useEffect, useState, useMemo, useContext, useRef } from "react";
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, Button, Typography, useTheme, MenuItem,
@@ -16,8 +16,11 @@ const CACHE_DURATION = 30 * 60 * 1000;
 
 const initialFormState = {
   name: "", surname: "", dob: "", address: "", email: "",
-  number: "", gender: "", invitedBy: "", leader1: "", leader12: "",
-  leader144: "", stage: "Win",
+  number: "", gender: "", invitedBy: "", invitedById: "",
+  leader1: "", leader1Id: "",
+  leader12: "", leader12Id: "",
+  leader144: "", leader144Id: "",
+  stage: "Win",
 };
 
 const uniformInputSx = {
@@ -110,8 +113,21 @@ function extractLeaders(person) {
   };
 }
 
+function normalizeLeaderChain({ leader1, leader12, leader144 }) {
+  const normalized = [leader1, leader12, leader144]
+    .filter(Boolean)
+    .map((name) => name.trim())
+    .filter((name, index, arr) => arr.indexOf(name) === index);
+
+  return {
+    leader1: normalized[0] || "",
+    leader12: normalized[1] || "",
+    leader144: normalized[2] || "",
+  };
+}
+
 // ─── PeopleSearchField ────────────────────────────────────────────────────────
-function PeopleSearchField({ label, value, onChange, disabled, error, required }) {
+function PeopleSearchField({ label, value, onChange, disabled, error }) {
   const theme  = useTheme();
   const isDark = theme.palette.mode === "dark";
 
@@ -357,7 +373,6 @@ export default function AddPersonDialog({
   open, onClose, onSave, formData, setFormData,
   isEdit = false, personId = null, editingPersonObject = null,
 }) {
-  const theme = useTheme();
   const { authFetch, user } = useContext(AuthContext);
 
   const [errors,           setErrors]           = useState({});
@@ -497,15 +512,54 @@ export default function AddPersonDialog({
     if (!validate() || isSubmitting) return;
     setIsSubmitting(true);
     try {
+      if (!isEdit) {
+        const norm = (s) => (s || "").toString().trim().toLowerCase();
+        const dupFull = `${norm(formData.name)} ${norm(formData.surname)}`.trim();
+        const dupEmail = norm(formData.email);
+        const dupPhone = digitsOnly(formData.number || "");
+        const existingDup = peopleStore.list.find((p) => {
+          const pEmail = norm(p.email);
+          if (dupEmail && pEmail && dupEmail === pEmail) return true;
+          const pFull = p.fullNameLower || `${norm(p.name)} ${norm(p.surname)}`.trim();
+          const pPhone = digitsOnly(p.phone || "");
+          return dupFull && pFull && dupFull === pFull && dupPhone && pPhone && dupPhone === pPhone;
+        });
+        if (existingDup) {
+          toast.warning(
+            `A person with this email or name already exists (${existingDup.fullName || existingDup.email}). Search and select the existing person instead of creating a duplicate.`,
+          );
+          return;
+        }
+      }
+
+      const normalizedLeaders = normalizeLeaderChain({
+        leader1: formData.leader1,
+        leader12: formData.leader12,
+        leader144: formData.leader144,
+      });
+
       const payload = {
         invitedBy: formData.invitedBy || "",
+        invitedById: formData.invitedById || "",
         name: formData.name, surname: formData.surname,
         gender: formData.gender, email: formData.email,
         number: formData.number, phone: formData.number,
         dob: formData.dob ? formData.dob.replace(/-/g, "/") : "",
         address: formData.address,
-        leaders: [formData.leader1 || "", formData.leader12 || "", formData.leader144 || "", ""],
-        leader1: formData.leader1 || "", leader12: formData.leader12 || "", leader144: formData.leader144 || "",
+        leaders: [
+          normalizedLeaders.leader1,
+          normalizedLeaders.leader12,
+          normalizedLeaders.leader144,
+          "",
+        ],
+        leader1: normalizedLeaders.leader1,
+        leader1Id: formData.leader1Id || "",
+        leader12: normalizedLeaders.leader12,
+        leader12Id: formData.leader12Id || "",
+        leader144: normalizedLeaders.leader144,
+        leader144Id: formData.leader144Id || "",
+        // leaderId is what your backend's create_person endpoint checks first
+        leaderId: formData.leader1Id || formData.invitedById || "",
         stage: formData.stage || "Win",
       };
 
@@ -637,33 +691,45 @@ export default function AddPersonDialog({
               setFormData((p) => {
                 const update = { ...p, invitedBy: val };
                 if (person) {
-                  // Build ancestor chain root-first from inviter's own leaders
-                  const ancestors = [
-                    person.leader1,
-                    person.leader12,
-                    person.leader144,
-                  ].filter(Boolean);
+                  update.invitedById = person._id || "";
 
-                  // Only add inviter to chain if fewer than 3 levels above them
-                  // If already 3 deep, inviter is just invitedBy — leaders come from their chain as-is
-                  if (ancestors.length < 3) {
-                    ancestors.push(person.fullName);
+                  const ancestors = [
+                    { name: person.leader1, id: person.leader1Id },
+                    { name: person.leader12, id: person.leader12Id },
+                    { name: person.leader144, id: person.leader144Id },
+                  ].filter((a) => a.name && a.name.trim());
+
+                  const inviterName = person.fullName?.trim();
+                  const inviterId = person._id || "";
+                  if (
+                    inviterName &&
+                    ancestors.length < 3 &&
+                    ancestors[ancestors.length - 1]?.name !== inviterName
+                  ) {
+                    ancestors.push({ name: inviterName, id: inviterId });
                   }
 
-                  // leader1  = root (always index 0)
-                  // leader12 = second-to-last
-                  // leader144 = last (only when 3 entries exist)
-                  //
-                  // [Gavin, Sasha]            → l1=Gavin, l12=Sasha,   l144=""
-                  // [Gavin, Thabo, Blessing]  → l1=Gavin, l12=Thabo,   l144=Blessing
-                  // [Gavin, Thabo, Blessing] (inviter already has 3) → same, inviter not appended
-                  update.leader1   = ancestors[0] || "";
-                  update.leader12  = ancestors.length >= 2 ? ancestors[ancestors.length - 2] : "";
-                  update.leader144 = ancestors.length >= 3 ? ancestors[ancestors.length - 1] : "";
+                  const seen = new Set();
+                  const uniqueAncestors = ancestors.filter((a) => {
+                    if (seen.has(a.name)) return false;
+                    seen.add(a.name);
+                    return true;
+                  });
+
+                  update.leader1 = uniqueAncestors[0]?.name || "";
+                  update.leader1Id = uniqueAncestors[0]?.id || "";
+                  update.leader12 = uniqueAncestors[1]?.name || "";
+                  update.leader12Id = uniqueAncestors[1]?.id || "";
+                  update.leader144 = uniqueAncestors[2]?.name || "";
+                  update.leader144Id = uniqueAncestors[2]?.id || "";
                 } else {
-                  update.leader1   = "";
-                  update.leader12  = "";
+                  update.invitedById = "";
+                  update.leader1 = "";
+                  update.leader1Id = "";
+                  update.leader12 = "";
+                  update.leader12Id = "";
                   update.leader144 = "";
+                  update.leader144Id = "";
                 }
                 return update;
               });
@@ -689,7 +755,10 @@ export default function AddPersonDialog({
             <PeopleSearchField
               label="Leader @1"
               value={formData.leader1}
-              onChange={(val) => { setFormData((p) => ({ ...p, leader1: val })); setErrors((p) => ({ ...p, leader1: "" })); }}
+              onChange={(val, person) => {
+                setFormData((p) => ({ ...p, leader1: val, leader1Id: person?._id || "" }));
+                setErrors((p) => ({ ...p, leader1: "" }));
+              }}
               disabled={isSubmitting || !canEditLeaders}
               error={errors.leader1}
               required
@@ -701,13 +770,17 @@ export default function AddPersonDialog({
               <PeopleSearchField
                 label="Leader @12"
                 value={formData.leader12}
-                onChange={(val) => setFormData((p) => ({ ...p, leader12: val }))}
+                onChange={(val, person) =>
+                  setFormData((p) => ({ ...p, leader12: val, leader12Id: person?._id || "" }))
+                }
                 disabled={isSubmitting || !canEditLeaders}
               />
               <PeopleSearchField
                 label="Leader @144"
                 value={formData.leader144}
-                onChange={(val) => setFormData((p) => ({ ...p, leader144: val }))}
+                onChange={(val, person) =>
+                  setFormData((p) => ({ ...p, leader144: val, leader144Id: person?._id || "" }))
+                }
                 disabled={isSubmitting || !canEditLeaders}
               />
             </Box>

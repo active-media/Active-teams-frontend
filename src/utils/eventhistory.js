@@ -9,11 +9,13 @@ export const saveToEventHistory = ({
   leader12_email = "-",
   userEmail = "",
   closedAt = "",
+  // accept any additional fields
+  ...otherFields
 }) => {
   // Get current history from localStorage or default to empty array
   const currentHistory = JSON.parse(localStorage.getItem("eventHistory")) || [];
 
-  // Create new event entry
+  // Create new event entry and merge any extra fields passed
   const newEntry = {
     eventId,
     service_name,
@@ -25,7 +27,8 @@ export const saveToEventHistory = ({
     leader12_email,
     userEmail,
     closedAt,
-    timestamp: new Date().toISOString(), // Add timestamp if you want
+    ...otherFields,
+    timestamp: new Date().toISOString(),
   };
 
   // Add new entry to the history

@@ -1,6 +1,6 @@
 import React from "react";
 import { useMemo, useState, useEffect, useContext, useRef } from "react";
-import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { createTheme, ThemeProvider, CssBaseline } from "@mui/material";
 
 import { AuthContext } from "./contexts/AuthContext";
@@ -30,23 +30,22 @@ import withAuthCheck from "./components/withAuthCheck";
 import Admin from "./Pages/Admin";
 import NotFound from "./Pages/NotFound";
 
-// Wrap protected pages WITH ROLES - UPDATED WITH leaderAt12
-const ProtectedHome = withAuthCheck(Home, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
-const ProtectedProfile = withAuthCheck(Profile, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
-const ProtectedPeople = withAuthCheck(People, ['admin', 'leader', 'leaderAt12']);
-const ProtectedEvents = withAuthCheck(Events, ['admin', 'leader', 'leaderAt12', 'registrant'], true); 
-const ProtectedStats = withAuthCheck(Stats, ['admin','leaderAt12']);
-const ProtectedCheckIn = withAuthCheck(ServiceCheckIn, ['admin', 'registrant', 'leaderAt12']);
-const ProtectedDailyTasks = withAuthCheck(DailyTasks, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
+// Wrap protected pages WITH ROLES - Updated with normalized roles (lowercase)
+const ProtectedHome = withAuthCheck(Home, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
+const ProtectedProfile = withAuthCheck(Profile, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
+const ProtectedPeople = withAuthCheck(People, ['admin', 'leader', 'leaderat12']);
+const ProtectedEvents = withAuthCheck(Events, ['admin', 'leader', 'leaderat12', 'registrant'], true); 
+const ProtectedStats = withAuthCheck(Stats, ['admin','leaderat12']);
+const ProtectedCheckIn = withAuthCheck(ServiceCheckIn, ['admin', 'registrant', 'leaderat12']);
+const ProtectedDailyTasks = withAuthCheck(DailyTasks, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
 const ProtectedAdmin = withAuthCheck(Admin, ['admin']);
-const ProtectedCreateEvents = withAuthCheck(CreateEvents, ['admin', 'leader', 'leaderAt12']);
-const ProtectedAttendance = withAuthCheck(AttendanceModal, ['admin', 'leader', 'leaderAt12']);
-const ProtectedEventDetails = withAuthCheck(EventDetails, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
+const ProtectedCreateEvents = withAuthCheck(CreateEvents, ['admin', 'leader', 'leaderat12']);
+const ProtectedAttendance = withAuthCheck(AttendanceModal, ['admin', 'leader', 'leaderat12']);
+const ProtectedEventDetails = withAuthCheck(EventDetails, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
 
 function App() {
   const { user, loading, authFetch } = useContext(AuthContext);
   const { loadUserProfile, setUserProfile, setProfilePic } = useContext(UserContext);
-  const navigate = useNavigate();
   const location = useLocation();
   const profileRefreshDone = useRef(false);
   const [mode, setMode] = useState(() => localStorage.getItem("themeMode") || "light");
@@ -105,7 +104,7 @@ function App() {
         try {
           const payload = JSON.parse(atob(token.split(".")[1]));
           userId = payload.user_id || payload.sub || payload.id;
-        } catch (e) {
+        } catch {
           return;
         }
       }
@@ -176,7 +175,7 @@ function App() {
       <div style={{ display: "flex" }}>
         {user && !hideLayout && <Sidebar mode={mode} setMode={setMode} />}
         
-        <div style={{ flexGrow: 1 }}>
+        <div style={{ flexGrow: 1, minWidth: 0 }}>
           <Routes>
             {/* Public routes */}
             <Route 
@@ -202,7 +201,7 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword mode={mode} />} />
             <Route path="/reset-password" element={<ResetPassword mode={mode} />} />
 
-            {/* Protected routes with role restrictions - UPDATED WITH leaderAt12 */}
+            {/* Protected routes with role restrictions - normalized roles (lowercase) */}
             <Route path="/" element={<ProtectedHome />} />
             <Route path="/admin" element={<ProtectedAdmin />} />
             <Route path="/profile" element={<ProtectedProfile title="Profile" />} />

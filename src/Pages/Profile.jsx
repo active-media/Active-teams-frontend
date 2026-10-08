@@ -70,68 +70,6 @@ const createAuthenticatedRequest = () => {
   });
 };
 
-async function fetchUserProfile(authFetch) {
-  try {
-    const token = localStorage.getItem("access_token") ||
-      localStorage.getItem("token") ||
-      localStorage.getItem("accessToken");
-
-    if (!token) {
-      throw new Error("No authentication token found");
-    }
-
-    let userId = null;
-
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      userId = payload.user_id || payload.sub || payload.id;
-
-      if (userId) {
-        localStorage.setItem("userId", userId);
-      }
-    } catch (e) {
-      console.error("Failed to decode token:", e);
-    }
-
-    if (!userId) {
-      userId = localStorage.getItem("userId");
-    }
-
-    if (!userId) {
-      throw new Error("User ID not found");
-    }
-
-    if (authFetch) {
-      const response = await authFetch(`${BACKEND_URL}/profile/${userId}`);
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-      const data = await response.json();
-      return data;
-    }
-
-    const response = await fetch(`${BACKEND_URL}/profile/${userId}`, {
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-      }
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data;
-
-  } catch (error) {
-    console.error("Error fetching profile:", error);
-    throw error;
-  }
-}
-
 async function updateUserProfile(data, authFetch) {
   const token = localStorage.getItem("access_token") ||
     localStorage.getItem("token") ||
@@ -339,7 +277,7 @@ export default function Profile() {
   const checkIfCanEdit = useCallback((roleToCheck) => {
     if (!roleToCheck) return false;
     const roleStr = String(roleToCheck).toLowerCase().trim();
-    const roles = roleStr.split(/[\/,\s|]+/).map(r => r.trim()).filter(r => r.length > 0);
+    const roles = roleStr.split(/[/,\s|]+/).map(r => r.trim()).filter(r => r.length > 0);
     const hasAdminRole = roles.some(role => role === "admin");
     const hasLeaderRole = roles.some(role => role === "leader");
     return hasAdminRole || hasLeaderRole;
@@ -351,7 +289,7 @@ export default function Profile() {
   const getUserRole = useCallback(() => {
     if (!loggedInUserRole) return "User";
     const roleStr = String(loggedInUserRole).trim();
-    const roles = roleStr.split(/[\/,\s|]+/).map(role => role.trim()).filter(role => role.length > 0).map(role => role.charAt(0).toUpperCase() + role.slice(1).toLowerCase());
+    const roles = roleStr.split(/[/,\s|]+/).map(role => role.trim()).filter(role => role.length > 0).map(role => role.charAt(0).toUpperCase() + role.slice(1).toLowerCase());
     const uniqueRoles = [...new Set(roles)];
     if (uniqueRoles.length === 0) return "User";
     return uniqueRoles.join(" / ");
@@ -403,7 +341,13 @@ if (profile?.leaders) {
   setLeaders(leaderNames);
   localStorage.setItem("leaders", JSON.stringify(leaderNames));
 } else if (profile?.invited_by) {
-      localStorage.setItem("leaders", JSON.stringify(leaderNames));
+      const fallbackLeaders = {
+        leaderAt1: profile.invited_by,
+        leaderAt12: "",
+        leaderAt144: "",
+      };
+      setLeaders(fallbackLeaders);
+      localStorage.setItem("leaders", JSON.stringify(fallbackLeaders));
     } else {
       const savedLeaders = JSON.parse(localStorage.getItem("leaders")) || {};
       setLeaders(savedLeaders);

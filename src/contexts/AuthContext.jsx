@@ -1,4 +1,5 @@
 import React, { createContext, useState, useEffect, useCallback } from 'react';
+import { normalizeRole } from '../utils/roleNormalizer';
 
 const BACKEND_URL = `${import.meta.env.VITE_BACKEND_URL}` || 'http://localhost:8000';
 
@@ -9,6 +10,8 @@ const KEY_USER = 'userProfile';
 const KEY_PROFILE_PIC = 'profilePic';
 const KEY_LEADERS = 'leaders';
 const KEY_IS_LEADER = 'isLeader';
+const KEY_ORG_ID = 'org_id';
+const KEY_PERSON_ID = 'person_id';
 
 const DEFAULT_AVATARS = {
   female: 'https://cdn-icons-png.flaticon.com/512/6997/6997662.png',
@@ -35,9 +38,14 @@ export const AuthProvider = ({ children }) => {
 
   const ensureUserWithAvatar = (userData) => {
     if (!userData) return null;
-    const normalizedRole = userData.role && String(userData.role).trim().length
+    let userRole = userData.role && String(userData.role).trim().length
       ? userData.role
       : 'user';
+    
+    // Normalize the role to handle various formats from backend
+    // e.g., "leader at 12", "leader@12" -> "leaderat12"
+    userRole = normalizeRole(userRole);
+    
     const profilePicture = userData.profile_picture || 
                           userData.avatarUrl || 
                           userData.profilePicUrl || 
@@ -47,7 +55,7 @@ export const AuthProvider = ({ children }) => {
     
     return {
       ...userData,
-      role: normalizedRole,
+      role: userRole,
       is_supreme_admin: isSupremeAdmin,
       profile_picture: profilePicture,
       avatarUrl: profilePicture,
@@ -81,6 +89,12 @@ export const AuthProvider = ({ children }) => {
       is_supreme_admin: withAvatar.is_supreme_admin
     });
     localStorage.setItem(KEY_USER, JSON.stringify(withAvatar));
+    if (withAvatar.org_id) {
+      localStorage.setItem(KEY_ORG_ID, withAvatar.org_id);
+    }
+    if (withAvatar.person_id) {
+      localStorage.setItem(KEY_PERSON_ID, withAvatar.person_id);
+    }
     if (withAvatar.profile_picture) {
       localStorage.setItem(KEY_PROFILE_PIC, withAvatar.profile_picture);
     }
@@ -106,7 +120,9 @@ const logout = useCallback(() => {
     localStorage.removeItem(KEY_PROFILE_PIC);
     localStorage.removeItem(KEY_LEADERS);
     localStorage.removeItem(KEY_IS_LEADER);
-    localStorage.removeItem("customEventTypes");  
+    localStorage.removeItem(KEY_ORG_ID);
+    localStorage.removeItem(KEY_PERSON_ID);
+    localStorage.removeItem("customEventTypes");
     localStorage.removeItem("eventTypeMap"); 
           
     setUser(null);
@@ -219,6 +235,11 @@ const authFetch = useCallback(async (url, options = {}) => {
     
     return res;
   } catch (error) {
+    if (error.name === 'AbortError') {
+      // Caller (e.g. a component-level timeout) intentionally cancelled this
+      // request — not a real network/auth failure. Let it propagate silently.
+      throw error;
+    }
     console.error('authFetch error:', error);
     throw error;
   }
@@ -242,7 +263,13 @@ const login = async (email, password) => {
     localStorage.setItem(KEY_ACCESS, data.access_token);
     localStorage.setItem(KEY_REFRESH, data.refresh_token);
     localStorage.setItem(KEY_REFRESH_ID, data.refresh_token_id);
-    
+    if (data.user && data.user.org_id) {
+      localStorage.setItem(KEY_ORG_ID, data.user.org_id);
+    }
+    if (data.user && data.user.person_id) {
+      localStorage.setItem(KEY_PERSON_ID, data.user.person_id);
+    }
+
     const mergedUserData = { ...data.user, ...(data.leaders || {}) };
     const userWithAvatar = ensureUserWithAvatar(mergedUserData);
     persistUser(userWithAvatar);
@@ -450,10 +477,6 @@ const login = async (email, password) => {
   const setLeadersData = (leadersData, leaderStatus) => {
     persistLeadersData(leadersData, leaderStatus);
   };
-
-  const fetchCurrentUser = useCallback(async () => {
-    if (!localStorage.getItem('access_token')) return;
-  }, [authFetch]);
 
   const requestPasswordReset = async (email) => {
     try {
