@@ -1,21 +1,23 @@
 import React, { useContext, useState, useEffect } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { AuthContext } from "../contexts/AuthContext";
+import { normalizeRole } from "../utils/roleNormalizer";
 import { Box, Typography, Paper, Button, CircularProgress } from "@mui/material";
 import { Block } from "@mui/icons-material";
 
-const SYSTEM_ROLES = ['admin', 'leader', 'leaderAt12', 'user', 'registrant'];
+const SYSTEM_ROLES = ['admin', 'leader', 'leaderAt12', 'user', 'registrant'].map(normalizeRole);
 
 const ROLE_HIERARCHY = {
-  "registrant": 1,
-  "user": 2,
-  "leader": 3,
-  "leaderAt12": 4,
-  "admin": 5,
-  "supreme_admin": 6
+  registrant: 1,
+  user: 2,
+  leader: 3,
+  leaderat12: 4,
+  leaderat144: 4,
+  admin: 5,
+  supremeadmin: 6,
 };
 
-const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false) => {
+const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false, strictRoleCheck = false) => {
   return function AuthenticatedComponent(props) {
     const { user, loading, authFetch } = useContext(AuthContext);
     const location = useLocation();
@@ -78,8 +80,19 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
     }
 
     const userRole = user.role;
-    const isSupremeAdmin = user.is_supreme_admin || user.email === "plaatjiessamuel98@gmail.com";
-    const isCustomRole = !SYSTEM_ROLES.includes(userRole);
+    const normalizedUserRole = normalizeRole(userRole);
+    const isSupremeAdmin = user.is_supreme_admin || normalizedUserRole === "superadmin" || user.email === "plaatjiessamuel98@gmail.com" || user.email === "tkgenia1234@gmail.com";
+    const isCustomRole = !SYSTEM_ROLES.includes(normalizedUserRole);
+    const isReportingRoute = location.pathname.startsWith("/reports") || location.pathname.startsWith("/reporting");
+    const normalizedAllowedRoles = allowedRoles.map(normalizeRole);
+
+    if (strictRoleCheck && !normalizedAllowedRoles.includes(normalizedUserRole)) {
+      return <Navigate to="/" replace />;
+    }
+
+    if (isReportingRoute && !isSupremeAdmin && isCustomRole && !normalizedAllowedRoles.includes(normalizedUserRole)) {
+      return <Navigate to="/" replace />;
+    }
 
     if (isSupremeAdmin) {
       console.log('Supreme admin access granted for:', user.email);
@@ -185,15 +198,15 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
       );
     }
 
-    if (allowedRoles.includes(userRole)) {
+    if (normalizedAllowedRoles.includes(normalizedUserRole)) {
       console.log('System role', userRole, 'access granted');
       return <WrappedComponent {...props} />;
     }
 
-    const userLevel = ROLE_HIERARCHY[userRole] || 0;
+    const userLevel = ROLE_HIERARCHY[normalizedUserRole] || 0;
     
     const hasHierarchyAccess = allowedRoles.some(role => {
-      const roleLevel = ROLE_HIERARCHY[role] || 0;
+      const roleLevel = ROLE_HIERARCHY[normalizeRole(role)] || 0;
       return userLevel >= roleLevel;
     });
     

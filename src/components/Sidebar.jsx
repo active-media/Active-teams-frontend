@@ -100,21 +100,28 @@ const allMenuItems = [
     label: 'Reports', 
     path: '/reports', 
     icon: Description, 
-    roles: ['admin', 'leaderat12'],
+    roles: ['admin', 'leader', 'leaderat12'],
     level: 3
   },
   { 
     label: 'Scheduled Reports', 
     path: '/reporting/scheduled', 
     icon: AccessTime, 
-    roles: ['admin', 'leaderat12'],
-    level: 3
+    roles: ['admin'],
+    level: 5
   },
   { 
     label: 'Reporting Dashboard', 
     path: '/reporting/dashboard', 
     icon: BarChart, 
-    roles: ['admin', 'leaderat12'],
+    roles: ['admin', 'leader', 'leaderat12'],
+    level: 3
+  },
+  {
+    label: 'Report History',
+    path: '/reporting/history',
+    icon: AccessTime,
+    roles: ['admin', 'leader', 'leaderat12'],
     level: 3
   },
   { 

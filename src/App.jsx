@@ -1,6 +1,6 @@
 import React from "react";
 import { useMemo, useState, useEffect, useContext, useRef } from "react";
-import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { createTheme, ThemeProvider, CssBaseline } from "@mui/material";
 
 import { AuthContext } from "./contexts/AuthContext";
@@ -17,6 +17,8 @@ import Stats from "./Pages/Stats";
 import Reports from "./Pages/Reports";
 import ScheduledReports from "./Pages/ScheduledReports";
 import ReportingDashboard from "./Pages/ReportingDashboard";
+import ReportingDashboardLegacy from "./features/reporting/_legacy/ReportingDashboardLegacy";
+import ReportHistory from "./Pages/ReportHistory";
 import ServiceCheckIn from "./Pages/ServiceCheckIn";
 import DailyTasks from "./Pages/DailyTasks";
 import CreateEvents from "./Pages/CreateEvents";
@@ -39,9 +41,12 @@ const ProtectedProfile = withAuthCheck(Profile, ['admin', 'leader', 'leaderAt12'
 const ProtectedPeople = withAuthCheck(People, ['admin', 'leader', 'leaderAt12']);
 const ProtectedEvents = withAuthCheck(Events, ['admin', 'leader', 'leaderAt12', 'registrant'], true); 
 const ProtectedStats = withAuthCheck(Stats, ['admin','leaderAt12']);
-const ProtectedReports = withAuthCheck(Reports, ['admin', 'leaderAt12']);
-const ProtectedScheduledReports = withAuthCheck(ScheduledReports, ['admin', 'leaderAt12']);
-const ProtectedReportingDashboard = withAuthCheck(ReportingDashboard, ['admin', 'leaderAt12', 'leaderAt144']);
+const ReportingRoles = ['admin', 'super_admin', 'leader', 'leaderAt12'];
+const ProtectedReports = withAuthCheck(Reports, ReportingRoles, false, true);
+const ProtectedScheduledReports = withAuthCheck(ScheduledReports, ReportingRoles, false, true);
+const ProtectedReportingDashboard = withAuthCheck(ReportingDashboard, ReportingRoles, false, true);
+const ProtectedReportHistory = withAuthCheck(ReportHistory, ReportingRoles, false, true);
+const ProtectedReportingDashboardLegacy = withAuthCheck(ReportingDashboardLegacy, ReportingRoles, false, true);
 const ProtectedCheckIn = withAuthCheck(ServiceCheckIn, ['admin', 'registrant', 'leaderAt12']);
 const ProtectedDailyTasks = withAuthCheck(DailyTasks, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
 const ProtectedAdmin = withAuthCheck(Admin, ['admin']);
@@ -52,7 +57,6 @@ const ProtectedEventDetails = withAuthCheck(EventDetails, ['admin', 'leader', 'l
 function App() {
   const { user, loading, authFetch } = useContext(AuthContext);
   const { loadUserProfile, setUserProfile, setProfilePic } = useContext(UserContext);
-  const navigate = useNavigate();
   const location = useLocation();
   const profileRefreshDone = useRef(false);
   const [mode, setMode] = useState(() => localStorage.getItem("themeMode") || "light");
@@ -111,7 +115,7 @@ function App() {
         try {
           const payload = JSON.parse(atob(token.split(".")[1]));
           userId = payload.user_id || payload.sub || payload.id;
-        } catch (e) {
+        } catch {
           return;
         }
       }
@@ -216,11 +220,13 @@ function App() {
             <Route path="/events" element={<ProtectedEvents title="Events" />} />
             <Route path="/stats" element={<ProtectedStats title="Stats" />} />
             <Route path="/reports" element={<ProtectedReports title="Reports" />} />
+            <Route path="/reports/:reportType" element={<ProtectedReports title="Reports" />} />
+            <Route path="/reporting/history" element={<ProtectedReportHistory title="Report History" />} />
             <Route path="/reporting/scheduled" element={<ProtectedScheduledReports title="Scheduled Reports" />} />
             <Route path="/reporting/dashboard" element={<ProtectedReportingDashboard title="Reporting Dashboard" />} />
-            <Route path="/reporting/dashboard/:section" element={<ProtectedReportingDashboard title="Reporting Dashboard" />} />
-            <Route path="/reporting/dashboard/:section/:leaderId" element={<ProtectedReportingDashboard title="Reporting Dashboard" />} />
-            <Route path="/reporting/dashboard/:section/:leaderId/:cellId" element={<ProtectedReportingDashboard title="Reporting Dashboard" />} />
+            <Route path="/reporting/dashboard/:section" element={<ProtectedReportingDashboardLegacy title="Reporting Dashboard" />} />
+            <Route path="/reporting/dashboard/:section/:leaderId" element={<ProtectedReportingDashboardLegacy title="Reporting Dashboard" />} />
+            <Route path="/reporting/dashboard/:section/:leaderId/:cellId" element={<ProtectedReportingDashboardLegacy title="Reporting Dashboard" />} />
             <Route path="/create-events" element={<ProtectedCreateEvents title="Create Events" />} />
             <Route path="/edit-event/:id" element={<ProtectedCreateEvents title="Create Events Edit" />} />
             <Route path="/attendance" element={<ProtectedAttendance title="Attendance Modal" />} />

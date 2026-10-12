@@ -1,17 +1,12 @@
 import React, { createContext, useState, useEffect, useCallback } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import supabase from '../../supabaseClient';
+import { API_BASE } from '../api/config';
 
 // ─── Supabase client ──────────────────────────────────────────────────────────
 // Required env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY,
-);
-
 export { supabase };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
 const KEY_USER        = 'userProfile';
 const KEY_PROFILE_PIC = 'profilePic';
@@ -165,7 +160,7 @@ export const AuthProvider = ({ children }) => {
       let migratedOk = false;
 
       try {
-        const res = await fetch(`${BACKEND_URL}/login`, {
+        const res = await fetch(`${API_BASE}/login`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ email, password }),

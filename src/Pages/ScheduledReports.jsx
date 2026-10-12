@@ -1,142 +1,60 @@
-import React, { useContext, useEffect, useState } from "react";
-import {
-  Box,
-  Typography,
-  Button,
-  Breadcrumbs,
-  Link as MuiLink,
-  Paper,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  TextField,
-  MenuItem,
-  Chip,
-  IconButton,
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
-  TableCell,
-  Tooltip,
-  Stack,
-  CircularProgress,
-  Alert,
-} from "@mui/material";
+﻿import { useCallback, useContext, useEffect, useState } from "react";
+import { Alert, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import PauseCircleOutlineIcon from "@mui/icons-material/PauseCircleOutline";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
-import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
-
 import { AuthContext } from "../contexts/AuthContext";
+import { createSchedule, deleteSchedule, getCatalog, getSchedules, updateSchedule } from "../api/reportingApi";
+import { SCHEDULE_FORMATS, SCHEDULE_FREQUENCIES, WEEKDAYS, getReportTitle } from "../features/reporting/constants";
+import { ReportErrorState } from "../features/reporting/components/ReportStates";
 
-// Same report catalogue shown on the Reports page — keep these in sync.
-const REPORT_TYPES = [
-  { value: "overall_church_performance", label: "Overall Church Performance" },
-  { value: "cells_report", label: "Cells Report" },
-  { value: "life_class_report", label: "Life Class Report" },
-  { value: "school_of_leaders_report", label: "School of Leaders Report" },
-  { value: "plan_40_report", label: "Plan 40 Report" },
-  { value: "school_cell_report", label: "School Cell Report" },
-  { value: "service_target_report", label: "Service Target Report" },
-  { value: "twelve_tasks_report", label: "Twelve Tasks Report" },
-  { value: "staff_interns_youth_report", label: "Staff, Interns & Youth Report" },
-];
+const emptyForm = { report_type: "", frequency: "weekly", weekday: "monday", day_of_month: 1, time: "07:00", format: "pdf", recipients: "" };
+const titleCase = (value = "") => value.charAt(0).toUpperCase() + value.slice(1);
 
-const FREQUENCIES = [
-  { value: "daily", label: "Daily" },
-  { value: "weekly", label: "Weekly" },
-  { value: "monthly", label: "Monthly" },
-];
-
-const WEEKDAYS = [
-  { value: "monday", label: "Monday" },
-  { value: "tuesday", label: "Tuesday" },
-  { value: "wednesday", label: "Wednesday" },
-  { value: "thursday", label: "Thursday" },
-  { value: "friday", label: "Friday" },
-  { value: "saturday", label: "Saturday" },
-  { value: "sunday", label: "Sunday" },
-];
-
-const FORMATS = [
-  { value: "pdf", label: "PDF" },
-  { value: "csv", label: "CSV" },
-  { value: "xlsx", label: "Excel (.xlsx)" },
-];
-
-const emptyFormState = {
-  report_type: "",
-  frequency: "weekly",
-  weekday: "monday",
-  day_of_month: 1,
-  time: "07:00",
-  format: "pdf",
-  recipients: "",
-};
-
-function frequencyLabel(schedule) {
+function scheduleSummary(schedule) {
   if (schedule.frequency === "daily") return `Daily at ${schedule.time}`;
-  if (schedule.frequency === "weekly") {
-    const day = WEEKDAYS.find((w) => w.value === schedule.weekday)?.label || schedule.weekday;
-    return `Weekly on ${day} at ${schedule.time}`;
-  }
-  if (schedule.frequency === "monthly") {
-    return `Monthly on day ${schedule.day_of_month} at ${schedule.time}`;
-  }
-  return "";
-}
-
-function reportLabel(value) {
-  return REPORT_TYPES.find((r) => r.value === value)?.label || value;
+  if (schedule.frequency === "weekly") return `Weekly on ${titleCase(schedule.weekday)} at ${schedule.time}`;
+  return `Monthly on day ${schedule.day_of_month} at ${schedule.time}`;
 }
 
 export default function ScheduledReports() {
   const { authFetch } = useContext(AuthContext);
-  const backendUrl = import.meta.env.VITE_BACKEND_URL;
-
+  const [catalog, setCatalog] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const [modalOpen, setModalOpen] = useState(false);
+  const [error, setError] = useState(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState(emptyFormState);
-  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState(emptyForm);
   const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const loadSchedules = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setError(null);
     try {
-      const res = await authFetch(`${backendUrl}/report-schedules`);
-      if (!res.ok) throw new Error("Failed to load scheduled reports");
-      const data = await res.json();
-      setSchedules(Array.isArray(data) ? data : data.schedules || []);
-    } catch (e) {
-      console.error("Error loading scheduled reports:", e);
-      setError("Couldn't load scheduled reports. Please try again.");
+      const [items, rows] = await Promise.all([getCatalog(authFetch), getSchedules(authFetch)]);
+      setCatalog(items);
+      setSchedules(rows);
+    } catch (requestError) {
+      setError(requestError);
     } finally {
       setLoading(false);
     }
-  };
+  }, [authFetch]);
 
-  useEffect(() => {
-    loadSchedules();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { load(); }, [load]);
 
-  const openNewSchedule = () => {
+  const createNew = () => {
     setEditingId(null);
-    setForm(emptyFormState);
+    setForm(emptyForm);
     setFormError("");
-    setModalOpen(true);
+    setDialogOpen(true);
   };
 
-  const openEditSchedule = (schedule) => {
+  const edit = (schedule) => {
     setEditingId(schedule.id);
     setForm({
       report_type: schedule.report_type,
@@ -148,332 +66,100 @@ export default function ScheduledReports() {
       recipients: (schedule.recipients || []).join(", "),
     });
     setFormError("");
-    setModalOpen(true);
+    setDialogOpen(true);
   };
 
-  const closeModal = () => {
-    if (saving) return;
-    setModalOpen(false);
-  };
-
-  const handleFieldChange = (field) => (e) => {
-    setForm((prev) => ({ ...prev, [field]: e.target.value }));
-  };
-
-  const validate = () => {
-    if (!form.report_type) return "Please choose a report.";
-    if (!form.recipients.trim()) return "Add at least one recipient email.";
-    const emails = form.recipients.split(",").map((e) => e.trim()).filter(Boolean);
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const invalid = emails.find((e) => !emailRegex.test(e));
-    if (invalid) return `"${invalid}" doesn't look like a valid email.`;
-    return "";
-  };
-
-  const handleSave = async () => {
-    const validationError = validate();
-    if (validationError) {
-      setFormError(validationError);
+  const save = async () => {
+    const recipients = form.recipients.split(",").map((email) => email.trim()).filter(Boolean);
+    if (!form.report_type || recipients.length === 0 || !form.time) {
+      setFormError("Choose a report, time, and at least one recipient email.");
+      return;
+    }
+    if (recipients.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+      setFormError("Enter valid recipient email addresses separated by commas.");
       return;
     }
     setSaving(true);
     setFormError("");
-
     const payload = {
-      report_type: form.report_type,
-      frequency: form.frequency,
-      weekday: form.frequency === "weekly" ? form.weekday : undefined,
-      day_of_month: form.frequency === "monthly" ? Number(form.day_of_month) : undefined,
-      time: form.time,
-      format: form.format,
-      recipients: form.recipients.split(",").map((e) => e.trim()).filter(Boolean),
+      ...form,
+      recipients,
+      ...(form.frequency === "weekly" ? { weekday: form.weekday } : { weekday: undefined }),
+      ...(form.frequency === "monthly" ? { day_of_month: Number(form.day_of_month) } : { day_of_month: undefined }),
     };
-
     try {
-      const url = editingId
-        ? `${backendUrl}/report-schedules/${editingId}`
-        : `${backendUrl}/report-schedules`;
-      const method = editingId ? "PUT" : "POST";
-
-      const res = await authFetch(url, {
-        method,
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Failed to save schedule");
-      }
-
-      setModalOpen(false);
-      await loadSchedules();
-    } catch (e) {
-      console.error("Error saving schedule:", e);
-      setFormError(e.message || "Something went wrong saving this schedule.");
+      if (editingId) await updateSchedule(authFetch, editingId, payload);
+      else await createSchedule(authFetch, payload);
+      setDialogOpen(false);
+      await load();
+    } catch (requestError) {
+      setFormError(requestError.message || "Unable to save schedule.");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Delete this scheduled report? This can't be undone.")) return;
+  const toggle = async (schedule) => {
     try {
-      const res = await authFetch(`${backendUrl}/report-schedules/${id}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) throw new Error("Failed to delete schedule");
-      setSchedules((prev) => prev.filter((s) => s.id !== id));
-    } catch (e) {
-      console.error("Error deleting schedule:", e);
-      setError("Couldn't delete that schedule. Please try again.");
+      await updateSchedule(authFetch, schedule.id, { active: !schedule.active });
+      setSchedules((previous) => previous.map((item) => item.id === schedule.id ? { ...item, active: !item.active } : item));
+    } catch (requestError) {
+      setError(requestError);
     }
   };
 
-  const handleToggleActive = async (schedule) => {
+  const remove = async (schedule) => {
     try {
-      const res = await authFetch(`${backendUrl}/report-schedules/${schedule.id}`, {
-        method: "PUT",
-        body: JSON.stringify({ active: !schedule.active }),
-      });
-      if (!res.ok) throw new Error("Failed to update schedule");
-      setSchedules((prev) =>
-        prev.map((s) => (s.id === schedule.id ? { ...s, active: !s.active } : s))
-      );
-    } catch (e) {
-      console.error("Error toggling schedule:", e);
-      setError("Couldn't update that schedule. Please try again.");
+      await deleteSchedule(authFetch, schedule.id);
+      setSchedules((previous) => previous.filter((item) => item.id !== schedule.id));
+    } catch (requestError) {
+      setError(requestError);
     }
   };
 
   return (
-    <Box sx={{ p: { xs: 2, md: 4 } }}>
-      <Breadcrumbs sx={{ mb: 2 }}>
-        <MuiLink underline="hover" color="text.secondary" href="#">
-          Reporting
-        </MuiLink>
-        <Typography color="text.primary">Scheduled Reports</Typography>
-      </Breadcrumbs>
-
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        justifyContent="space-between"
-        alignItems={{ xs: "flex-start", sm: "center" }}
-        spacing={2}
-        sx={{ mb: 3 }}
-      >
-        <Box>
-          <Typography variant="h5" fontWeight={700}>
-            Scheduled Reports
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Automate report generation and email delivery to leadership.
-          </Typography>
-        </Box>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={openNewSchedule}
-          sx={{ borderRadius: 2, textTransform: "none", fontWeight: 600 }}
-        >
-          New Schedule
-        </Button>
+    <Box sx={{ px: { xs: 2, md: 4 }, py: 3, maxWidth: 1440, mx: "auto" }}>
+      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={2} sx={{ mb: 2.5 }}>
+        <Box><Typography variant="h4" component="h1" fontWeight={800}>Scheduled Reports</Typography><Typography color="text.secondary" sx={{ mt: 0.5 }}>Manage recurring report delivery.</Typography></Box>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={createNew}>New schedule</Button>
       </Stack>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError("")}>
-          {error}
-        </Alert>
-      )}
-
-      <Paper
-        variant="outlined"
-        sx={{ borderRadius: 2, overflow: "hidden", bgcolor: "background.paper" }}
-      >
-        {loading ? (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-            <CircularProgress size={28} />
-          </Box>
-        ) : schedules.length === 0 ? (
-          <Box sx={{ textAlign: "center", py: 6, px: 2 }}>
-            <CalendarMonthIcon sx={{ fontSize: 32, color: "text.disabled", mb: 1 }} />
-            <Typography color="text.secondary">No scheduled reports yet.</Typography>
-          </Box>
-        ) : (
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Report</TableCell>
-                <TableCell>Schedule</TableCell>
-                <TableCell>Format</TableCell>
-                <TableCell>Recipients</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell align="right">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {schedules.map((schedule) => (
-                <TableRow key={schedule.id} hover>
-                  <TableCell sx={{ fontWeight: 600 }}>
-                    {reportLabel(schedule.report_type)}
-                  </TableCell>
-                  <TableCell>{frequencyLabel(schedule)}</TableCell>
-                  <TableCell sx={{ textTransform: "uppercase" }}>{schedule.format}</TableCell>
-                  <TableCell>
-                    <Tooltip title={(schedule.recipients || []).join(", ")}>
-                      <span>
-                        {(schedule.recipients || []).length} recipient
-                        {(schedule.recipients || []).length === 1 ? "" : "s"}
-                      </span>
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      size="small"
-                      label={schedule.active ? "Active" : "Paused"}
-                      color={schedule.active ? "success" : "default"}
-                      variant={schedule.active ? "filled" : "outlined"}
-                    />
-                  </TableCell>
-                  <TableCell align="right">
-                    <Tooltip title={schedule.active ? "Pause" : "Resume"}>
-                      <IconButton size="small" onClick={() => handleToggleActive(schedule)}>
-                        {schedule.active ? (
-                          <PauseCircleOutlineIcon fontSize="small" />
-                        ) : (
-                          <PlayCircleOutlineIcon fontSize="small" />
-                        )}
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Edit">
-                      <IconButton size="small" onClick={() => openEditSchedule(schedule)}>
-                        <EditOutlinedIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Delete">
-                      <IconButton size="small" onClick={() => handleDelete(schedule.id)}>
-                        <DeleteOutlineIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
+      {error && <ReportErrorState error={error} onRetry={load} />}
+      <Paper variant="outlined" sx={{ borderRadius: 1, overflow: "hidden" }}>
+        {loading ? <Box sx={{ py: 5, display: "grid", placeItems: "center" }}><CircularProgress size={28} /></Box> : schedules.length === 0 ? <Typography color="text.secondary" sx={{ p: 3 }}>No scheduled reports yet.</Typography> : (
+          <Table size="small"><TableHead><TableRow>{["Report", "Schedule", "Format", "Recipients", "Status", "Actions"].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead>
+            <TableBody>{schedules.map((schedule) => <TableRow key={schedule.id} hover>
+              <TableCell sx={{ fontWeight: 600 }}>{getReportTitle(catalog, schedule.report_type)}</TableCell>
+              <TableCell>{scheduleSummary(schedule)}</TableCell>
+              <TableCell>{schedule.format?.toUpperCase()}</TableCell>
+              <TableCell><Tooltip title={(schedule.recipients || []).join(", ")}><span>{schedule.recipients?.length || 0} recipient(s)</span></Tooltip></TableCell>
+              <TableCell><Chip size="small" label={schedule.active ? "Active" : "Paused"} color={schedule.active ? "success" : "default"} variant={schedule.active ? "filled" : "outlined"} /></TableCell>
+              <TableCell align="right">
+                <Tooltip title={schedule.active ? "Pause" : "Resume"}><IconButton size="small" onClick={() => toggle(schedule)}>{schedule.active ? <PauseCircleOutlineIcon fontSize="small" /> : <PlayCircleOutlineIcon fontSize="small" />}</IconButton></Tooltip>
+                <Tooltip title="Edit"><IconButton size="small" onClick={() => edit(schedule)}><EditOutlinedIcon fontSize="small" /></IconButton></Tooltip>
+                <Tooltip title="Delete"><IconButton size="small" onClick={() => remove(schedule)}><DeleteOutlineIcon fontSize="small" /></IconButton></Tooltip>
+              </TableCell>
+            </TableRow>)}</TableBody>
           </Table>
         )}
       </Paper>
 
-      <Dialog open={modalOpen} onClose={closeModal} fullWidth maxWidth="sm">
-        <DialogTitle sx={{ fontWeight: 700 }}>
-          {editingId ? "Edit Schedule" : "New Schedule"}
-        </DialogTitle>
-        <DialogContent>
-          <Stack spacing={2.5} sx={{ mt: 1 }}>
-            {formError && <Alert severity="error">{formError}</Alert>}
-
-            <TextField
-              select
-              label="Report"
-              value={form.report_type}
-              onChange={handleFieldChange("report_type")}
-              fullWidth
-            >
-              {REPORT_TYPES.map((r) => (
-                <MenuItem key={r.value} value={r.value}>
-                  {r.label}
-                </MenuItem>
-              ))}
-            </TextField>
-
-            <TextField
-              select
-              label="Frequency"
-              value={form.frequency}
-              onChange={handleFieldChange("frequency")}
-              fullWidth
-            >
-              {FREQUENCIES.map((f) => (
-                <MenuItem key={f.value} value={f.value}>
-                  {f.label}
-                </MenuItem>
-              ))}
-            </TextField>
-
-            {form.frequency === "weekly" && (
-              <TextField
-                select
-                label="Day of week"
-                value={form.weekday}
-                onChange={handleFieldChange("weekday")}
-                fullWidth
-              >
-                {WEEKDAYS.map((w) => (
-                  <MenuItem key={w.value} value={w.value}>
-                    {w.label}
-                  </MenuItem>
-                ))}
-              </TextField>
-            )}
-
-            {form.frequency === "monthly" && (
-              <TextField
-                type="number"
-                label="Day of month"
-                value={form.day_of_month}
-                onChange={handleFieldChange("day_of_month")}
-                inputProps={{ min: 1, max: 28 }}
-                fullWidth
-                helperText="Capped at 28 so it always lands on a real date."
-              />
-            )}
-
-            <TextField
-              type="time"
-              label="Time"
-              value={form.time}
-              onChange={handleFieldChange("time")}
-              fullWidth
-              InputLabelProps={{ shrink: true }}
-            />
-
-            <TextField
-              select
-              label="Format"
-              value={form.format}
-              onChange={handleFieldChange("format")}
-              fullWidth
-            >
-              {FORMATS.map((f) => (
-                <MenuItem key={f.value} value={f.value}>
-                  {f.label}
-                </MenuItem>
-              ))}
-            </TextField>
-
-            <TextField
-              label="Recipients"
-              placeholder="pastor@church.org, leader12@church.org"
-              value={form.recipients}
-              onChange={handleFieldChange("recipients")}
-              helperText="Comma-separated email addresses."
-              fullWidth
-              multiline
-              minRows={2}
-            />
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={closeModal} disabled={saving} sx={{ textTransform: "none" }}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSave}
-            variant="contained"
-            disabled={saving}
-            sx={{ textTransform: "none", fontWeight: 600 }}
-          >
-            {saving ? "Saving..." : editingId ? "Save Changes" : "Create Schedule"}
-          </Button>
-        </DialogActions>
+      <Dialog open={dialogOpen} onClose={() => !saving && setDialogOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>{editingId ? "Edit schedule" : "New schedule"}</DialogTitle>
+        <DialogContent><Stack spacing={2} sx={{ mt: 1 }}>
+          {formError && <Alert severity="error" role="alert">{formError}</Alert>}
+          <TextField select label="Report" value={form.report_type} onChange={(event) => setForm((previous) => ({ ...previous, report_type: event.target.value }))}>
+            {catalog.map((item) => <MenuItem key={item.report_type} value={item.report_type}>{item.title}{item.implemented ? "" : " (coming soon)"}</MenuItem>)}
+          </TextField>
+          <TextField select label="Frequency" value={form.frequency} onChange={(event) => setForm((previous) => ({ ...previous, frequency: event.target.value }))}>
+            {SCHEDULE_FREQUENCIES.map((frequency) => <MenuItem key={frequency} value={frequency}>{titleCase(frequency)}</MenuItem>)}
+          </TextField>
+          {form.frequency === "weekly" && <TextField select label="Weekday" value={form.weekday} onChange={(event) => setForm((previous) => ({ ...previous, weekday: event.target.value }))}>{WEEKDAYS.map((day) => <MenuItem key={day} value={day}>{titleCase(day)}</MenuItem>)}</TextField>}
+          {form.frequency === "monthly" && <TextField type="number" label="Day of month" value={form.day_of_month} inputProps={{ min: 1, max: 28 }} onChange={(event) => setForm((previous) => ({ ...previous, day_of_month: event.target.value }))} />}
+          <TextField type="time" label="Time" value={form.time} InputLabelProps={{ shrink: true }} onChange={(event) => setForm((previous) => ({ ...previous, time: event.target.value }))} />
+          <TextField select label="Format" value={form.format} onChange={(event) => setForm((previous) => ({ ...previous, format: event.target.value }))}>{SCHEDULE_FORMATS.map((format) => <MenuItem key={format} value={format}>{format.toUpperCase()}</MenuItem>)}</TextField>
+          <TextField label="Recipients" helperText="Separate email addresses with commas." value={form.recipients} onChange={(event) => setForm((previous) => ({ ...previous, recipients: event.target.value }))} />
+        </Stack></DialogContent>
+        <DialogActions sx={{ p: 2 }}><Button disabled={saving} onClick={() => setDialogOpen(false)}>Cancel</Button><Button variant="contained" disabled={saving} onClick={save}>{saving ? "Saving..." : "Save schedule"}</Button></DialogActions>
       </Dialog>
     </Box>
   );
