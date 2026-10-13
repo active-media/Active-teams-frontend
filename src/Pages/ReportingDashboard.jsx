@@ -1,8 +1,18 @@
-import React from "react";
-import { Box, Card, IconButton, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import React, { useContext, useEffect, useState } from "react";
+import { Box, Card, CircularProgress, IconButton, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { ArrowBack as ArrowBackIcon, ChevronRight as ChevronRightIcon } from "@mui/icons-material";
 import { Link as RouterLink, Navigate, useNavigate, useParams } from "react-router-dom";
+import { AuthContext } from "../contexts/AuthContext";
 import { AreaTrendChart, colors, KpiCardGrid, MultiLineTrendChart, PageFrame, PeriodGranularityControl, ReportDataTable, SectionTitle, StatusChip, Trend } from "../components/ReportingComponents";
+
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || "http://localhost:8000").replace(/\/+$/, "");
+const ALL_CAMPUSES = "all";
+const REPORTING_PERIODS = [
+  { value: "thisMonth", label: "This Month" },
+  { value: "lastMonth", label: "Last Month" },
+  { value: "thisQuarter", label: "This Quarter" },
+  { value: "thisYear", label: "This Year" },
+];
 
 // ---------------------------------------------------------------------------
 // This single file is the whole Reporting Dashboard: the top-level landing
@@ -36,14 +46,6 @@ const cellRows = [
 const leaderColumns = [{ key: "name", label: "LEADER NAME" }, { key: "cells", label: "TOTAL CELLS", numeric: true }, { key: "attendance", label: "TOTAL ATTENDANCE", numeric: true }, { key: "average", label: "AVG ATTENDANCE", numeric: true }, { key: "last", label: "LAST ACTIVE" }, { key: "status", label: "STATUS", render: () => <StatusChip /> }];
 
 // Landing-page data, straight from Reporting Dashboard.pdf.
-const trendLabels = ["Aug 02, 2026", "Aug 09, 2026", "Aug 16, 2026", "Aug 23, 2026"];
-const attendanceTrend = [1280, 1300, 1400, 1400];
-const campusComparison = [
-  { campus: "Springfield", value: 3000 },
-  { campus: "Riverside", value: 950 },
-  { campus: "Northside", value: 800 },
-];
-const campusMax = 3600;
 const ministryRows = [
   { ministry: "Life Class", registered: 200, attended: 173, completed: 152, attendancePct: "+86.5%", completionPct: "+76.0%" },
   { ministry: "School of Leaders", registered: 60, attended: 52, completed: 44, attendancePct: "+86.7%", completionPct: "+73.3%" },
@@ -61,6 +63,8 @@ const kpiTiles = [
   { key: "twelve-tasks", label: "Twelve Tasks", value: "4/12", caption: "+33.3% complete", tone: colors.green, path: null },
   { key: "staff-interns-youth", label: "Staff / Interns / Youth", value: "4/3/5", caption: "people tracked", tone: colors.muted, path: null },
 ];
+
+const EMPTY_TREND = { labels: [], data: [], campusTotals: [], granularity: "month" };
 
 // ---------------------------------------------------------------------------
 // Small shared pieces
@@ -131,14 +135,14 @@ function DashboardBreadcrumb({ trail, onBack }) {
   );
 }
 
-function Header({ title, subtitle }) {
+function Header({ title, subtitle, showPeriodControl = true }) {
   return (
     <Stack direction={{ xs: "column", lg: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", lg: "flex-start" }} gap={2} mb={3}>
       <Box>
         <Typography sx={{ fontSize: { xs: 28, md: 34 }, fontWeight: 800 }}>{title}</Typography>
         <Typography sx={{ color: colors.muted }}>{subtitle}</Typography>
       </Box>
-      <PeriodGranularityControl />
+      {showPeriodControl && <PeriodGranularityControl />}
     </Stack>
   );
 }
@@ -169,14 +173,19 @@ function KpiTile({ tile }) {
   );
 }
 
-function CampusBarChart() {
+// Driven by the `rows` prop: [{ campus, value }] from the backend's campus_totals.
+function CampusBarChart({ rows = [] }) {
+  if (!rows.length) {
+    return <Typography sx={{ color: colors.muted, py: 8, textAlign: "center" }}>No campus data for this selection.</Typography>;
+  }
+  const max = Math.max(...rows.map((r) => r.value), 1);
   return (
     <Stack direction="row" alignItems="flex-end" spacing={3} sx={{ height: 220, px: 1 }}>
-      {campusComparison.map((c) => (
+      {rows.map((c) => (
         <Stack key={c.campus} alignItems="center" spacing={1} sx={{ flex: 1, height: "100%", justifyContent: "flex-end" }}>
-          <Typography sx={{ color: colors.muted, fontSize: 12 }}>{c.value.toLocaleString()}</Typography>
-          <Box sx={{ width: "60%", height: `${(c.value / campusMax) * 100}%`, bgcolor: colors.blue, borderRadius: "4px 4px 0 0" }} />
-          <Typography sx={{ color: colors.muted, fontSize: 12 }}>{c.campus}</Typography>
+          <Typography sx={{ color: colors.muted, fontSize: 12 }}>{Number(c.value).toLocaleString()}</Typography>
+          <Box sx={{ width: "60%", height: `${(c.value / max) * 75}%`, minHeight: 2, bgcolor: colors.blue, borderRadius: "4px 4px 0 0" }} />
+          <Typography sx={{ color: colors.muted, fontSize: 12, textAlign: "center" }}>{c.campus}</Typography>
         </Stack>
       ))}
     </Stack>
@@ -187,16 +196,70 @@ function CampusBarChart() {
 // Sub-view: landing page (Reporting Dashboard.pdf)
 // ---------------------------------------------------------------------------
 function Home() {
+  const { authFetch } = useContext(AuthContext) || {};
+  const [period, setPeriod] = useState("thisYear");
+  const [campus, setCampus] = useState(ALL_CAMPUSES);
+  const [campuses, setCampuses] = useState([]);
+  const [trend, setTrend] = useState(EMPTY_TREND);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!authFetch) {
+      setLoading(false);
+      setError("Authentication is unavailable.");
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const loadAttendance = async () => {
+      setLoading(true);
+      setError("");
+      const query = new URLSearchParams({ period });
+      if (campus !== ALL_CAMPUSES) query.set("campus", campus);
+
+      try {
+        const response = await authFetch(
+          `${BACKEND_URL}/stats/reporting-dashboard/service-attendance?${query.toString()}`,
+          { signal: controller.signal },
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.detail || "Unable to load service attendance.");
+        }
+        setTrend({
+          labels: Array.isArray(payload.labels) ? payload.labels : [],
+          data: Array.isArray(payload.data) ? payload.data : [],
+          campusTotals: Array.isArray(payload.campus_totals) ? payload.campus_totals : [],
+          granularity: payload.granularity === "week" ? "week" : "month",
+        });
+        setCampuses(Array.isArray(payload.campuses) ? payload.campuses : []);
+      } catch (requestError) {
+        if (requestError?.name === "AbortError") return;
+        setTrend(EMPTY_TREND);
+        setError(requestError?.message || "Unable to load service attendance.");
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+
+    loadAttendance();
+    return () => controller.abort();
+  }, [authFetch, campus, period]);
+
+  const hasAttendance = trend.data.some((value) => value != null && Number(value) > 0);
+
   return (
     <>
-      <Header title="Reporting Dashboard" subtitle="Automated church metrics — calculated from live data." />
+      <Header title="Reporting Dashboard" subtitle="Automated church metrics — calculated from live data." showPeriodControl={false} />
 
       <Stack direction={{ xs: "column", sm: "row" }} spacing={2} mb={3}>
-        <TextField select label="Reporting Period" defaultValue="This Month" size="small" sx={{ minWidth: 220 }}>
-          {["This Month", "Last Month", "This Quarter", "This Year"].map((p) => <MenuItem key={p} value={p}>{p}</MenuItem>)}
+        <TextField select label="Reporting Period" value={period} onChange={(event) => setPeriod(event.target.value)} size="small" sx={{ minWidth: 220 }}>
+          {REPORTING_PERIODS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
         </TextField>
-        <TextField select label="Campus" defaultValue="All Campuses" size="small" sx={{ minWidth: 220 }}>
-          {["All Campuses", "Springfield", "Riverside", "Northside"].map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+        <TextField select label="Campus" value={campus} onChange={(event) => setCampus(event.target.value)} size="small" sx={{ minWidth: 220 }}>
+          <MenuItem value={ALL_CAMPUSES}>All Campuses</MenuItem>
+          {campuses.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
         </TextField>
       </Stack>
 
@@ -205,11 +268,38 @@ function Home() {
       </Box>
 
       <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr" }, gap: 2, mb: 2 }}>
-        <ChartPanel title="Attendance Trend">
-          <MultiLineTrendChart labels={trendLabels} datasets={[{ label: "Total Attendance", data: attendanceTrend, borderColor: colors.blue, borderWidth: 3, tension: 0.35 }]} />
+        <ChartPanel title="Attendance Trend" subtitle={`Completed service attendance by ${trend.granularity}`}>
+          {loading ? (
+            <Box sx={{ height: 300, display: "grid", placeItems: "center" }}><CircularProgress size={28} /></Box>
+          ) : error ? (
+            <Typography sx={{ color: "#ef5350", py: 8, textAlign: "center" }}>{error}</Typography>
+          ) : hasAttendance ? (
+            <MultiLineTrendChart
+              labels={trend.labels}
+              datasets={[{
+                label: "Total Attendance",
+                data: trend.data,
+                borderColor: colors.blue,
+                backgroundColor: colors.blue,
+                borderWidth: 3,
+                tension: 0.35,
+                spanGaps: false,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+              }]}
+            />
+          ) : (
+            <Typography sx={{ color: colors.muted, py: 8, textAlign: "center" }}>No completed service attendance for this selection.</Typography>
+          )}
         </ChartPanel>
         <ChartPanel title="Campus Comparison">
-          <CampusBarChart />
+          {loading ? (
+            <Box sx={{ height: 220, display: "grid", placeItems: "center" }}><CircularProgress size={28} /></Box>
+          ) : error ? (
+            <Typography sx={{ color: "#ef5350", py: 8, textAlign: "center" }}>{error}</Typography>
+          ) : (
+            <CampusBarChart rows={trend.campusTotals} />
+          )}
         </ChartPanel>
       </Box>
 
