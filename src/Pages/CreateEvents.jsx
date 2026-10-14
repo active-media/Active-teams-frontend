@@ -100,7 +100,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   });
   const {
     isGlobal: isGlobalEvent,
-    isTicketed: isTicketedEvent,
+    // isTicketed: isTicketedEvent,
     hasPersonSteps,
   } = eventTypeFlags;
   const { getAllHierarchyLevels } = useOrgConfig();
@@ -108,8 +108,10 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [peopleData, setPeopleData] = useState([]);
   const [priceTiers, setPriceTiers] = useState([]);
-
-  const isSelectingFromDropdown = useRef(false);
+  const [isTicketedEvent,setIsTicketedEvent] = useState(false);
+  console.log('CURRENT EVENT TYPE:', selectedEventType);
+  
+  const isSelectingFromDropdown = useRef(false); 
 
   const isAdmin = user?.role === "admin";
   console.log("view role", isAdmin);
@@ -263,7 +265,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   ];
 
   useEffect(() => {
-    console.log("CreateEvents - Props received:", {
+    console.log("CreateEvents - Props received:",eventTypes.find((et) => et.display_name === formData.eventType), {
       selectedEventTypeObj,
       selectedEventType,
       eventTypes: eventTypes.map((et) => ({
@@ -273,6 +275,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
         hasPersonSteps: et.hasPersonSteps,
       })),
     });
+    setIsTicketedEvent(eventTypes.find((et) => et.display_name === formData.eventType)?.is_ticketed || false);
     const determineEventType = () => {
       if (selectedEventTypeObj) {
         const objName = selectedEventTypeObj.name || selectedEventTypeObj.displayName || "";
@@ -741,10 +744,12 @@ const fetchPeople = async (q) => {
       } else {
         dayValue = "Recurring";
       }
-
+      
+      const eventTypeName = eventTypes.find((t) => t.display_name === formData.eventType)?.name
+      console.log("event types here",eventTypes)
       const payload = {
         UUID: generateUUID(),
-        eventTypeName: formData.eventType,
+        eventTypeName: eventTypeName,
         eventName: formData.eventName,
         isTicketed: !!isTicketedEvent,
         isGlobal: !!isGlobalEvent,

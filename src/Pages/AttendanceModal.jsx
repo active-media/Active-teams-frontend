@@ -1533,9 +1533,8 @@ const AttendanceModal = ({
   };
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
-
-  const isTicketedEvent =
-    event?.isTicketed === true || event?.isTicketed === "true" || false;
+  console.log('full event:', event);
+  const isTicketedEvent =  event.eventType === 'ticketed_events'
   // Only sync to Service Check-In for events that actually appear there:
   // ticketed events and global events (services). Never cells, training, etc.
   const syncsServiceCheckIn = shouldSyncServiceCheckIn(event);
@@ -1739,19 +1738,20 @@ const AttendanceModal = ({
   // ─── NEW: Fire POST /consolidations for a single person ───
   const createCellConsolidation = async ({ person, decisionType, eventId, session_id }) => {
     //logic to get assigned person's details:
-    const assignedTo = resolveAssignedTo(person);
+    const assignedTo = resolveAssignedTo(person) || event?.eventLeaderName
 
     if (!assignedTo) {
       console.warn(
-        `No leader found for ${person.fullName} — skipping consolidation`,
+        `No leader found for ${person.fullName} — assigning consolidation to event leader`,
       );
-      return { success: false, skipped: true, name: person.fullName };
+      
+
     }
 
     const nameParts = (person.fullName || "").trim().split(" ");
     const personName = nameParts[0] || "";
     const personSurname = nameParts.slice(1).join(" ") || "";
-
+    console.log("LOOK HERE!",event)
     const payload = {
       person_name: person.name || personName,
       person_surname: person.surname || personSurname,
@@ -1768,7 +1768,9 @@ const AttendanceModal = ({
       ),
       notes: "",
       person_id: person.person_id || person.id,
-      session_id: session_id || ""
+      session_id: session_id || "",
+      event_leader_name: event.eventLeaderName,
+      event_leader_email: event.eventLeaderEmail
     };
 
     const response = await authFetch(`${BACKEND_URL}/consolidations`, {
@@ -1899,18 +1901,26 @@ const AttendanceModal = ({
       clearTimeout(ticketSaveTimers.current[person.id]);
     ticketSaveTimers.current[person.id] = setTimeout(() => {
       ticketSaveTimers.current[person.id] = null;
-      const overrideMap = {
-        ...attendeeTicketInfo,
-        [person.id]: nextTicket,
-      };
-      saveAllAttendees(
-        persistentAttendeesRef.current || [],
-        overrideMap,
-        true,
-      )
+      const token = localStorage.getItem("token");
+      authFetch(`${BACKEND_URL}/update_attendee_price_tier_info`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          person_id: person.id,
+          event_id: event.event_id,
+          priceName: nextTicket.priceName,
+          price: nextTicket.price,
+          ageGroup: nextTicket.ageGroup,
+          paymentMethod: nextTicket.paymentMethod,
+          paid: nextTicket.paid || 0,
+        }),
+      })
         .catch((err) => {
-          console.error("Failed to save ticket details:", err);
-          toast.error("Failed to save ticket details");
+          console.error("Failed to update attendee price tier info:", err);
+          toast.error("Failed to update attendee price tier info");
         })
         .finally(() => {
           pendingTicketSaveIds.current.delete(person.id);
@@ -2157,7 +2167,8 @@ const AttendanceModal = ({
         event_name: event.eventName,
         session_id: event.session_id,
         event_leader: event.eventLeaderName,
-        leader_at_12: event.leader12
+        leader_at_12: event.leader12,
+        event_type: event.eventType
       }).toString();
     
       const event_id= event.event_id;
@@ -2726,7 +2737,7 @@ const AttendanceModal = ({
     }
   }, [activeTab, preloadedPeople.length]);
 
-  const handleCheckIn = (id) => {
+  const handleCheckIn = async (id) => {
     setCheckedIn((prev) => {
       const isNowChecked = !prev[id];
       const newState = { ...prev, [id]: isNowChecked };
@@ -2743,76 +2754,54 @@ const AttendanceModal = ({
       return newState;
     });
     const isNowChecked = !checkedIn[id];
-    const nextChecked = { ...checkedIn, [id]: isNowChecked };
-    const checkedInSnapshots = (persistentAttendeesRef.current || [])
-      .filter((p) => p.id && nextChecked[p.id])
-      .map((p) => ({
-        id: p.id,
-        name: p.name || p.fullName || "",
-        surname: p.surname || "",
-        fullName: p.fullName || p.name || "",
-        email: p.email || "",
-        phone: p.phone || "",
-        leader12: p.leader12 || "",
-        leader144: p.leader144 || "",
-        decision: decisions[p.id] ? decisionTypes[p.id] || "" : "",
-        priceName: p.priceName || "",
-        price: p.price || 0,
-        ageGroup: p.ageGroup || "",
-        paymentMethod: p.paymentMethod || "",
-        paid: p.paidAmount ?? p.paid ?? 0,
-      }));
-    if (isNowChecked) {
-      if (isTicketedEvent) {
-        setAttendeeTicketInfo((prevTicket) => {
-          if (!prevTicket[id] || !prevTicket[id].priceName) {
-            const person = getAllCommonAttendees().find((p) => p.id === id);
-            if (person && person.priceName) {
-              return {
-                ...prevTicket,
-                [id]: {
-                  priceName: person.priceName,
-                  price: person.price || 0,
-                  ageGroup: person.ageGroup || "",
-                  paymentMethod: person.paymentMethod || "Cash",
-                  paidAmount: person.paidAmount || 0,
-                },
-              };
-            }
-          }
-          return prevTicket;
-        });
+
+    // Determine the person object from common attendees
+    const person = getAllCommonAttendees().find((p) => p.id === id) || {
+      id,
+      fullName: id,
+    };
+
+    try {
+      const token = localStorage.getItem("access_token");
+     
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      // Use the /events/check_in endpoint to add/remove the individual person
+      const response = await authFetch(
+        `${BACKEND_URL}/update_check_in_status`,
+        {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({
+            event_id: event?.event_id || event?.id || "",
+            session_id: event?.session_id,
+            event_type: event?.eventType || event?.event_type_name || "Cells",
+            ...person,
+            checked_in: isNowChecked,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `Check-in ${isNowChecked ? "failed" : "removed"} error`);
       }
 
-      const personData = getAllCommonAttendees().find((p) => p.id === id) || {
-        id,
-        fullName: id,
-      };
-      syncServiceCheckIn(personData, true).catch((error) => {
-        console.warn("Service check-in sync failed:", error);
-      });
-      saveAllAttendees(
-        persistentAttendeesRef.current || [],
-        null,
-        true,
-        checkedInSnapshots,
-      ).catch(() => {});
-      toast.success("Person checked in for this week");
-    } else {
-      const personData = getAllCommonAttendees().find((p) => p.id === id) || {
-        id,
-        fullName: id,
-      };
-      syncServiceCheckIn(personData, false).catch((error) => {
-        console.warn("Service check-in remove sync failed:", error);
-      });
-      saveAllAttendees(
-        persistentAttendeesRef.current || [],
-        null,
-        true,
-        checkedInSnapshots,
-      ).catch(() => {});
-      toast.warning("Person unchecked for this week");
+      const result = await response.json();
+      console.log("Check-in result:", result);
+
+      // Update local state based on response
+      if (isNowChecked) {
+        toast.success(result.message || "Person checked in for this week");
+      } else {
+        toast.warning(result.message || "Person unchecked for this week");
+      }
+    } catch (error) {
+      console.error("Failed to check-in/out person:", error);
+      toast.error(error.message || "Failed to check-in/out person");
     }
   };
 
@@ -2879,6 +2868,7 @@ const AttendanceModal = ({
             ...(checkedInOverride !== null && {
               checked_in_attendees: checkedInOverride,
             }),
+            "event_type": event?.event_type_name || "cells"
           }),
         },
       );
@@ -2980,7 +2970,8 @@ const AttendanceModal = ({
         "associate": true,
         "attendee":personWithLeaders,
         "session_id": event?.session_id,
-        "event_name": event?.event_name
+        "event_name": event?.event_name,
+        "event_type": event?.eventType || "cells"
       }
  
       const response = await authFetch(
@@ -3187,7 +3178,9 @@ const AttendanceModal = ({
     const attendeesList = Object.keys(checkedIn).filter((id) => checkedIn[id]);
     const finalHeadcount = manualHeadcount ? parseInt(manualHeadcount) : 0;
 
-    const eventId = getAttendanceEventId(event);
+    // const eventId = getAttendanceEventId(event);
+    const eventId = event?.event_id;
+    
 
     if (!eventId) {
       toast.error("Event ID is missing, cannot submit attendance.");
@@ -3309,6 +3302,7 @@ const AttendanceModal = ({
         session_id: event?.session_id || "",
         event_id: event?.event_id || "",
         event_name: event?.eventName || "",
+        event_type: event?.eventType || event?.event_type_name || "Cells",
       };
 
       console.log("Saving payload:", payload);
@@ -3705,6 +3699,7 @@ const AttendanceModal = ({
         did_not_meet: true,
         isTicketed: isTicketedEvent,
         week: get_current_week_identifier(),
+        event_type: event?.eventType || event?.event_type_name || "Cells",
       };
 
       let result;
@@ -4935,7 +4930,7 @@ const AttendanceModal = ({
                                           ageGroup: ticketInfo.ageGroup,
                                           paymentMethod:
                                             ticketInfo.paymentMethod || "Cash",
-                                          paidAmount: value,
+                                          paid: value,
                                         });
                                       }}
                                       style={styles.paidInput}

@@ -1150,6 +1150,7 @@ export default function DailyTasks() {
     const isNewPerson = task.is_new_person_task;
 
     if (!isConsolidation && !isNewPerson) return null;
+    if (task.source_display === "Manual") return null;
 
     // Get the service date from the task - try multiple field names
     const serviceDate = task.decision_date || task.created_at || task.date;

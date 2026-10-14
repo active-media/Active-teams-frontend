@@ -1510,6 +1510,11 @@ const allEventTypes = useMemo(() => {
   const typeNames = eventTypes.map((t) => (typeof t === "string" ? t : t.name));
   return typeNames;
 }, [eventTypes]);
+const getEventTypeName = (eventType) => {
+  console.log("normal",eventTypes)
+  return eventTypes.find(et => et.display_name === eventType)?.name;
+};
+
 
 const fetchEventsFilters = (filters) => {
   const params = {
@@ -1528,7 +1533,8 @@ const fetchEventsFilters = (filters) => {
 
   if (filters.search) params.search = filters.search;
   if (filters.event_type) {
-    params.event_type = filters.event_type;
+    
+    params.event_type = getEventTypeName(filters.event_type);
   }
 
   const currentUser = JSON.parse(localStorage.getItem("userProfile")) || {};
@@ -1540,8 +1546,8 @@ const fetchEventsFilters = (filters) => {
   const userSurname =
     currentUser?.surname || userName?.split(" ").slice(1).join(" ") || "";
   let endpoint = `${BACKEND_URL}/events`;
-
   const eventType = filters.event_type || selectedEventTypeFilter;
+  console.log("Fetching events for user:", filters)
     const userOrg = currentUser?.Organization || currentUser?.organization || "";
   const userOrgId = currentUser?.org_id || "";
   const isCellOrg = userOrgId === "active-teams" || userOrg === "Active Church";
@@ -1662,8 +1668,8 @@ const [fetchedEventTypes, setFetchedEventTypes] = useState([]);
 const fetchEventTypes = useCallback(async () => {
   try {
     const token = localStorage.getItem("access_token");
-
-    const {data:eventTypesData, error} = await supabase.from('event_types').select('*')
+    const org_id = localStorage.getItem("org_id");
+    const {data:eventTypesData, error} = await supabase.from('event_types').select('*').eq("org_id",org_id)
     if (error){
       console.log("supabase error: ",error.message);
       throw new Error("supabase error: ",error.message);
@@ -2220,6 +2226,7 @@ const getFilteredEventTypes = (allEventTypes) => {
                 typeof type === "string" ? type : type.name || type;
               const isActive = selectedEventTypeFilter === typeName;
               const color = getEventTypeColor(typeName);
+              const name = type.display_name
 
               // Get description from event type object
               const eventTypeObj = eventTypes.find(
@@ -2244,7 +2251,7 @@ const getFilteredEventTypes = (allEventTypes) => {
                   onClick={() => onSelectEventType(typeName)}
                 >
                   <Typography sx={styles.eventTypeName}>
-                    {typeName === "all" ? "All Events" : typeName}
+                    {typeName === "all" ? "All Events" : name}
                   </Typography>
                   <Typography sx={styles.eventTypeDescription}>
                     {description}
@@ -2590,7 +2597,8 @@ const getFilteredEventTypes = (allEventTypes) => {
     async (data) => {
       try {
         const token = localStorage.getItem("access_token");
-        const eventId = getAttendanceEventId(selectedEvent);
+        // const eventId = getAttendanceEventId(selectedEvent);
+        const eventId = selectedEvent?.event_id;
         if (!eventId) {
           throw new Error("No valid event id found for attendance submission");
         }
@@ -2607,6 +2615,8 @@ const getFilteredEventTypes = (allEventTypes) => {
 
         let payload;
 
+        const eventType = selectedEvent?.eventType || selectedEvent?.event_type_name || "Cells";
+
         if (data === "did_not_meet") {
           payload = {
             event_id: eventId,
@@ -2616,6 +2626,7 @@ const getFilteredEventTypes = (allEventTypes) => {
             leaderName,
             did_not_meet: true,
             event_date: eventDate,
+            event_type: eventType,
           };
         } else if (Array.isArray(data)) {
           payload = {
@@ -2626,6 +2637,7 @@ const getFilteredEventTypes = (allEventTypes) => {
             leaderName,
             did_not_meet: false,
             event_date: eventDate,
+            event_type: eventType,
           };
         } else {
           payload = {
@@ -2634,8 +2646,10 @@ const getFilteredEventTypes = (allEventTypes) => {
             leaderEmail,
             leaderName,
             event_date: eventDate,
+            event_type: eventType,
           };
         }
+
 
         const response = await fetch(
           `${BACKEND_URL.replace(/\/$/, "")}/submit-attendance/${eventId}`,
@@ -2795,7 +2809,7 @@ const getFilteredEventTypes = (allEventTypes) => {
             }
           }
 
-          const response = await authFetch(`${BACKEND_URL}/events/${event?.event_id}/${event?.eventName}`, {
+          const response = await authFetch(`${BACKEND_URL}/events/${event?.event_id}/${event?.eventName}/${event?.eventType}`, {
             method: "DELETE",
             headers: {
               Authorization: `Bearer ${token}`,
@@ -3615,6 +3629,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       }
 
       fetchEvents(fetchParams, true);
+     
     };
 
     const canDownload =
@@ -4355,7 +4370,7 @@ const getTypeValue = (type) => {
             {showingEvents
               ? "Events"
               : viewMode === "grid"
-                ? "Select Event Type"
+                ? "Select Event Types"
                 : "Event Types"}
           </Typography>
 
@@ -5353,7 +5368,9 @@ const getTypeValue = (type) => {
           return typeName.toLowerCase().includes(eventTypeSearch.toLowerCase());
         })
         .map((type) => {
+          //HEREEEEEEEEEEEEEEEEEEE
           const typeName = typeof type === "string" ? type : type.name || type;
+          const name = eventTypes.find((t) => t.name === typeName)?.display_name || typeName;
           const isAllCells = typeName === "all";
           const eventTypeObj = isAllCells 
             ? { name: "all", description: "Gatherings for discipleship, community and spiritual growth" }
@@ -5407,7 +5424,7 @@ const getTypeValue = (type) => {
             >
               <Box
                 onClick={() => {
-                  setSelectedEventTypeFilter(typeName);
+                  setSelectedEventTypeFilter(name);
                   setShowingEvents(true);
                   setCurrentPage(1);
 
@@ -5417,8 +5434,8 @@ const getTypeValue = (type) => {
                     start_date: DEFAULT_API_START_DATE,
                     event_type: typeName === "all" ? "CELLS" : typeName,
                   };
-
-                  fetchEvents(fetchParams, true);
+                  console.log('FETCH PARAMS', fetchParams);
+                  // fetchEvents(fetchParams, true);
                 }}
                 sx={{
                   width: "100%",
@@ -5443,7 +5460,7 @@ const getTypeValue = (type) => {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {typeName === "all" ? "ALL CELLS" : typeName}
+                  {typeName === "all" ? "ALL CELLS" : name}
                 </Typography>
 
                 <Box
@@ -5995,7 +6012,7 @@ const getTypeValue = (type) => {
             >
               <CreateEvents
                 key={selectedEventTypeFilter}
-                user={currentUser}
+                user={currentUser} 
                 isModal={true}
                 onClose={handleCloseCreateEventModal}
                 selectedEventTypeObj={findEventTypeByName(
