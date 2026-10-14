@@ -1469,6 +1469,9 @@ const AttendanceModal = ({
   const [people, setPeople] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const isFutureSession = event?.date
+    ? new Date(event.date) > new Date()
+    : false;
   const [associateSearch, setAssociateSearch] = useState("");
   const [isLoadingPeople, setIsLoadingPeople] = useState(false);
   const [showAddPersonModal, setShowAddPersonModal] = useState(false);
@@ -5563,10 +5566,11 @@ const AttendanceModal = ({
                 style={{
                   ...styles.saveBtn,
                   opacity: isSaving ? 0.7 : 1,
-                  cursor: isSaving ? "not-allowed" : "pointer",
+                  cursor: isSaving || isFutureSession ? "not-allowed" : "pointer",
                 }}
                 onClick={handleSave}
-                disabled={isSaving}
+                disabled={isSaving || isFutureSession}
+                title={isFutureSession ? "Can't save until the session happens" : undefined}
               >
                 {isSaving ? "SAVING..." : "SAVE"}
               </button>
