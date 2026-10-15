@@ -911,7 +911,41 @@ export const PeopleSection = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Org change ─────────────────────────────────────────────────────────────
+  // ── People polling cleanup ─────────────────────────────────────────────────
+  useEffect(() => {
+    let mounted = true;
+    const pollPeople = async () => {
+      try {
+        const pollRes = await authFetch(`${BACKEND_URL}/cache/people`);
+        if (!pollRes?.ok) return;
+        const pollData = await pollRes.json();
+        const pollMapped = (pollData?.cached_data || [])
+          .map(mapRawPerson)
+          .filter(Boolean);
+        if (pollMapped.length > 0 && mounted) {
+          setAllPeople(pollMapped);
+          window.globalPeopleCache = pollMapped;
+          window.globalCacheTimestamp = Date.now();
+          window.globalPeopleCacheOrg = currentUserOrg;
+        }
+        if (pollData.is_complete || attempts >= 20) {
+          if (mounted) clearInterval(intervalId);
+          return;
+        }
+      } catch (e) {
+        if (attempts >= 20 && mounted) clearInterval(intervalId);
+      }
+    };
+    
+    const intervalId = setInterval(pollPeople, 3000);
+    
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
+  }, [currentUserOrg]);
+  
+  // ── Org change ─────────────────────────────────────────────────────────────  // ── Org change ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (prevOrgRef.current !== currentUserOrg) {
       prevOrgRef.current = currentUserOrg;

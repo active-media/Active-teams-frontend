@@ -1001,16 +1001,36 @@ const sortedFilteredAttendees = useMemo(() => {
         authFetch(`${BASE_URL}/service-checkin/remove`, {
           method: "DELETE",
           body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: personId, type: "new_people" }),
-        }).catch(() => { });
+        })
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          })
+          .then((data) => {
+            toast.info(`${fullName} no longer marked as new`);
+          })
+          .catch((err) => {
+            toast.error(`Failed to remove new mark: ${err.message || "server error"}`);
+          });
+      } else {
+        toast.error("Missing person_id to remove new mark");
       }
-      toast.info(`${fullName} no longer marked as new`);
     } else {
       setSessionNew(prev => { const m = new Map(prev); m.set(entryKey, { ...personData, _id: personId }); return m; });
       authFetch(`${BASE_URL}/service-checkin/checkin`, {
         method: "POST",
         body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_data: personData, type: "new_person" }),
-      }).catch(() => { });
-      toast.success(`${fullName} marked as new this service`);
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })
+        .then((data) => {
+          toast.success(`${fullName} marked as new this service`);
+        })
+        .catch((err) => {
+          toast.error(`Failed to mark as new: ${err.message || "server error"}`);
+        });
     }
   }, [currentEventId, mergedNewSet, authFetch]);
 
