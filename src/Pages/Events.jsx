@@ -982,7 +982,7 @@ ${xmlCols}
             </IconButton>
           </Tooltip>
         )}
-        <Tooltip title="Download Attendance (Event)" arrow>
+        <Tooltip title="Download Event Attendance" arrow>
           <IconButton
             onClick={() => downloadEventAttendance(event)}
             size="small"

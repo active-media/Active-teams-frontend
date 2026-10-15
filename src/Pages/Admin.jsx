@@ -35,7 +35,7 @@ let globalOrgFilter = null;
 let globalRolesCache = {};
 
 const CACHE_DURATION = 5 * 60 * 1000;
-const SUPREME_ADMIN_EMAIL = "tkgenia1234@gmail.com";
+const SUPREME_ADMIN_EMAIL = "plaatjiessamuel98@gmail.com";
 
 export default function AdminDashboard() {
   const theme = useTheme();

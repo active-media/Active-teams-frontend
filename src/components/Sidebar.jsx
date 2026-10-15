@@ -12,6 +12,7 @@ import { Link, useLocation } from 'react-router-dom';
 import MenuIcon from '@mui/icons-material/Menu';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
+import SettingsIcon from '@mui/icons-material/Settings';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 
 import {
@@ -20,9 +21,12 @@ import {
   Group,
   Event,
   BarChart,
+  Assessment,
   Assignment,
   HowToReg,
-  AdminPanelSettings
+  AdminPanelSettings,
+  Description,
+  AccessTime
 } from '@mui/icons-material';
 import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
@@ -86,6 +90,39 @@ const allMenuItems = [
     icon: AdminPanelSettings, 
     roles: ['admin'],
     level: 5
+  },
+  { 
+    label: 'REPORTING', 
+    divider: true, 
+    roles: [] 
+  },
+  { 
+    label: 'Reports', 
+    path: '/reports', 
+    icon: Description, 
+    roles: ['admin', 'leader', 'leaderat12'],
+    level: 3
+  },
+  { 
+    label: 'Scheduled Reports', 
+    path: '/reporting/scheduled', 
+    icon: AccessTime, 
+    roles: ['admin'],
+    level: 5
+  },
+  { 
+    label: 'Reporting Dashboard', 
+    path: '/reporting/dashboard', 
+    icon: BarChart, 
+    roles: ['admin', 'leader', 'leaderat12'],
+    level: 3
+  },
+  {
+    label: 'Report History',
+    path: '/reporting/history',
+    icon: AccessTime,
+    roles: ['admin', 'leader', 'leaderat12'],
+    level: 3
   },
   { 
     label: 'Help & Support', 
@@ -152,6 +189,10 @@ export default function Sidebar({ mode, setMode }) {
         setUserHasCell(true);
       }
       const filteredItems = allMenuItems.filter(item => {
+        if (item.divider) {
+          return true;
+        }
+
         if (isCustomRole) {
           const userLevel = ROLE_HIERARCHY['user'] || 2;
                     if (item.level > userLevel) {
@@ -207,9 +248,11 @@ export default function Sidebar({ mode, setMode }) {
     setMobileOpen(!mobileOpen);
   };
 
-  const bgColor = mode === 'dark' ? '#121212' : '#ffffff';
+  // Flatter, truer black in dark mode to match the design
+  const bgColor = mode === 'dark' ? '#0a0a0a' : '#ffffff';
   const textColor = mode === 'dark' ? '#ffffff' : '#000000';
   const activeTextColor = mode === 'dark' ? '#ffffff' : '#000000';
+  const activeBorderColor = mode === 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)';
 
   if (location.pathname === "/signup" || location.pathname === "/login") {
     return null;
@@ -240,9 +283,28 @@ export default function Sidebar({ mode, setMode }) {
         />
       </Box>
 
-      <List sx={{ flexGrow: 1 }}>
-        {menuItems.map(({ label, path, icon, external }) => {
+      <List sx={{ flexGrow: 1, px: 1.5 }}>
+        {menuItems.map(({ label, path, icon, external, divider }) => {
           const Icon = icon;
+          if (divider) {
+            return (
+              <Box
+                key={label}
+                sx={{
+                  px: 1,
+                  pt: 2,
+                  pb: 0.75,
+                  textTransform: 'uppercase',
+                  color: mode === 'dark' ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)',
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.05em',
+                }}
+              >
+                {label}
+              </Box>
+            );
+          }
           const isActive = !external && location.pathname === path;
           return (
             <ListItemButton
@@ -258,32 +320,42 @@ export default function Sidebar({ mode, setMode }) {
                 mb: 0.5,
                 borderRadius: 2,
                 color: textColor,
+                border: isActive ? `1px solid ${activeBorderColor}` : '1px solid transparent',
                 backgroundColor: isActive
                   ? mode === 'dark'
-                    ? 'rgba(255,255,255,0.08)'
-                    : 'rgba(0,0,0,0.06)'
+                    ? 'rgba(255,255,255,0.06)'
+                    : 'rgba(0,0,0,0.04)'
                   : 'transparent',
-                borderLeft: isActive
-                  ? `4px solid ${mode === 'dark' ? '#ffffff' : '#000000'}`
-                  : '4px solid transparent',
                 '&:hover': {
                   backgroundColor:
                     mode === 'dark'
-                      ? 'rgba(255,255,255,0.15)'
-                      : 'rgba(0,0,0,0.12)',
+                      ? 'rgba(255,255,255,0.10)'
+                      : 'rgba(0,0,0,0.08)',
                   color: activeTextColor,
                   '& .MuiListItemIcon-root': { color: activeTextColor },
+                },
+                '&.Mui-selected': {
+                  backgroundColor:
+                    mode === 'dark'
+                      ? 'rgba(255,255,255,0.06)'
+                      : 'rgba(0,0,0,0.04)',
+                },
+                '&.Mui-selected:hover': {
+                  backgroundColor:
+                    mode === 'dark'
+                      ? 'rgba(255,255,255,0.10)'
+                      : 'rgba(0,0,0,0.08)',
                 },
               }}
             >
               <ListItemIcon sx={{ minWidth: 40, color: 'inherit' }}>
-                <Icon />
+                <Icon fontSize="small" />
               </ListItemIcon>
 
               <ListItemText
                 primary={label}
                 primaryTypographyProps={{
-                  fontSize: '0.95rem',
+                  fontSize: '0.9rem',
                   fontWeight: isActive ? 600 : 400,
                 }}
               />
@@ -292,18 +364,22 @@ export default function Sidebar({ mode, setMode }) {
         })}
       </List>
 
-      <Box sx={{ margin: 7, display: 'flex', justifyContent: 'center' }}>
+      {/* Bottom-left settings/theme control, matching the gear icon in the design */}
+      <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
         <IconButton
           onClick={handleToggleMode}
+          size="small"
+          title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           sx={{
-            color: mode === 'dark' ? '#fff' : '#000',
-            backgroundColor: mode === 'dark' ? '#1f1f1f' : '#e0e0e0',
+            color: mode === 'dark' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)',
+            backgroundColor: 'transparent',
+            border: `1px solid ${mode === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'}`,
             '&:hover': {
-              backgroundColor: mode === 'dark' ? '#615a5aff' : '#a79c9cff',
+              backgroundColor: mode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
             },
           }}
         >
-          {mode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
+          <SettingsIcon fontSize="small" />
         </IconButton>
       </Box>
 

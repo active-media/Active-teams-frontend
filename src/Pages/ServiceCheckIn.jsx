@@ -425,7 +425,7 @@ function ServiceCheckIn() {
     for (let page = 1; page <= MAX_SERVICE_EVENT_PAGES; page += 1) {
       const res = await authFetch(
         `${BASE_URL}/events/eventsdata?limit=${SERVICE_EVENTS_PAGE_SIZE}` +
-        `&page=${page}&start_date=2024-10-10&is_global=true`,
+        `&page=${page}&start_date=2024-10-10&is_global=true&event_type=Global Events`,
       );
       if (!res.ok) {
         // A later page failing should not throw away the pages that worked.
@@ -560,6 +560,7 @@ function ServiceCheckIn() {
   }, [currentEventId, fetchRealTimeEventData, fetchEvents, commitRealTimeData]);
 
   const getFilteredEvents = useCallback((eventsList = events) => {
+     
     return eventsList.filter(event => {
       const typeName = (event.eventType || "").toLowerCase();
       if (["cells", "all cells", "cell"].includes(typeName)) return false;
@@ -591,6 +592,7 @@ function ServiceCheckIn() {
 
   const menuEvents = useMemo(() => {
     const filtered = getFilteredEvents();
+   
     const list = [...filtered];
     // Only preserve currentEventId in the dropdown if it's actually a valid today event.
     // Don't re-add stale/closed events from previous weeks.

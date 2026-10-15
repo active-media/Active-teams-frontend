@@ -130,6 +130,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
     description: "",
     leader1: "",
     leader12: "",
+    isSchoolCell: false,
   });
 
   const [isRecurring, setIsRecurring] = useState(false);
@@ -754,6 +755,7 @@ const fetchPeople = async (q) => {
         isTicketed: !!isTicketedEvent,
         isGlobal: !!isGlobalEvent,
         hasPersonSteps: !!hasPersonSteps,
+        isSchoolCell: !!formData.isSchoolCell,
         location: formData.location,
         eventLeader: formData.eventLeader,
         eventLeaderName: formData.eventLeader,
@@ -1639,6 +1641,17 @@ const fetchPeople = async (q) => {
 
             {hasPersonSteps && !isGlobalEvent && (
               <>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={formData.isSchoolCell || false}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, isSchoolCell: e.target.checked }))
+                      }
+                    />
+                  }
+                  label="Meets at a school"
+                />
                 <TextField
                   label="Email *"
                   value={formData.email || ""}

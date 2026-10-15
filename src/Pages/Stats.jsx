@@ -81,8 +81,21 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 // Add this memoized component OUTSIDE StatsDashboard
 const TaskGroupRow = React.memo(
   ({ group, isExpanded, onToggle, formatDate }) => {
-    const { user, tasks, totalCount, completedCount, incompleteCount } = group;
-    const key = user.email || user.fullName;
+    const safeGroup = group || {};
+    const {
+      user = {},
+      tasks: rawTasks,
+      Tasks: backendTasks,
+      totalCount = 0,
+      completedCount = 0,
+      incompleteCount = 0,
+    } = safeGroup;
+    const tasks = Array.isArray(rawTasks)
+      ? rawTasks
+      : Array.isArray(backendTasks)
+        ? backendTasks
+        : [];
+    const key = user.email || user.fullName || "unknown-user";
 
     return (
       <Box
@@ -1196,10 +1209,17 @@ const StatsDashboard = () => {
             gap: 0.5,
           }}
         >
-          {days.map((d, i) =>
-            !d ? (
-              <Box key={`empty-${i}`} sx={{ height: 54, minHeight: 54 }} />
-            ) : (
+          {days.map((d, i) => {
+            if (!d) {
+              return (
+                <Box
+                  key={`empty-${i}`}
+                  sx={{ height: 54, minHeight: 54 }}
+                />
+              );
+            }
+
+            return (
               <Box
                 key={d.date}
                 onClick={() => {
@@ -1256,12 +1276,11 @@ const StatsDashboard = () => {
                   />
                 )}
               </Box>
-            ),
-          )}
+            );
+          })}
         </Box>
       </Box>
-    );
-  }, [filteredEvents, currentMonth, selectedDate, isSmDown]);
+    ), [filteredEvents, currentMonth, selectedDate, isSmDown]});
 
   const StatCard = React.memo(
     ({ title, value, subtitle, icon, color = "primary" }) => (
@@ -1897,18 +1916,21 @@ const StatsDashboard = () => {
                 </Box>
               ) : (
                 <Stack spacing={1.5}>
-                  {stats.groupedTasks.map((group) => {
-                    const key = group.user.email || group.user.fullName;
-                    return (
-                      <TaskGroupRow
-                        key={key}
-                        group={group}
-                        isExpanded={expandedUsers.includes(key)}
-                        onToggle={toggleExpand}
-                        formatDate={formatDate}
-                      />
-                    );
-                  })}
+                  {stats.groupedTasks
+                    .filter(Boolean)
+                    .map((group) => {
+                      const user = group?.user || {};
+                      const key = user.email || user.fullName || "unknown-user";
+                      return (
+                        <TaskGroupRow
+                          key={key}
+                          group={group}
+                          isExpanded={expandedUsers.includes(key)}
+                          onToggle={toggleExpand}
+                          formatDate={formatDate}
+                        />
+                      );
+                    })}
                 </Stack>
               )}
             </Box>
@@ -2388,12 +2410,14 @@ const StatsDashboard = () => {
 
         <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setOverdueModalOpen(false)} variant="outlined">
+
             Close
           </Button>
         </DialogActions>
       </Dialog>
 
       <Snackbar
+
         open={snackbar.open}
         autoHideDuration={4000}
         onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
