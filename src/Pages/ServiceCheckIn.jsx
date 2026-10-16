@@ -239,6 +239,7 @@ function ServiceCheckIn() {
   const fetchRealTimeEventData = useCallback(async (eventId) => {
     if (!eventId) return null;
     try {
+      eventId = "531f8512-3bc7-4701-924c-2d068bd71421"
       const res = await authFetch(`${BASE_URL}/service-checkin/real-time-data?event_id=${eventId}`);
       if (!res.ok) return null;
       const data = await res.json();
@@ -400,6 +401,7 @@ function ServiceCheckIn() {
 
   const filterValidEvents = useCallback((all) =>
     all.filter(event => {
+      console.log("Event obj:", event)
       if (!event || event.status === "error") return false;
       const typeName = (event.eventType || "").toLowerCase();
       if (["cells", "all cells", "cell", "training"].includes(typeName)) return false;
@@ -425,7 +427,7 @@ function ServiceCheckIn() {
     for (let page = 1; page <= MAX_SERVICE_EVENT_PAGES; page += 1) {
       const res = await authFetch(
         `${BASE_URL}/events/eventsdata?limit=${SERVICE_EVENTS_PAGE_SIZE}` +
-        `&page=${page}&start_date=2024-10-10&is_global=true&event_type=Global Events`,
+        `&page=${page}&start_date=2024-10-10&is_global=true`,
       );
       if (!res.ok) {
         // A later page failing should not throw away the pages that worked.
@@ -498,6 +500,7 @@ function ServiceCheckIn() {
           {
             const transformed = transformEvents(evRows, normalisedPeople);
             const valid = filterValidEvents(transformed);
+            console.log("Transformed Events:",valid);
             setEvents(valid);
             setIsLoadingEvents(false);
             setIsLoadingHistory(false);

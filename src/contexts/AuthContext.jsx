@@ -218,6 +218,7 @@ export const AuthProvider = ({ children }) => {
       supabase_id: authData.user.id,
       id:          profile._id || authData.user.id,
       email,
+      
     });
 
     persistUser(mergedUser);

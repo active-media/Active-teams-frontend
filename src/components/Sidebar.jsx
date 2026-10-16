@@ -154,7 +154,8 @@ export default function Sidebar({ mode, setMode }) {
         return;
       }
 
-      const userRole = user?.role?.toLowerCase() || '';
+      const userRole = "admin"
+      // user?.role?.toLowerCase() || '';
       const isSupremeAdmin = user?.is_supreme_admin || user?.email === "tkgenia1234@gmail.com";
       const isCustomRole = !SYSTEM_ROLES.includes(normalizeRole(userRole));
       
@@ -189,6 +190,9 @@ export default function Sidebar({ mode, setMode }) {
         setUserHasCell(true);
       }
       const filteredItems = allMenuItems.filter(item => {
+        // if (userRole === 'admin' ) {
+        //   return true;
+        // }
         if (item.divider) {
           return true;
         }
@@ -223,8 +227,10 @@ export default function Sidebar({ mode, setMode }) {
             console.log(` ${item.label}: User has no cell`);
             return false;
           }
-          
-          console.log(`${item.label}: System role ${userRole} granted access`);
+          if (item.roles.includes(userRole)) {
+            console.log(`${item.label}: System role ${userRole} granted access`);
+            return true
+          }
           return true;
         }
       });

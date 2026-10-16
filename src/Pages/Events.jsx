@@ -602,6 +602,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
   const filteredFields = Object.keys(sampleEvent).filter((key) => {
     const keyLower = key.toLowerCase();
     const excludedFields = [
+      "session_id","event_id",
       "persistent_attendees", "uuid", "did_not_meet", "status", "week_identifier",
       "attendees", "_id", "id", "isoverdue", "attendance", "location", "eventtype",
       "event_type", "eventtypes", "displaydate", "originatedid", "leader12",
