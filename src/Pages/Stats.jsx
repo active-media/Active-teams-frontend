@@ -30,7 +30,6 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  Snackbar,
   Paper,
   Checkbox,
   FormControlLabel,
@@ -75,7 +74,8 @@ const toSATime = (d) => {
     return null;
   }
 };
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+const BACKEND_URL =
+  import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 
 const getCellPeriodRange = (periodType) => {
   const todayParts = new Intl.DateTimeFormat("en-CA", {
@@ -135,17 +135,31 @@ const getCellStatus = (cell) => {
   return "incomplete";
 };
 
+const isTaskCompleted = (task) => {
+  const status = task?.status?.toLowerCase?.() || "";
+  return !!(
+    task?.is_completed ||
+    ["completed", "done", "closed", "finished"].includes(status)
+  );
+};
+
+const isConsolidationTask = (task) =>
+  !!(
+    task?.is_consolidation_task ||
+    task?.taskType?.toLowerCase?.() === "consolidation"
+  );
+
 // Add this memoized component OUTSIDE StatsDashboard
 const TaskGroupRow = React.memo(
   ({ group, isExpanded, onToggle, formatDate }) => {
     const {
-      user,
-      tasks = group.Tasks || [],
-      totalCount,
-      completedCount,
-      incompleteCount,
+      user = {},
+      tasks = group.tasks || group.Tasks || [],
+      totalCount = tasks.length,
+      completedCount = 0,
+      incompleteCount = 0,
     } = group;
-    const key = user.email || user.fullName;
+    const key = user.email || user.fullName || "unknown";
 
     return (
       <Box
@@ -327,6 +341,16 @@ const StatsDashboard = () => {
   });
 
   const [period, setPeriod] = useState("today");
+  // Used only when period === "custom": explicit start/end (YYYY-MM-DD) on
+  // the South-Africa calendar. Defaults to the last 30 days.
+  const [customRange, setCustomRange] = useState(() => {
+    const now = Date.now();
+    const fmtSA = (ms) =>
+      new Date(ms).toLocaleDateString("en-CA", {
+        timeZone: "Africa/Johannesburg",
+      });
+    return { start: fmtSA(now - 30 * 86400000), end: fmtSA(now) };
+  });
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(() => {
     return new Date().toLocaleDateString("en-CA", {
@@ -371,23 +395,21 @@ const StatsDashboard = () => {
     description: "",
     isRecurring: false,
   });
-  const [snackbar, setSnackbar] = useState({
-    open: false,
-    message: "",
-    severity: "success",
-  });
   const [eventTypes, setEventTypes] = useState([]);
   const [, setEventTypesLoading] = useState(true);
   const [calendarEvents, setCalendarEvents] = useState([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [viewMoreModalOpen, setViewMoreModalOpen] = useState(false);
   const [cells, setCells] = useState([]);
-  const [_isDownloading, setIsDownloading] = useState(false);
   const [cellsLoading, setCellsLoading] = useState(false);
   const [cellsError, setCellsError] = useState(null);
   const { authFetch, user } = useContext(AuthContext);
   const statsLockRef = useRef(false);
   const cellsLockRef = useRef(false);
+  // Set when a fetch is requested while another one is in flight; the fetch
+  // re-runs once the lock is released so filter changes are never dropped.
+  const statsPendingRefreshRef = useRef(false);
+  const cellsPendingRefreshRef = useRef(false);
 
   const canStartFetch = (lockRef, forceRefresh) => {
     if (lockRef.current && !forceRefresh) return false;
@@ -405,6 +427,7 @@ const StatsDashboard = () => {
     { value: "thisMonth", label: "This Month" },
     { value: "previousWeek", label: "Previous Week" },
     { value: "previousMonth", label: "Previous Month" },
+    { value: "custom", label: "Custom Range" },
   ];
 
   // Extract hierarchy information from user profile (similar to Events.jsx)
@@ -419,49 +442,35 @@ const StatsDashboard = () => {
     );
   }, [user]);
 
-  const currentUserLeaderAt12 = useMemo(() => {
-    if (!user) return "";
-    return (
-      user.leaderAt12 ||
-      user.leader_at_12 ||
-      user.leaderAt12Name ||
-      user.leader12 ||
-      ""
-    );
-  }, [user]);
-
-  const currentUserLeaderAt144 = useMemo(() => {
-    if (!user) return "";
-    return (
-      user.leaderAt144 ||
-      user.leader_at_144 ||
-      user.leaderAt144Name ||
-      user.leader144 ||
-      ""
-    );
-  }, [user]);
-
   const currentUserRole = useMemo(() => {
     if (!user) return "";
     return user.role?.toLowerCase() || "";
   }, [user]);
 
-  // Check if user has people under them (hierarchy data)
+  // Whether the user leads OTHER LEADERS, so the "those under you" view applies.
+  // A plain leader@1 only runs their own cells; leaders at 12+ have downline
+  // leaders. The backend re-derives the authoritative scope from the JWT.
   const hasDownline = useMemo(() => {
     if (!user) return false;
-    // Check various indicators that user has a downline
+    if (
+      [
+        "admin",
+        "super_admin",
+        "supreme_admin",
+        "leaderat12",
+        "leaderat144",
+        "leaderat1728",
+      ].includes(currentUserRole)
+    ) {
+      return true;
+    }
     return !!(
-      user.LeaderId ||                    // Direct leader ID
-      user.leader12 || user.leader_at_12 || user.leaderAt12 || // Has leader@12
-      user.leader144 || user.leader_at_144 || user.leaderAt144 || // Has leader@144
-      user.leader1728 || user.leader_at_1728 || user.leaderAt1728 || // Has leader@1728
-      currentUserLeaderAt12 ||          // leader@12 name variants (e.g. leaderAt12Name)
-      currentUserLeaderAt144 ||         // leader@144 name variants (e.g. leaderAt144Name)
-      user['LeaderPath[0]'] || user.LeaderPath?.[0] || // Has LeaderPath array
-      user['LeaderPath[1]'] || user.LeaderPath?.[1] ||
-      user['LeaderPath[2]'] || user.LeaderPath?.[2]
+      user.is_leader_at_12 ||
+      user.isLeaderAt12 ||
+      user.is_leader_at_144 ||
+      user.isLeaderAt144
     );
-  }, [user, currentUserLeaderAt12, currentUserLeaderAt144]);
+  }, [user, currentUserRole]);
 
   const isAdmin = useMemo(() => currentUserRole === "admin", [currentUserRole]);
 
@@ -498,25 +507,6 @@ const StatsDashboard = () => {
     return params.toString();
   }, [isAdmin, hasDownline, currentUserLeaderAt1]);
 
-  useEffect(() => {
-    if (cells.length > 0) {
-      console.group(" Overdue Cells — " + cells.length + " found");
-      console.table(
-        cells.map((cell) => ({
-          name: cell.eventName || "—",
-          date: cell.date ? new Date(cell.date).toLocaleDateString() : "—",
-          leader: cell.eventLeaderName || "—",
-          status: cell.status || cell.Status || "incomplete",
-          location: cell.location || "—",
-          id: cell._id?.slice(-6) + "...",
-        })),
-      );
-      console.groupEnd();
-    } else if (!cellsLoading) {
-      console.log("No overdue cells right now");
-    }
-  }, [cells, cellsLoading]);
-
   const fetchCalendarEvents = useCallback(async () => {
     setCalendarLoading(true);
 
@@ -552,12 +542,11 @@ const StatsDashboard = () => {
 
   const fetchOverdueCells = useCallback(
     async (forceRefresh = false) => {
-      /** CHANGE:
-       * Use the CELLS lock only.
-       * This prevents duplicate CELLS calls, but does NOT affect STATS.
-       */
+      /** Uses the CELLS lock only — does not block STATS. */
       if (!canStartFetch(cellsLockRef, forceRefresh)) {
-        console.log("   Already fetching CELLS — skipping duplicate call");
+        // A fetch is already in flight; queue one more so this request
+        // (e.g. a period change) is not silently dropped.
+        cellsPendingRefreshRef.current = true;
         return;
       }
 
@@ -565,33 +554,39 @@ const StatsDashboard = () => {
       setCellsError(null);
 
       try {
-        const startDate = "2026-01-22"; // adjust as needed
+        // Derive the visible window from the selected period using
+        // South-Africa-time boundaries. "Today" looks back one week so
+        // recent overdue cells are still visible on the default view.
+        const range = getCellPeriodRange(period);
+        const startDate =
+          period === "custom"
+            ? customRange.start
+            : period === "today"
+              ? new Date(
+                  Date.parse(`${range.today}T00:00:00Z`) - 6 * 86400000,
+                )
+                  .toISOString()
+                  .slice(0, 10)
+              : range.start;
+        const endDate = period === "custom" ? customRange.end : range.end;
 
         let allEvents = [];
         let page = 1;
         const limit = 90;
 
         while (true) {
-          console.log(
-            `   Fetching cells page ${page} (limit=${limit}, start=${startDate})`,
-          );
-
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 100000);
 
           try {
             const hierarchyParams = buildHierarchyParams();
-            const url = `${BACKEND_URL}/events/cells?page=${page}&limit=${limit}&start_date=${startDate}&status=incomplete${hierarchyParams ? `&${hierarchyParams}` : ""}`;
-            console.log(" → URL:", url);
+            const url = `${BACKEND_URL}/events/cells?page=${page}&limit=${limit}&start_date=${startDate}&end_date=${endDate}${hierarchyParams ? `&${hierarchyParams}` : ""}`;
 
             const res = await authFetch(url, { signal: controller.signal });
             clearTimeout(timeoutId);
 
-            console.log(` ← Response status: ${res.status}`);
-
             if (!res.ok) {
               const errText = await res.text().catch(() => "No error details");
-              console.warn(`Failed page ${page}: ${res.status} – ${errText}`);
               throw new Error(
                 `Cells page ${page} failed: ${res.status} – ${errText}`,
               );
@@ -600,8 +595,6 @@ const StatsDashboard = () => {
             const json = await res.json();
             const pageEvents =
               json.cells || json.data || json.events || json.results || [];
-
-            console.log(` ← Got ${pageEvents.length} cells on page ${page}`);
 
             if (pageEvents.length === 0) break;
 
@@ -612,29 +605,35 @@ const StatsDashboard = () => {
           } catch (err) {
             if (err?.name === "AbortError") {
               console.warn(`Cell fetch timeout on page ${page}`);
-            } else {
-              console.error(`Cell fetch error on page ${page}:`, err);
+              break; // keep whatever was collected before the timeout
             }
-            break;
+            throw err; // real failure → outer catch shows the error banner
           }
         }
-        const data = await response.json();
-        setCells(Array.isArray(data.cells) ? data.cells : []);
+
+        setCells(Array.isArray(allEvents) ? allEvents : []);
       } catch (err) {
         console.error("Stats cells fetch failed:", err);
         setCellsError(err.message || "Failed to load overdue cells");
         toast.error("Could not load overdue cells");
       } finally {
         setCellsLoading(false);
-        cellsLockRef.current = false;
+        releaseFetchLock(cellsLockRef);
+        if (cellsPendingRefreshRef.current) {
+          cellsPendingRefreshRef.current = false;
+          fetchOverdueCells(false);
+        }
       }
     },
-    [authFetch, period, buildHierarchyParams],
+    [authFetch, period, customRange, buildHierarchyParams],
   );
   const isOverdue = useCallback((cell) => {
     if (!cell) return false;
     if ("is_overdue" in cell) {
       return !!cell.is_overdue;
+    }
+    if ("isOverdue" in cell) {
+      return !!cell.isOverdue;
     }
     const status = (cell.status || cell.Status || "").trim().toLowerCase();
     const isIncomplete =
@@ -643,15 +642,19 @@ const StatsDashboard = () => {
       status === "incomp" ||
       status === "not completed";
 
-    const cellDate = cell.date ? new Date(cell.date) : null;
-    const isValidDate = cellDate && !isNaN(cellDate.getTime());
+    // Compare calendar dates in the org's operating timezone
+    // (Africa/Johannesburg) instead of the browser's local midnight, so
+    // borderline cells don't flip depending on where the viewer is.
+    const cellDay = cell.date
+      ? new Date(cell.date).toLocaleDateString("en-CA", {
+          timeZone: "Africa/Johannesburg",
+        })
+      : null;
+    const todayStr = new Date().toLocaleDateString("en-CA", {
+      timeZone: "Africa/Johannesburg",
+    });
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const isPast = isValidDate && cellDate < today;
-
-    return isIncomplete && isPast;
+    return isIncomplete && !!cellDay && cellDay < todayStr;
   }, []);
 
   const fetchStats = useCallback(
@@ -661,7 +664,9 @@ const StatsDashboard = () => {
        * This prevents duplicate STATS calls, but does NOT affect CELLS.
        */
       if (!canStartFetch(statsLockRef, forceRefresh)) {
-        console.log("   Already fetching STATS — skipping duplicate call");
+        // Queue one refresh so a period/filter change made mid-fetch is
+        // applied as soon as the in-flight request completes.
+        statsPendingRefreshRef.current = true;
         return;
       }
 
@@ -669,13 +674,13 @@ const StatsDashboard = () => {
 
       try {
         const hierarchyParams = buildHierarchyParams();
-        const url = `${BACKEND_URL}/stats/dashboard-comprehensive?period=${period}${hierarchyParams ? `&${hierarchyParams}` : ""}`;
-        console.log("[Stats] Fetching with hierarchy params:", hierarchyParams);
-        
-        const response = await authFetch(
-          url,
-          { retryOnAuthFailure: true, maxRetries: 1 },
-        );
+        const periodQuery =
+          period === "custom"
+            ? `period=custom&start_date=${customRange.start}&end_date=${customRange.end}`
+            : `period=${period}`;
+        const url = `${BACKEND_URL}/stats/dashboard-comprehensive?${periodQuery}${hierarchyParams ? `&${hierarchyParams}` : ""}`;
+
+        const response = await authFetch(url);
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -714,13 +719,14 @@ const StatsDashboard = () => {
         console.error("Fetch stats error:", err);
         setStats((prev) => ({ ...prev, loading: false, error: err.message }));
       } finally {
-        /** CHANGE:
-         * Always release only the stats lock here.
-         */
         releaseFetchLock(statsLockRef);
+        if (statsPendingRefreshRef.current) {
+          statsPendingRefreshRef.current = false;
+          fetchStats(false);
+        }
       }
     },
-    [period, authFetch, buildHierarchyParams],
+    [period, customRange, authFetch, buildHierarchyParams],
   );
 
   const handlePeriodChange = (e) => {
@@ -732,17 +738,56 @@ const StatsDashboard = () => {
     setPeriod(e.target.value);
   };
 
+  const handleCustomStartChange = (e) => {
+    const value = e.target.value;
+    if (!value) return;
+    setCustomRange((prev) => ({
+      start: value,
+      end: value > prev.end ? value : prev.end, // keep start <= end
+    }));
+  };
+
+  const handleCustomEndChange = (e) => {
+    const value = e.target.value;
+    if (!value) return;
+    setCustomRange((prev) => ({
+      start: value < prev.start ? value : prev.start, // keep start <= end
+      end: value,
+    }));
+  };
+
+  // Rendered next to both Period selects while period === "custom".
+  const customRangeFields = (
+    <>
+      <TextField
+        type="date"
+        size="small"
+        label="Start"
+        value={customRange.start}
+        onChange={handleCustomStartChange}
+        InputLabelProps={{ shrink: true }}
+        inputProps={{ max: customRange.end }}
+        sx={{ width: 158 }}
+      />
+      <TextField
+        type="date"
+        size="small"
+        label="End"
+        value={customRange.end}
+        onChange={handleCustomEndChange}
+        InputLabelProps={{ shrink: true }}
+        inputProps={{ min: customRange.start }}
+        sx={{ width: 158 }}
+      />
+    </>
+  );
+
   /**
    * CHANGE:
    * When the period changes, fetch stats and cells.
    * They won’t block each other because they use different locks.
    */
   useEffect(() => {
-    console.log("[OVERDUE + STATS FETCH TRIGGER]", {
-      period,
-      timestamp: new Date().toISOString(),
-    });
-
     fetchOverdueCells(false);
     fetchStats(false);
   }, [period, fetchOverdueCells, fetchStats]);
@@ -816,10 +861,8 @@ const StatsDashboard = () => {
 
   const filteredTasks = useMemo(() => {
     return stats.allTasks.filter((task) => {
-      const status = task.status?.toLowerCase?.() || "";
-      const isCompleted = task.is_completed || ["completed", "done", "closed", "finished"].includes(status);
-      const isConsolidation =
-        task.is_consolidation_task || task.taskType?.toLowerCase?.() === "consolidation";
+      const isCompleted = isTaskCompleted(task);
+      const isConsolidation = isConsolidationTask(task);
       const matchesFilter =
         taskFilter === "all" ||
         (taskFilter === "completed" && isCompleted) ||
@@ -842,22 +885,29 @@ const StatsDashboard = () => {
     const visibleIds = new Set(filteredTasks.map((task) => task._id));
 
     return stats.groupedTasks
-      .map((group) => ({
-        ...group,
-        tasks: (group.tasks || group.Tasks || []).filter((task) =>
+      .map((group) => {
+        const tasks = (group.tasks || group.Tasks || []).filter((task) =>
           visibleIds.has(task._id),
-        ),
-      }))
+        );
+        // Recompute the header counts from the FILTERED tasks so the row
+        // never claims "3 captured" while only 1 filtered task is shown.
+        const completedCount = tasks.filter(isTaskCompleted).length;
+        return {
+          ...group,
+          tasks,
+          totalCount: tasks.length,
+          completedCount,
+          incompleteCount: tasks.length - completedCount,
+        };
+      })
       .filter((group) => group.tasks.length > 0);
   }, [stats.groupedTasks, filteredTasks]);
 
   const taskFilterCounts = useMemo(() => {
     const count = (filter) =>
       stats.allTasks.filter((task) => {
-        const status = task.status?.toLowerCase?.() || "";
-        const isCompleted = task.is_completed || ["completed", "done", "closed", "finished"].includes(status);
-        const isConsolidation =
-          task.is_consolidation_task || task.taskType?.toLowerCase?.() === "consolidation";
+        const isCompleted = isTaskCompleted(task);
+        const isConsolidation = isConsolidationTask(task);
         return (
           (filter === "all" ||
             (filter === "completed" && isCompleted) ||
@@ -875,7 +925,6 @@ const StatsDashboard = () => {
       consolidation: count("consolidation"),
     };
   }, [stats.allTasks, selectedTaskPerson]);
-  const filteredEvents = useMemo(() => stats.events, [stats.events]);
 
   const getPeriodDisplayText = (periodType) => {
     switch (periodType) {
@@ -889,6 +938,8 @@ const StatsDashboard = () => {
         return "Previous Week";
       case "previousMonth":
         return "Previous Month";
+      case "custom":
+        return `Custom: ${customRange.start} – ${customRange.end}`;
       default:
         return periodType;
     }
@@ -911,164 +962,6 @@ const StatsDashboard = () => {
     } catch (e) {
       console.warn("Date formatting error:", e, "for date:", dateStr);
       return dateStr;
-    }
-  };
-
-  // Excel Download Function
-  const _downloadFilteredStats = () => {
-    try {
-      const currentPeriod = getPeriodDisplayText(period);
-      const today = new Date().toISOString().split("T")[0];
-
-      let dataToExport = [];
-      let sheetName = "";
-      let fileName = "";
-
-      if (activeTab === 0) {
-        if (!filteredCells || filteredCells.length === 0) {
-          toast.info(
-            "No overdue cells data to download for the selected period.",
-          );
-          return;
-        }
-
-        dataToExport = filteredCells.map((cell) => ({
-          "Event ID": cell._id || "",
-          "Event Name": cell.eventName || "Unnamed",
-          "Event Type": cell.eventTypeName || "",
-          Date: cell.date ? formatDateForExcel(cell.date) : "",
-          Time: cell.time || "",
-          Location: cell.location || "",
-          "Event Leader": cell.eventLeaderName || "",
-          "Leader Email": cell.eventLeaderEmail || "",
-          Status: cell.status || cell.Status || "incomplete",
-          Description: cell.description || "",
-          "Attendees Count": cell.attendees ? cell.attendees.length : 0,
-          "Is Recurring": cell.isRecurring ? "Yes" : "No",
-          "Created At": cell.created_at
-            ? formatDateForExcel(cell.created_at)
-            : "",
-          "Updated At": cell.updated_at
-            ? formatDateForExcel(cell.updated_at)
-            : "",
-        }));
-
-        sheetName = "Overdue_Cells";
-        fileName = `overdue_cells_${currentPeriod
-          .toLowerCase()
-          .replace(/\s+/g, "_")}_${today}.xlsx`;
-      } else if (activeTab === 1) {
-        if (!filteredTasks || filteredTasks.length === 0) {
-          toast.info("No tasks data to download for the selected period.");
-          return;
-        }
-
-        dataToExport = filteredTasks.map((task) => ({
-          "Task ID": task._id || "",
-          "Task Name": task.name || task.taskType || "Untitled Task",
-          "Task Type": task.type || "",
-          "Contact Person": task.contacted_person?.name || "",
-          "Contact Phone":
-            task.contacted_person?.phone || task.contacted_person?.Number || "",
-          "Contact Email": task.contacted_person?.email || "",
-          "Assigned To": task.assignedfor || task.name || "",
-          "Assigned For": task.assignedfor || "",
-          "Due Date": task.followup_date
-            ? formatDateForExcel(task.followup_date)
-            : "",
-          Status: task.status || "pending",
-          "Task Stage": task.taskStage || "",
-          "Created At": task.created_at
-            ? formatDateForExcel(task.created_at)
-            : "",
-          "Updated At": task.updated_at
-            ? formatDateForExcel(task.updated_at)
-            : "",
-          "Member ID": task.memberID || "",
-          "Task Description": task.description || "",
-        }));
-
-        sheetName = "Tasks";
-        fileName = `tasks_${currentPeriod
-          .toLowerCase()
-          .replace(/\s+/g, "_")}_${today}.xlsx`;
-      } else if (activeTab === 2) {
-        if (!filteredEvents || filteredEvents.length === 0) {
-          toast.info("No events data to download for the selected period.");
-          return;
-        }
-
-        dataToExport = filteredEvents.map((event) => ({
-          "Event ID": event._id || "",
-          "Event Name": event.eventName || "",
-          "Event Type": event.eventTypeName || "",
-          Date: event.date ? formatDateForExcel(event.date) : "",
-          Time: event.time || "",
-          Location: event.location || "",
-          "Event Leader": event.eventLeaderName || "",
-          "Leader Email": event.eventLeaderEmail || "",
-          Description: event.description || "",
-          Status: event.status || event.Status || "incomplete",
-          "Is Recurring": event.isRecurring ? "Yes" : "No",
-          "Created At": event.created_at
-            ? formatDateForExcel(event.created_at)
-            : "",
-          "Updated At": event.updated_at
-            ? formatDateForExcel(event.updated_at)
-            : "",
-        }));
-
-        sheetName = "Events";
-        fileName = `events_${currentPeriod
-          .toLowerCase()
-          .replace(/\s+/g, "_")}_${today}.xlsx`;
-      }
-
-      if (dataToExport.length === 0) {
-        toast.info("No data to download for the selected period.");
-        return;
-      }
-
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
-
-      const wbout = XLSX.write(wb, {
-        bookType: "xlsx",
-        type: "array",
-        bookSST: false,
-      });
-
-      const blob = new Blob([wbout], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-
-      const link = document.createElement("a");
-      const url = URL.createObjectURL(blob);
-
-      link.href = url;
-      link.download = fileName;
-      link.target = "_blank";
-      link.rel = "noopener";
-      link.style.display = "none";
-      document.body.appendChild(link);
-      link.dispatchEvent(
-        new MouseEvent("click", {
-          view: window,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-
-      setTimeout(() => {
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }, 200);
-
-      toast.success(`Downloaded ${dataToExport.length} records (${sheetName})`);
-    } catch (error) {
-      console.error("Error downloading Excel file:", error);
-      toast.error("Error creating Excel file: " + error.message);
     }
   };
 
@@ -1140,68 +1033,6 @@ const StatsDashboard = () => {
     toast.success(`Exported ${rows.length} cells to Excel`);
   };
 
-  const _handleDownloadCalendar = useCallback(() => {
-    if (_isDownloading) return;
-
-    try {
-      setIsDownloading(true);
-
-      if (!calendarEvents || calendarEvents.length === 0) {
-        toast.warning("No calendar data available to download.");
-        return;
-      }
-
-      const today = new Date().toISOString().split("T")[0];
-
-      const dataToExport = calendarEvents.map((event) => ({
-        "Event ID":     event._id || "",
-        "Event Name":   event.eventName || "Unnamed Event",
-        "Event Type":   event.eventTypeName || "",
-        Date:           event.date ? formatDateForExcel(event.date) : "",
-        Time:           event.time || "",
-        Location:       event.location || "",
-        "Event Leader": event.eventLeaderName || "",
-        "Leader Email": event.eventLeaderEmail || "",
-        Status:         event.status || event.Status || "incomplete",
-        "Is Recurring": event.isRecurring ? "Yes" : "No",
-        Description:    event.description || "",
-        "Created At":   event.created_at ? formatDateForExcel(event.created_at) : "",
-        "Updated At":   event.updated_at ? formatDateForExcel(event.updated_at) : "",
-      }));
-
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      XLSX.utils.book_append_sheet(wb, ws, "Calendar");
-
-      const fileName = `calendar_events_${today}.xlsx`;
-      const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array", bookSST: false });
-      const blob = new Blob([wbout], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-
-      const link = document.createElement("a");
-      const url = URL.createObjectURL(blob);
-      link.href = url;
-      link.download = fileName;
-      link.style.display = "none";
-      document.body.appendChild(link);
-      link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-
-      setTimeout(() => {
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }, 200);
-
-      toast.success(`Downloaded ${dataToExport.length} calendar events`);
-
-    } catch (error) {
-      console.error("Calendar download error:", error);
-      toast.error("Failed to download calendar: " + error.message);
-    } finally {
-      setIsDownloading(false);
-    }
-  }, [calendarEvents, formatDateForExcel, _isDownloading]);
-
   useEffect(() => {
     fetchCalendarEvents();
   }, [fetchCalendarEvents]);
@@ -1235,7 +1066,6 @@ const StatsDashboard = () => {
 
   useEffect(() => {
     const handleTaskUpdate = () => {
-      console.log("Task update detected, refreshing stats...");
       fetchStats(true);
       fetchOverdueCells(true);
     };
@@ -1287,8 +1117,6 @@ const StatsDashboard = () => {
 
   const getEventsForDate = useCallback(
     (date) => {
-      console.log("Filtering for date:", date);
-
       return calendarEvents.filter((e) => {
         if (!e.date) return false;
 
@@ -1299,25 +1127,11 @@ const StatsDashboard = () => {
         const eventDay = String(eventDate.getDate()).padStart(2, "0");
         const eventDateStr = `${eventYear}-${eventMonth}-${eventDay}`;
 
-        console.log(
-          `Comparing event date ${eventDateStr} with selected date ${date} for event:`,
-          e,
-        );
-
         return eventDateStr === date;
       });
     },
     [calendarEvents],
   );
-
-  // And in eventCounts calculation:
-  const eventCounts = {};
-  calendarEvents.forEach((e) => {
-    if (e.date) {
-      const d = new Date(e.date).toISOString().split("T")[0];
-      eventCounts[d] = (eventCounts[d] || 0) + 1;
-    }
-  });
 
   const globalEvent = eventTypes?.find(
     (et) => et.name?.toLowerCase() === "global events",
@@ -1335,11 +1149,6 @@ const StatsDashboard = () => {
     fetchStats(true);
     fetchOverdueCells(true);
     fetchCalendarEvents();
-
-    // Optional: small delay for better UX
-    setTimeout(() => {
-      console.log("✅ Event created - data refreshed");
-    }, 300);
   }
 }, [fetchStats, fetchOverdueCells, fetchCalendarEvents]);
 
@@ -1367,7 +1176,6 @@ const StatsDashboard = () => {
     const todayStr = new Date().toLocaleDateString("en-CA", {
       timeZone: "Africa/Johannesburg",
     });
-    console.log("[EnhancedCalendar] todayStr calculated as:", todayStr);
 
     const goToPreviousMonth = () =>
       setCurrentMonth((prev) => {
@@ -1387,10 +1195,6 @@ const StatsDashboard = () => {
       const now = new Date();
       now.setHours(0, 0, 0, 0);
       const todayStr = now.toISOString().split("T")[0];
-      console.log(
-        "[goToToday] Setting currentMonth and selectedDate to:",
-        todayStr,
-      );
       setCurrentMonth(now);
       setSelectedDate(todayStr);
     };
@@ -1500,7 +1304,6 @@ const StatsDashboard = () => {
               <Box
                 key={d.date}
                 onClick={() => {
-                  console.log("User clicked:", d.date);
                   setSelectedDate(d.date);
                   // Optional: force scroll or focus
                   window.scrollTo(0, 0);
@@ -1558,7 +1361,7 @@ const StatsDashboard = () => {
         </Box>
       </Box>
     );
-  }, [filteredEvents, currentMonth, selectedDate, isSmDown]);
+  }, [calendarEvents, currentMonth, selectedDate, isSmDown]);
 
   const StatCard = React.memo(
     ({ title, value, subtitle, icon, color = "primary" }) => (
@@ -1859,6 +1662,7 @@ const StatsDashboard = () => {
                     ))}
                   </Select>
                 </FormControl>
+                {period === "custom" && customRangeFields}
                 <FormControl size="small" sx={{ minWidth: 180 }}>
                   <InputLabel id="cell-person-label">All People</InputLabel>
                   <Select
@@ -1944,7 +1748,7 @@ const StatsDashboard = () => {
                   <Button
                     color="error"
                     size="small"
-                    onClick={fetchOverdueCells}
+                    onClick={() => fetchOverdueCells(true)}
                     startIcon={<Refresh />}
                   >
                     Retry
@@ -2177,6 +1981,8 @@ const StatsDashboard = () => {
                 </Select>
               </FormControl>
 
+              {period === "custom" && customRangeFields}
+
               <FormControl size="small" sx={{ minWidth: 150 }}>
                 <InputLabel>All People</InputLabel>
                 <Select
@@ -2201,7 +2007,7 @@ const StatsDashboard = () => {
                 disabled={filteredTasks.length === 0}
                 sx={{ textTransform: "none", height: 40 }}
               >
-                Export CSV
+                Export Excel
               </Button>
             </Box>
 
@@ -2284,7 +2090,7 @@ const StatsDashboard = () => {
               ) : (
                 <Stack spacing={1.5}>
                   {visibleGroupedTasks.map((group) => {
-                    const key = group.user.email || group.user.fullName;
+                    const key = group.user?.email || group.user?.fullName || "unknown";
                     return (
                       <TaskGroupRow
                         key={key}
@@ -2684,13 +2490,6 @@ const StatsDashboard = () => {
   </DialogContent>
 </Dialog>
 
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-      >
-        <Alert severity={snackbar.severity}>{snackbar.message}</Alert>
-      </Snackbar>
     </Container>
   );
 };
