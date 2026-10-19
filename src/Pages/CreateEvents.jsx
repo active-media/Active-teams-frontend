@@ -745,8 +745,8 @@ const fetchPeople = async (q) => {
         dayValue = "Recurring";
       }
       
-      const eventTypeName = eventTypes.find((t) => t.display_name === formData.eventType)?.name
-      console.log("event types here",eventTypes)
+      const eventTypeName = eventTypes.find((t) => t.display_name === formData.eventType)?.name || 'cells'
+      console.log("event types here",eventTypes,formData.eventType)
       const payload = {
         UUID: generateUUID(),
         eventTypeName: eventTypeName,
