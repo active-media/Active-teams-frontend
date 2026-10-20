@@ -1177,6 +1177,32 @@ const StatsDashboard = () => {
     toast.success(`Exported ${rows.length} cells to Excel`);
   };
 
+  const downloadCalendarExcel = () => {
+    if (calendarEvents.length === 0) {
+      toast.info("No events to export for this month.");
+      return;
+    }
+
+    const rows = calendarEvents.map((event) => ({
+      "Event ID": event._id || "",
+      "Event Name": event.eventName || "Unnamed Event",
+      Date: event.date ? formatDateForExcel(event.date) : "",
+      Day: event.day || "",
+      Time: event.time || "",
+      Location: event.location || "",
+      "Event Type": event.eventTypeName || "",
+      Leader: event.eventLeaderName || "",
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Calendar Events");
+    const month = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, "0")}`;
+    const today = new Date().toISOString().split("T")[0];
+    XLSX.writeFile(workbook, `calendar_events_${month}_${today}.xlsx`);
+    toast.success(`Exported ${rows.length} events to Excel`);
+  };
+
   useEffect(() => {
     fetchCalendarEvents();
   }, [fetchCalendarEvents]);
@@ -2469,6 +2495,16 @@ const StatsDashboard = () => {
                     Event Calendar ({calendarEvents.length} events total)
                   </Typography>
                 <Box display="flex" gap={1}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<Download />}
+                    onClick={downloadCalendarExcel}
+                    disabled={calendarEvents.length === 0}
+                    sx={{ textTransform: "none" }}
+                  >
+                    Export Excel
+                  </Button>
                   <Button
                     variant="contained"
                     size="small"
