@@ -48,11 +48,21 @@ import {
   saDateKey,
   saTodayKey,
 } from "../utils/serviceCheckinToggle";
+import { at } from "lodash";
 
 const isTodayService = (event) => {
   if (!event || !event.rawDate && !event.date) return false;
-  const key = event.rawDate || event.date;
-  return saDateKey(key) === saTodayKey();
+  console.log('YOLO',event.date,event.eventName)
+  const dateString = event.date
+  const today = new Date();
+  
+  // Format today as YYYY-MM-DD in local time
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  const todayString = `${year}-${month}-${day}`;
+  
+  return dateString === todayString;
 };
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
@@ -117,6 +127,7 @@ function normalisePerson(p) {
 
   return {
     _id: p._id,
+    person_id: p.person_id || p.Person_id || p.personId , 
     name, surname,
     email: p.Email || p.email || "",
     phone: p.Number || p.number || p.phone || "",
@@ -179,7 +190,7 @@ function ServiceCheckIn() {
     return [];
   });
 
-  const [currentEventId, setCurrentEventId] = useState("");
+  const [currentEventId, setCurrentEventId] = useState("");//session_id
   const [eventSearch, setEventSearch] = useState("");
   const [events, setEvents] = useState([]);
   const [search, setSearch] = useState("");
@@ -236,16 +247,47 @@ function ServiceCheckIn() {
     return map;
   }, [attendees]);
 
-  const fetchRealTimeEventData = useCallback(async (eventId) => {
-    if (!eventId) return null;
+  const fetchRealTimeEventData = useCallback(async (sessionId) => {
+    if (!sessionId) return null;
     try {
-      eventId = "531f8512-3bc7-4701-924c-2d068bd71421"
-      const res = await authFetch(`${BASE_URL}/service-checkin/real-time-data?event_id=${eventId}`);
+      const currentEvent = events.find(
+        (entry) =>
+          entry?.session_id == sessionId
+      );
+      const isMenuEvent = menuEvents.includes(currentEvent);
+     
+
+      const eventId = currentEvent?.event_id;
+      const historyUrl = isMenuEvent
+        ? `${BASE_URL}/service-checkin/events-history?session_id=${encodeURIComponent(sessionId)}`
+        : `${BASE_URL}/service-checkin/real-time-data?event_id=${encodeURIComponent(eventId)}`;
+
+      const res = await authFetch(historyUrl);
       if (!res.ok) return null;
-      const data = await res.json();
-      return data.success ? data : null;
+      const payload = await res.json();
+      if (!payload || typeof payload !== "object") return null;
+
+      const attendeesArr = payload.present_attendees ?? payload.attendees ?? [];
+      const newPeopleArr = payload.new_people ?? payload.newPeople ?? [];
+      const consolidationsArr = payload.consolidations ?? payload.consolidatedData ?? [];
+
+      return {
+        ...payload,
+        success: payload.success ?? true,
+        present_attendees: attendeesArr,
+        new_people: newPeopleArr,
+        consolidations: consolidationsArr,
+        present_count:
+          payload.present_count ??
+          payload.total_attendance ??
+          attendeesArr.length,
+        new_people_count:
+          payload.new_people_count ?? newPeopleArr.length,
+        consolidation_count:
+          payload.consolidation_count ?? consolidationsArr.length,
+      };
     } catch { return null; }
-  }, [authFetch]);
+  }, [authFetch, events]);
 
   // Captures made by this browser session. A non-recurring service stores its
   // attendees in the event's root array while consolidations live in the
@@ -370,6 +412,7 @@ function ServiceCheckIn() {
           return {
             id: event._id || event.id || Math.random().toString(36),
             eventName: event.eventName || event.Event_Name || "Unnamed Event",
+            session_id: event.session_id,
             status: (event.status || "open").toLowerCase(),
             isGlobal: event.isGlobal === true || event.isGlobal === "true",
             isTicketed: event.isTicketed === true,
@@ -381,12 +424,10 @@ function ServiceCheckIn() {
             attendees: attendeesArray,
             new_people: newPeopleArray,
             consolidations: consolidationsArray,
-            total_attendance: typeof event.total_attendance === "number"
-              ? event.total_attendance
-              : attendanceData.length,
-            attendance: attendanceData.length,
-            newPeople: newPeopleData.length,
-            consolidated: consolidatedData.length,
+            total_attendance:event.attendance,
+            attendance: event.attendance,
+            newPeople: event.new_people,
+            consolidated: event.total_consolidation,
             attendanceData, newPeopleData, consolidatedData,
             location: event.location || event.Location || "",
             description: event.description || "",
@@ -475,7 +516,7 @@ function ServiceCheckIn() {
                 return isTodayService(e);
               })
               .sort((a, b) => (b.attendance + b.newPeople + b.consolidated) - (a.attendance + a.newPeople + a.consolidated));
-            if (todayOpen.length > 0) setCurrentEventId(todayOpen[0].id);
+            if (todayOpen.length > 0) setCurrentEventId(todayOpen[0].session_id);
           }
         } else {
           setIsLoadingPeople(true);
@@ -512,7 +553,7 @@ function ServiceCheckIn() {
                 return isTodayService(e);
               })
               .sort((a, b) => (b.attendance + b.newPeople + b.consolidated) - (a.attendance + a.newPeople + a.consolidated));
-            if (todayOpen.length > 0) setCurrentEventId(todayOpen[0].id);
+            if (todayOpen.length > 0) setCurrentEventId(todayOpen[0].session_id);
           }
         }
       } catch {
@@ -563,7 +604,7 @@ function ServiceCheckIn() {
   }, [currentEventId, fetchRealTimeEventData, fetchEvents, commitRealTimeData]);
 
   const getFilteredEvents = useCallback((eventsList = events) => {
-     
+     console.log('all_events', eventsList);
     return eventsList.filter(event => {
       const typeName = (event.eventType || "").toLowerCase();
       if (["cells", "all cells", "cell"].includes(typeName)) return false;
@@ -595,12 +636,13 @@ function ServiceCheckIn() {
 
   const menuEvents = useMemo(() => {
     const filtered = getFilteredEvents();
-   
+    
     const list = [...filtered];
+
     // Only preserve currentEventId in the dropdown if it's actually a valid today event.
     // Don't re-add stale/closed events from previous weeks.
-    if (currentEventId && !list.some(ev => ev.id === currentEventId)) {
-      const cur = events.find(ev => ev.id === currentEventId);
+    if (currentEventId && !list.some(ev => ev.session_id === currentEventId)) {
+      const cur = events.find(ev => ev.session_id === currentEventId);
       if (cur && getFilteredEvents([cur]).length > 0) {
         list.unshift(cur);
       }
@@ -608,9 +650,13 @@ function ServiceCheckIn() {
     return list;
   }, [events, currentEventId, getFilteredEvents]);
 
+  // delete window.globalPeopleCache;
+  // delete window.globalCacheTimestamp;
+  // window.location.reload();
+
   const presentIds = useMemo(() => {
     const ids = new Set();
-    (realTimeData?.present_attendees || []).forEach(a => ids.add(a.id || a._id));
+    (realTimeData?.present_attendees || []).forEach(a => ids.add(a.person_id)); 
     return ids;
   }, [realTimeData]);
 
@@ -624,15 +670,20 @@ function ServiceCheckIn() {
     return newIdentitySet([...entries.values()]);
   }, [realTimeData, sessionNew]);
 
-  const attendeesWithStatus = useMemo(() =>
-    attendees.map(a => ({
+  const attendeesWithStatus = useMemo(() =>{
+    return attendees.map((a) => {
+     return {
       ...a,
-      present: presentIds.has(a._id),
+      present: [ ...presentIds ].includes(a.person_id),
       isNew: isNewInSet(a, mergedNewSet),
       id: a._id || a.email || `temp-${a.email}`,
-    })),
+    }
+  })
+  
+  },
     [attendees, presentIds, mergedNewSet]
   );
+    console.log('presentIds:',  attendeesWithStatus.filter(a => a.present));
 
   const filteredAttendees = useMemo(() => {
     if (!search.trim()) return attendeesWithStatus;
@@ -934,7 +985,8 @@ const sortedFilteredAttendees = useMemo(() => {
         const response = await authFetch(`${BASE_URL}/service-checkin/checkin`, {
           method: "POST",
           body: JSON.stringify({
-            event_id: cleanEventId(currentEventId),
+            session_id: cleanEventId(currentEventId),
+            event_id: events.find(ev => ev.session_id === currentEventId)?.event_id,
             person_data: {
               id: gridId, name: attendee?.name, fullName,
               email: attendee?.email, phone: attendee?.phone, number: attendee?.number,
@@ -1013,7 +1065,7 @@ const sortedFilteredAttendees = useMemo(() => {
       setSessionNew(prev => { const m = new Map(prev); m.set(entryKey, { ...personData, _id: personId }); return m; });
       authFetch(`${BASE_URL}/service-checkin/checkin`, {
         method: "POST",
-        body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_data: personData, type: "new_person" }),
+        body: JSON.stringify({event_id:events.find((e)=>e.session_id === currentEventId)?.event_id, person_data: personData, type: "new_person" }),
       }).catch(() => { });
       toast.success(`${fullName} marked as new this service`);
     }
@@ -1223,14 +1275,14 @@ const sortedFilteredAttendees = useMemo(() => {
       if (insertedId) {
         authFetch(`${BASE_URL}/service-checkin/checkin`, {
           method: "POST",
-          body: JSON.stringify({ event_id: cleanEventId(currentEventId), type: "new_person", person_data: {
+          body: JSON.stringify({event_id:events.find((e)=>e.session_id === currentEventId)?.event_id, session_id: cleanEventId(currentEventId), type: "new_person", person_data: {
             id: insertedId, name: newPersonForGrid.name, fullName: fullName,
             email: newPersonForGrid.email || "", phone: newPersonForGrid.number || "",
             number: newPersonForGrid.number || "", leader12: newPersonForGrid.leader12 || "",
           } }),
         }).catch(() => { });
       }
-      fetchRealTimeEventData(cleanEventId(currentEventId)).then(fd => { if (fd) commitRealTimeData(fd); });
+      fetchRealTimeEventData(currentEventId).then(fd => { if (fd) commitRealTimeData(fd); });
 
       // Create task for leader when new person is added
       try {
@@ -1318,7 +1370,7 @@ const sortedFilteredAttendees = useMemo(() => {
           if (!e.rawDate) return false;
           return saDateKey(e.rawDate) === todayStr;
         });
-        setCurrentEventId(nextEvent?.id || "");
+        setCurrentEventId(nextEvent?.session_id || "");
         return updated;
       });
 
@@ -1362,7 +1414,7 @@ const sortedFilteredAttendees = useMemo(() => {
 
   const handleUnsaveEvent = useCallback(async (event) => {
     try {
-      const fullId = event.id || event._id;
+      const fullId = event.session_id
       const baseId = cleanEventId(fullId);
       const response = await authFetch(`${BASE_URL}/events/${fullId}/toggle-status`, { method: "PATCH" });
       if (!response.ok) { const e = await response.json(); throw new Error(e.detail || "HTTP error"); }
@@ -1456,6 +1508,35 @@ const sortedFilteredAttendees = useMemo(() => {
   const handleViewEventDetails = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "attendance", data: data || [] }); }, []);
   const handleViewNewPeople = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "newPeople", data: data || [] }); }, []);
   const handleViewConsolidated = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "consolidated", data: data || [] }); }, []);
+  const handleViewEventStats = useCallback(async (row) => {
+    const sessionId = row?.session_id
+    if (!sessionId) {
+      toast.error("This event does not have a session id for stats.");
+      return;
+    }
+
+    try {
+      setEventHistoryModal({ open: true, event: row, type: "stats", data: [], isLoading: true });
+      const response = await authFetch(`${BASE_URL}/service-checkin/events-history?session_id=${encodeURIComponent(sessionId)}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.detail || "Unable to load event stats");
+      }
+
+      const eventData = payload && typeof payload === 'object' ? payload : {};
+      setEventHistoryModal({
+        open: true,
+        event: { ...row, eventName: row?.eventName || eventData?.event_name || "Event" },
+        type: "stats",
+        data: eventData,
+        isLoading: false,
+      });
+    } catch (error) {
+      console.error("Failed to fetch event stats", error);
+      toast.error(error.message || "Unable to load event stats.");
+      setEventHistoryModal({ open: false, event: null, type: null, data: [], isLoading: false });
+    }
+  }, [authFetch]);
 
   const mainColumns = useMemo(() => {
     const base = [
@@ -1501,9 +1582,11 @@ const sortedFilteredAttendees = useMemo(() => {
       {
         field: "actions", headerName: "", width: isSm ? 96 : 120, sortable: false, filterable: false,
         renderCell: (params) => {
+          console.log(params.row);
           const fullName = `${params.row.name || ""} ${params.row.surname || ""}`.trim();
           const isDisabled = !currentEventId;
           const isCheckInLoading = checkInLoading.has(params.row._id);
+    
           const btnSz = isSm ? "small" : "medium";
           const iconSz = isSm ? "16px" : "22px";
           const pad = isSm ? "3px" : "6px";
@@ -1530,7 +1613,7 @@ const sortedFilteredAttendees = useMemo(() => {
               <Tooltip title={isDisabled ? "Select event first" : isCheckInLoading ? "Processing…" : params.row.present ? "Checked in" : "Check in"}>
                 <span>
                   <IconButton size={btnSz} color={isDisabled ? "default" : "success"}
-                    disabled={isDisabled || isCheckInLoading}
+                    disabled={isDisabled || isCheckInLoading }
                     onClick={() => !isDisabled && !isCheckInLoading && handleToggleCheckIn(params.row)}
                     sx={{ p: pad, opacity: isDisabled || isCheckInLoading ? 0.4 : 1 }}>
                     {params.row.present ? <CheckCircleIcon sx={{ fontSize: iconSz }} /> : <CheckCircleOutlineIcon sx={{ fontSize: iconSz }} />}
@@ -1614,7 +1697,7 @@ const sortedFilteredAttendees = useMemo(() => {
                 </Typography>
               </MenuItem>
               {menuEvents.map(ev => (
-                <MenuItem key={ev.id} value={ev.id}>
+                <MenuItem key={ev.session_id} value={ev.session_id}>
                   <Typography variant="body2" fontWeight="medium" noWrap>{ev.eventName}</Typography>
                 </MenuItem>
               ))}
@@ -1677,6 +1760,7 @@ const sortedFilteredAttendees = useMemo(() => {
 
         {activeTab === 0 && (
           <Paper variant="outlined" sx={{ boxShadow: 3, overflow: "hidden", width: "100%", height: gridHeight, minHeight: gridMinHeight }}>
+           
             <DataGrid
               rows={sortedFilteredAttendees} columns={mainColumns}
               getRowId={(row) => row._id || row.id || row.email || `temp-${row._id || row.email || 'unknown'}`}
@@ -1709,6 +1793,7 @@ const sortedFilteredAttendees = useMemo(() => {
             <EventHistory
               onViewDetails={handleViewEventDetails} onViewNewPeople={handleViewNewPeople}
               onViewConverts={handleViewConsolidated} onUnsaveEvent={handleUnsaveEvent}
+              onViewEventStats={handleViewEventStats}
               events={getFilteredClosedEvents()} searchTerm={eventSearch}
               isLoading={isLoadingEvents && events.length === 0 && isLoadingHistory}
             />

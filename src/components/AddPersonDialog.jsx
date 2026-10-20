@@ -44,6 +44,7 @@ const mapPerson = (raw) => {
   const fullName = `${name} ${surname}`.trim();
   const email   = (raw.Email   || raw.email   || "").toString().trim();
   const phone   = (raw.Number  || raw.phone   || raw.Phone || "").toString().trim();
+  const personId = (raw.person_id || raw.personId || raw.PersonId || raw._id || raw.id || "").toString();
 
   let leader1   = raw["Leader @1"]   || raw["leader @1"]   || raw.leader1   || raw["Leader at 1"]   || "";
   let leader12  = raw["Leader @12"]  || raw["leader @12"]  || raw.leader12  || raw["Leader at 12"]  || "";
@@ -60,6 +61,7 @@ const mapPerson = (raw) => {
 
   return {
     _id: (raw._id || raw.id || "").toString(),
+    person_id: personId,
     name, surname, email, phone, fullName,
     fullNameLower: fullName.toLowerCase(),
     searchText: `${fullName} ${email} ${phone}`.toLowerCase(),

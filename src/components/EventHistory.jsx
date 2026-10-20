@@ -22,11 +22,13 @@ const EventHistory = React.memo(function EventHistory({
   onViewNewPeople,
   onViewConverts,
   onUnsaveEvent,
+  onViewEventStats,
   events = [],
   isLoading = false,
   onRefresh,
   searchTerm = '',
 }) {
+  console.log('events history:', events);
   const theme = useTheme();
   const isXs  = useMediaQuery('(max-width:480px)'); 
   const isSm  = useMediaQuery(theme.breakpoints.down('sm'));
@@ -88,6 +90,11 @@ const EventHistory = React.memo(function EventHistory({
     if (type === 'newPeople'   && onViewNewPeople) onViewNewPeople(row, sortAlpha(row.newPeopleData  || row.new_people    || []));
     if (type === 'consolidated'&& onViewConverts)  onViewConverts(row,  sortAlpha(row.consolidatedData || row.consolidations || []));
   }, [onViewDetails, onViewNewPeople, onViewConverts]);
+
+  const handleStatsView = React.useCallback((row) => {
+    if (!row) return;
+    if (onViewEventStats) onViewEventStats(row);
+  }, [onViewEventStats]);
 
   const handleUnsave = React.useCallback((row) => {
     if (!row || !canUnsaveEvent(row)) return;
@@ -196,48 +203,30 @@ const EventHistory = React.memo(function EventHistory({
     }
 
     cols.push({
-      field: 'viewAttendance',
+      field: 'viewStats',
       headerName: '',
-      width: isSm ? 34 : 108,
+      width: isSm ? 84 : 150,
       sortable: false, filterable: false,
       align: 'center', headerAlign: 'center',
-      renderCell: (params) => {
-        const count = getAttendanceCount(params.row);
-        return isSm
-          ? <SmIconBtn onClick={() => handleView(params.row, 'attendance')} disabled={count === 0} color="primary"   icon={<VisibilityIcon />}  title="View Attendance" />
-          : <MdViewBtn onClick={() => handleView(params.row, 'attendance')} disabled={count === 0} color="primary"   icon={<VisibilityIcon />} />;
-      },
+      renderCell: (params) => (
+        <Button
+          size={isSm ? 'small' : 'medium'}
+          variant="outlined"
+          color="primary"
+          onClick={() => handleStatsView(params.row)}
+          sx={{
+            fontSize: isSm ? '0.68rem' : '0.75rem',
+            fontWeight: 700,
+            letterSpacing: '0.03em',
+            minWidth: isSm ? 82 : 120,
+            px: isSm ? 0.8 : 1.2,
+            py: isSm ? 0.4 : 0.6,
+          }}
+        >
+          View Event Stats
+        </Button>
+      ),
     });
-
-    cols.push({
-      field: 'viewNewPeople',
-      headerName: '',
-      width: isSm ? 34 : 108,
-      sortable: false, filterable: false,
-      align: 'center', headerAlign: 'center',
-      renderCell: (params) => {
-        const count = getNewPeopleCount(params.row);
-        return isSm
-          ? <SmIconBtn onClick={() => handleView(params.row, 'newPeople')} disabled={count === 0} color="success"    icon={<PersonIcon />}       title="View New People" />
-          : <MdViewBtn onClick={() => handleView(params.row, 'newPeople')} disabled={count === 0} color="success"    icon={<PersonIcon />} />;
-      },
-    });
-
-    if (!isXs) {
-      cols.push({
-        field: 'viewConsolidated',
-        headerName: '',
-        width: isSm ? 34 : 118,
-        sortable: false, filterable: false,
-        align: 'center', headerAlign: 'center',
-        renderCell: (params) => {
-          const count = getConsolidatedCount(params.row);
-          return isSm
-            ? <SmIconBtn onClick={() => handleView(params.row, 'consolidated')} disabled={count === 0} color="secondary" icon={<EmojiPeopleIcon />}  title="View Consolidated" />
-            : <MdViewBtn onClick={() => handleView(params.row, 'consolidated')} disabled={count === 0} color="secondary" icon={<EmojiPeopleIcon />} />;
-        },
-      });
-    }
 
     if (onUnsaveEvent) {
       cols.push({
@@ -267,7 +256,7 @@ const EventHistory = React.memo(function EventHistory({
   }, [
     isXs, isSm,
     getAttendanceCount, getNewPeopleCount, getConsolidatedCount,
-    handleView, handleUnsave, canUnsaveEvent, onUnsaveEvent,
+    handleView, handleStatsView, handleUnsave, canUnsaveEvent, onUnsaveEvent,
   ]);
 
   const gridHeight    = isSm ? 'calc(100vh - 240px)' : isMd ? 'calc(100vh - 220px)' : 620;
@@ -378,6 +367,7 @@ const EventHistory = React.memo(function EventHistory({
           '& .MuiDataGrid-cell[data-field="attendanceCount"]':   { justifyContent: 'center' },
           '& .MuiDataGrid-cell[data-field="newPeopleCount"]':    { justifyContent: 'center' },
           '& .MuiDataGrid-cell[data-field="consolidatedCount"]': { justifyContent: 'center' },
+          '& .MuiDataGrid-cell[data-field="viewStats"]':      { justifyContent: 'center', px: '1px' },
           '& .MuiDataGrid-cell[data-field="viewAttendance"]':    { justifyContent: 'center', px: '1px' },
           '& .MuiDataGrid-cell[data-field="viewNewPeople"]':     { justifyContent: 'center', px: '1px' },
           '& .MuiDataGrid-cell[data-field="viewConsolidated"]':  { justifyContent: 'center', px: '1px' },
