@@ -52,7 +52,6 @@ import { at } from "lodash";
 
 const isTodayService = (event) => {
   if (!event || !event.rawDate && !event.date) return false;
-  console.log('YOLO',event.date,event.eventName)
   const dateString = event.date
   const today = new Date();
   
@@ -270,7 +269,7 @@ function ServiceCheckIn() {
       const attendeesArr = payload.present_attendees ?? payload.attendees ?? [];
       const newPeopleArr = payload.new_people ?? payload.newPeople ?? [];
       const consolidationsArr = payload.consolidations ?? payload.consolidatedData ?? [];
-
+      setPresentCount(payload.present_count);
       return {
         ...payload,
         success: payload.success ?? true,
@@ -278,9 +277,7 @@ function ServiceCheckIn() {
         new_people: newPeopleArr,
         consolidations: consolidationsArr,
         present_count:
-          payload.present_count ??
-          payload.total_attendance ??
-          attendeesArr.length,
+          payload.present_count,
         new_people_count:
           payload.new_people_count ?? newPeopleArr.length,
         consolidation_count:
@@ -411,6 +408,7 @@ function ServiceCheckIn() {
 
           return {
             id: event._id || event.id || Math.random().toString(36),
+            event_id:event.event_id,
             eventName: event.eventName || event.Event_Name || "Unnamed Event",
             session_id: event.session_id,
             status: (event.status || "open").toLowerCase(),
@@ -595,7 +593,7 @@ function ServiceCheckIn() {
       });
     };
     window.addEventListener("attendanceUpdated", handleAttendanceUpdated);
-    const evInterval = setInterval(() => fetchEvents(), 30_000);
+    const evInterval = setInterval(() => {if (checkInLoading.size === 0) fetchEvents();}, 30_000);
     return () => {
       isMounted = false;
       window.removeEventListener("attendanceUpdated", handleAttendanceUpdated);
@@ -604,7 +602,7 @@ function ServiceCheckIn() {
   }, [currentEventId, fetchRealTimeEventData, fetchEvents, commitRealTimeData]);
 
   const getFilteredEvents = useCallback((eventsList = events) => {
-     console.log('all_events', eventsList);
+  
     return eventsList.filter(event => {
       const typeName = (event.eventType || "").toLowerCase();
       if (["cells", "all cells", "cell"].includes(typeName)) return false;
@@ -683,7 +681,7 @@ function ServiceCheckIn() {
   },
     [attendees, presentIds, mergedNewSet]
   );
-    console.log('presentIds:',  attendeesWithStatus.filter(a => a.present));
+
 
   const filteredAttendees = useMemo(() => {
     if (!search.trim()) return attendeesWithStatus;
@@ -740,7 +738,8 @@ const sortedFilteredAttendees = useMemo(() => {
     return result;
   }, [filteredAttendees, sortModel, search]);
 
-  const presentCount = realTimeData?.present_count ?? realTimeData?.present_attendees?.length ?? 0;
+  // const presentCount = realTimeData?.present_count ;
+  const [presentCount, setPresentCount] = useState(realTimeData?.present_count ||0);
   const newPeopleCount = newPeopleFromPresent(realTimeData?.present_attendees || [], attendeeMap, mergedNewSet).length;
   const consolidationCount = realTimeData?.consolidation_count ?? realTimeData?.consolidations?.length ?? 0;
 
@@ -929,7 +928,7 @@ const sortedFilteredAttendees = useMemo(() => {
   const handleToggleCheckIn = useCallback(async (attendee, presentEntry) => {
     if (!currentEventId) { toast.error("Please select an event"); return; }
 
-    const gridId = attendee?._id || attendee?.id || "";
+    const gridId = attendee?.person_id
     if (!gridId) { toast.error("Missing person ID"); return; }
     if (checkInLoading.has(gridId)) return;
 
@@ -946,7 +945,7 @@ const sortedFilteredAttendees = useMemo(() => {
     const fullName = `${attendee?.name || ""} ${attendee?.surname || ""}`.trim();
 
     const optimisticEntry = {
-      id: gridId, _id: gridId,
+      person_id: gridId, _id: gridId,
       name: attendee?.name || "", surname: attendee?.surname || "",
       email: attendee?.email || "",
       phone: attendee?.phone || attendee?.number || "",
@@ -957,8 +956,9 @@ const sortedFilteredAttendees = useMemo(() => {
       if (!prevState) return prevState;
       const filtered = (prevState.present_attendees || []).filter(a => {
         const aId = getEntryId(a);
-        return aId !== gridId && aId !== presentId;
+        return a.person_id !== gridId
       });
+      setPresentCount(filtered.length);
       return { ...prevState, present_attendees: filtered, present_count: filtered.length };
     };
 
@@ -970,6 +970,7 @@ const sortedFilteredAttendees = useMemo(() => {
       });
       if (already) return base;
       const newPresent = [...(base.present_attendees || []), optimisticEntry];
+      setPresentCount(newPresent.length);
       return { ...base, present_attendees: newPresent, present_count: newPresent.length };
     };
 
@@ -988,9 +989,9 @@ const sortedFilteredAttendees = useMemo(() => {
             session_id: cleanEventId(currentEventId),
             event_id: events.find(ev => ev.session_id === currentEventId)?.event_id,
             person_data: {
-              id: gridId, name: attendee?.name, fullName,
+              id: gridId, person_id: attendee?.person_id, name: attendee?.name, fullName,
               email: attendee?.email, phone: attendee?.phone, number: attendee?.number,
-              leader12: attendee?.leader12,
+              leader12: attendee?.leader12, 
             },
             type: "attendee",
           }),
@@ -1011,7 +1012,10 @@ const sortedFilteredAttendees = useMemo(() => {
       } else {
         const response = await authFetch(`${BASE_URL}/service-checkin/remove`, {
           method: "DELETE",
-          body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: presentId, type: "attendees" }),
+          body: JSON.stringify({ 
+            event_id: events.find(ev => ev.session_id === currentEventId)?.event_id,
+            session_id: cleanEventId(currentEventId), 
+            person_id: presentId, type: "attendee" }),
         });
         const body = await readServerBody(response);
         const status = classifyToggleRemove(response.status, body);
@@ -1582,7 +1586,6 @@ const sortedFilteredAttendees = useMemo(() => {
       {
         field: "actions", headerName: "", width: isSm ? 96 : 120, sortable: false, filterable: false,
         renderCell: (params) => {
-          console.log(params.row);
           const fullName = `${params.row.name || ""} ${params.row.surname || ""}`.trim();
           const isDisabled = !currentEventId;
           const isCheckInLoading = checkInLoading.has(params.row._id);
