@@ -1704,15 +1704,6 @@ const fetchEventTypes = useCallback(async () => {
         fetchEventTypes();
       }
     }, [fetchEventTypes, currentUser?.email]);
-    useEffect(() => {
-      // When the event type filter changes, drop any status filter rather than
-      // imposing one. This previously reset to "incomplete", which meant that
-      // opening any event type silently hid every completed and did-not-meet
-      // event until the user manually re-selected a status.
-      if (selectedEventTypeFilter && selectedEventTypeFilter !== "all") {
-        setSelectedStatus("all");
-      }
-    }, [selectedEventTypeFilter]);
 
     useEffect(() => {
       const getUserProfile = () => {
