@@ -81,7 +81,7 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 // Add this memoized component OUTSIDE StatsDashboard
 const TaskGroupRow = React.memo(
   ({ group, isExpanded, onToggle, formatDate }) => {
-    const { user, tasks, totalCount, completedCount, incompleteCount } = group;
+    const { user, Tasks:tasks, totalCount, completedCount, incompleteCount } = group;
     const key = user.email || user.fullName;
 
     return (
@@ -578,6 +578,7 @@ const StatsDashboard = () => {
         }
 
         const data = await response.json();
+        console.log('DATA',data)
 
         setStats({
           overview: data.overview,
@@ -1899,6 +1900,7 @@ const StatsDashboard = () => {
                 <Stack spacing={1.5}>
                   {stats.groupedTasks.map((group) => {
                     const key = group.user.email || group.user.fullName;
+                    console.log('GROUP', group);
                     return (
                       <TaskGroupRow
                         key={key}
