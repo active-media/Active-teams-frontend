@@ -983,7 +983,7 @@ ${xmlCols}
             </IconButton>
           </Tooltip>
         )}
-        <Tooltip title="Download Attendance (Event)" arrow>
+        <Tooltip title="Download Event Attendance" arrow>
           <IconButton
             onClick={() => downloadEventAttendance(event)}
             size="small"
@@ -1011,7 +1011,7 @@ const isValidObjectId = (id) => {
   return /^[0-9a-fA-F]{24}$/.test(id);
 };
 const Events = () => {
-  const { authFetch, logout } = React.useContext(AuthContext);
+  const { authFetch } = React.useContext(AuthContext);
   const { orgConfig, configLoaded } = useOrgConfig();
   
   // Get user from localStorage immediately (available on login)
@@ -1604,12 +1604,6 @@ const fetchEventsFilters = (filters) => {
         }
 
         try {
-          const token = localStorage.getItem("access_token");
-          if (!token) {
-            logout();
-            window.location.href = "/login";
-            return;
-          }
           const [params, endpoint] = fetchEventsFilters(filters);
 
           const queryString = new URLSearchParams(params).toString();
@@ -1659,7 +1653,6 @@ const fetchEventsFilters = (filters) => {
         isAdmin,
         isRegistrant,
         viewFilter,
-        logout,
         selectedEventTypeFilter,
         selectedStatus,
       ],

@@ -30,7 +30,6 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  Snackbar,
   Paper,
   Checkbox,
   FormControlLabel,
@@ -39,6 +38,10 @@ import {
   Tooltip,
   Tabs,
   Tab,
+  Popover,
+  List,
+  ListItemButton,
+  InputAdornment,
   Container,
   CircularProgress,
 } from "@mui/material";
@@ -51,12 +54,14 @@ import {
   Refresh,
   Add,
   Close,
-  Visibility,
   ChevronLeft,
   ChevronRight,
   Save,
   Event,
   Download,
+  Search,
+  KeyboardArrowDown,
+  Check,
 } from "@mui/icons-material";
 import { toast } from "react-toastify";
 import * as XLSX from "xlsx";
@@ -68,7 +73,6 @@ const toSATime = (d) => {
   try {
     const date = new Date(d);
     if (isNaN(date.getTime())) return null;
-    // South Africa is UTC+2, no daylight saving
     return new Date(
       date.toLocaleString("en-US", { timeZone: "Africa/Johannesburg" }),
     );
@@ -76,9 +80,162 @@ const toSATime = (d) => {
     return null;
   }
 };
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+const BACKEND_URL =
+  import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+
+const getCellPeriodRange = (periodType) => {
+  const todayParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Johannesburg",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .formatToParts(new Date())
+    .reduce((parts, part) => {
+      if (part.type !== "literal") parts[part.type] = Number(part.value);
+      return parts;
+    }, {});
+  const today = new Date(
+    Date.UTC(todayParts.year, todayParts.month - 1, todayParts.day),
+  );
+  const todayDate = new Date(today);
+  const mondayOffset = (today.getUTCDay() + 6) % 7;
+  let end = new Date(today);
+
+  switch (periodType) {
+    case "thisWeek":
+      today.setUTCDate(today.getUTCDate() - mondayOffset);
+      end = new Date(today);
+      end.setUTCDate(end.getUTCDate() + 6);
+      break;
+    case "thisMonth":
+      today.setUTCDate(1);
+      end = new Date(today);
+      end.setUTCMonth(end.getUTCMonth() + 1, 0);
+      break;
+    case "previousWeek":
+      today.setUTCDate(today.getUTCDate() - mondayOffset - 7);
+      end = new Date(today);
+      end.setUTCDate(end.getUTCDate() + 6);
+      break;
+    case "previousMonth":
+      today.setUTCMonth(today.getUTCMonth() - 1, 1);
+      end = new Date(today);
+      end.setUTCMonth(end.getUTCMonth() + 1, 0);
+      break;
+    default:
+      break;
+  }
+
+  return {
+    start: today.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+    today: todayDate.toISOString().slice(0, 10),
+  };
+};
+
+const getCellStatus = (cell) => {
+  const status = (cell.status || cell.Status || "incomplete")
+    .trim()
+    .toLowerCase()
+    .replace(/[ -]+/g, "_");
+
+  if (["complete", "completed", "closed"].includes(status)) return "completed";
+  if (["did_not_meet", "didnotmeet"].includes(status)) return "did_not_meet";
+  return "incomplete";
+};
+
+const isTaskCompleted = (task) => {
+  const status = task?.status?.toLowerCase?.() || "";
+  return !!(
+    task?.is_completed ||
+    ["completed", "done", "closed", "finished"].includes(status)
+  );
+};
+
+const isConsolidationTask = (task) =>
+  !!(
+    task?.is_consolidation_task ||
+    task?.taskType?.toLowerCase?.() === "consolidation"
+  );
 
 // Add this memoized component OUTSIDE StatsDashboard
+const normalizePersonSearch = (value) =>
+  String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+
+const taskMatchesPerson = (task, search, scope, people, userId, teamLeaderId) => {
+  const assignedFor = normalizePersonSearch(task.assignedfor);
+  const person = people.find(
+    (candidate) =>
+      normalizePersonSearch(candidate.email) === assignedFor ||
+      normalizePersonSearch(candidate.fullName) === assignedFor,
+  );
+  const normalizedSearch = normalizePersonSearch(search);
+  const exactPerson = normalizedSearch
+    ? people.find(
+        (candidate) =>
+          normalizePersonSearch(candidate.fullName) === normalizedSearch ||
+          normalizePersonSearch(candidate.email) === normalizedSearch,
+      )
+    : null;
+  const matchesSearch =
+    !search ||
+    (exactPerson
+      ? person?.value === exactPerson.value
+      : normalizePersonSearch(
+          `${task.assignedfor} ${person?.fullName} ${person?.email}`,
+        ).includes(normalizedSearch));
+  const selectedLeaderId = scope === "mine" ? userId : teamLeaderId;
+  const matchesScope =
+    scope === "all" ||
+    (!!selectedLeaderId &&
+      [person?.leader12, person?.leader144, person?.leader1728]
+        .filter(Boolean)
+        .some((leaderId) => String(leaderId) === String(selectedLeaderId)));
+
+  return matchesSearch && matchesScope;
+};
+
+const peopleFilterItemSx = (theme) => ({
+  minHeight: 32,
+  px: 1,
+  gap: 0.9,
+  borderRadius: 0.75,
+  color: "inherit",
+  "&:hover": {
+    bgcolor: theme.palette.mode === "dark" ? "#22232c" : "action.hover",
+  },
+  "&.Mui-selected": {
+    bgcolor: theme.palette.mode === "dark" ? "#20212a" : "action.selected",
+  },
+  "&.Mui-selected:hover": {
+    bgcolor: theme.palette.mode === "dark" ? "#282a34" : "action.hover",
+  },
+});
+
+const peopleFilterSectionSx = (theme) => ({
+  px: 1.1,
+  pt: 1.25,
+  pb: 0.45,
+  color: theme.palette.mode === "dark" ? "#747886" : "text.secondary",
+  fontSize: "0.55rem",
+  fontWeight: 700,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+});
+
+const peopleFilterAvatarSx = (index) => ({
+  width: 18,
+  height: 18,
+  fontSize: "0.58rem",
+  fontWeight: 700,
+  bgcolor: ["#9b5cf6", "#ff7a18", "#3986f6", "#d845e8", "#f0a300", "#10b981", "#ef4444"][index % 7],
+});
+
 const TaskGroupRow = React.memo(
   ({ group, isExpanded, onToggle, formatDate }) => {
     const { user, Tasks:tasks, totalCount, completedCount, incompleteCount } = group;
@@ -264,6 +421,16 @@ const StatsDashboard = () => {
   });
 
   const [period, setPeriod] = useState("today");
+  // Used only when period === "custom": explicit start/end (YYYY-MM-DD) on
+  // the South-Africa calendar. Defaults to the last 30 days.
+  const [customRange, setCustomRange] = useState(() => {
+    const now = Date.now();
+    const fmtSA = (ms) =>
+      new Date(ms).toLocaleDateString("en-CA", {
+        timeZone: "Africa/Johannesburg",
+      });
+    return { start: fmtSA(now - 30 * 86400000), end: fmtSA(now) };
+  });
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(() => {
     return new Date().toLocaleDateString("en-CA", {
@@ -292,6 +459,14 @@ const StatsDashboard = () => {
 
   const [createEventModalOpen, setCreateEventModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
+  const [cellFilter, setCellFilter] = useState("all");
+  const [selectedCellPerson, setSelectedCellPerson] = useState("all");
+  const [taskFilter, setTaskFilter] = useState("all");
+  const [taskPersonSearch, setTaskPersonSearch] = useState("");
+  const [taskPeopleScope, setTaskPeopleScope] = useState("all");
+  const [selectedTeamLeader, setSelectedTeamLeader] = useState(null);
+  const [peopleFilterAnchor, setPeopleFilterAnchor] = useState(null);
+  const taskListRef = useRef(null);
   const [expandedUsers, setExpandedUsers] = useState([]);
   const [newEventData, setNewEventData] = useState({
     eventName: "",
@@ -304,14 +479,8 @@ const StatsDashboard = () => {
     description: "",
     isRecurring: false,
   });
-  const [snackbar, setSnackbar] = useState({
-    open: false,
-    message: "",
-    severity: "success",
-  });
   const [eventTypes, setEventTypes] = useState([]);
   const [, setEventTypesLoading] = useState(true);
-  const [overdueModalOpen, setOverdueModalOpen] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [viewMoreModalOpen, setViewMoreModalOpen] = useState(false);
@@ -319,9 +488,13 @@ const StatsDashboard = () => {
   const [isDownloading, setIsDownloading] = useState(false);
   const [cellsLoading, setCellsLoading] = useState(false);
   const [cellsError, setCellsError] = useState(null);
-  const { authFetch } = useContext(AuthContext);
+  const { authFetch, user } = useContext(AuthContext);
   const statsLockRef = useRef(false);
   const cellsLockRef = useRef(false);
+  // Set when a fetch is requested while another one is in flight; the fetch
+  // re-runs once the lock is released so filter changes are never dropped.
+  const statsPendingRefreshRef = useRef(false);
+  const cellsPendingRefreshRef = useRef(false);
 
   const canStartFetch = (lockRef, forceRefresh) => {
     if (lockRef.current && !forceRefresh) return false;
@@ -339,107 +512,166 @@ const StatsDashboard = () => {
     { value: "thisMonth", label: "This Month" },
     { value: "previousWeek", label: "Previous Week" },
     { value: "previousMonth", label: "Previous Month" },
+    { value: "custom", label: "Custom Range" },
   ];
 
-  useEffect(() => {
-    if (cells.length > 0) {
-      console.group("📅 Overdue Cells — " + cells.length + " found");
-      console.table(
-        cells.map((cell) => ({
-          name: cell.eventName || "—",
-          date: cell.date ? new Date(cell.date).toLocaleDateString() : "—",
-          leader: cell.eventLeaderName || "—",
-          status: cell.status || cell.Status || "incomplete",
-          location: cell.location || "—",
-          id: cell._id?.slice(-6) + "...",
-        })),
-      );
-      console.groupEnd();
-    } else if (!cellsLoading) {
-      console.log("No overdue cells right now");
+  // Extract hierarchy information from user profile (similar to Events.jsx)
+  const currentUserLeaderAt1 = useMemo(() => {
+    if (!user) return "";
+    return (
+      user.leaderAt1 ||
+      user.leader_at_1 ||
+      user.leaderAt1Identifier ||
+      user.leaderAt1Name ||
+      ""
+    );
+  }, [user]);
+
+  const currentUserRole = useMemo(() => {
+    if (!user) return "";
+    return user.role?.toLowerCase() || "";
+  }, [user]);
+
+  // Whether the user leads OTHER LEADERS, so the "those under you" view applies.
+  // A plain leader@1 only runs their own cells; leaders at 12+ have downline
+  // leaders. The backend re-derives the authoritative scope from the JWT.
+  const hasDownline = useMemo(() => {
+    if (!user) return false;
+    if (
+      [
+        "admin",
+        "super_admin",
+        "supreme_admin",
+        "leaderat12",
+        "leaderat144",
+        "leaderat1728",
+      ].includes(currentUserRole)
+    ) {
+      return true;
     }
-  }, [cells, cellsLoading]);
+    return !!(
+      user.is_leader_at_12 ||
+      user.isLeaderAt12 ||
+      user.is_leader_at_144 ||
+      user.isLeaderAt144
+    );
+  }, [user, currentUserRole]);
+
+  const isAdmin = useMemo(() => currentUserRole === "admin", [currentUserRole]);
+
+  // Build hierarchy params for API calls (similar to Events.jsx)
+  const buildHierarchyParams = useCallback(() => {
+    const params = new URLSearchParams();
+    
+    // Admin sees everything
+    if (isAdmin) {
+      params.set("leader_at_12_view", "true");
+      params.set("include_subordinate_cells", "true");
+      params.set("show_all_authorized", "true");
+      
+      if (currentUserLeaderAt1) {
+        params.set("leader_at_1_identifier", currentUserLeaderAt1);
+      }
+    } 
+    // Users with downline (leaders at any level) can see their downline
+    else if (hasDownline) {
+      params.set("leader_at_12_view", "true");
+      params.set("include_subordinate_cells", "true");
+      params.set("show_all_authorized", "true");
+      
+      if (currentUserLeaderAt1) {
+        params.set("leader_at_1_identifier", currentUserLeaderAt1);
+      }
+    }
+    // Everyone else sees only their personal data
+    else {
+      params.set("show_personal_cells", "true");
+      params.set("personal", "true");
+    }
+    
+    return params.toString();
+  }, [isAdmin, hasDownline, currentUserLeaderAt1]);
 
   const fetchCalendarEvents = useCallback(async () => {
-    if (calendarLoading) return;
     setCalendarLoading(true);
 
     try {
-      // Test with NO query params first
-      const url = `${BACKEND_URL}/events/eventsdata`;
-      console.log("[TEST FETCH] URL:", url);
-
+      const monthStart = new Date(
+        currentMonth.getFullYear(),
+        currentMonth.getMonth(),
+        1,
+      );
+      const monthEnd = new Date(
+        currentMonth.getFullYear(),
+        currentMonth.getMonth() + 1,
+        0,
+      );
+      const toDateParam = (date) =>
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      const url = `${BACKEND_URL}/stats/calendar-events?start_date=${toDateParam(monthStart)}&end_date=${toDateParam(monthEnd)}`;
       const res = await authFetch(url);
-      console.log("[TEST FETCH] Status:", res.status);
-
       if (!res.ok) {
         const errorBody = await res.text().catch(() => "No body");
-        console.error("[TEST FETCH] Error:", res.status, errorBody);
-        throw new Error(`Test failed: ${res.status} - ${errorBody}`);
+        throw new Error(`Calendar fetch failed: ${res.status} - ${errorBody}`);
       }
 
       const data = await res.json();
-      console.log("[TEST FETCH] Data keys:", Object.keys(data));
       const events = data.events || data.data || [];
-      console.log(`[TEST FETCH] Loaded ${events.length} events`);
-
       setCalendarEvents(events);
     } catch (err) {
-      console.error("Test calendar fetch failed:", err);
+      console.error("Stats calendar fetch failed:", err);
     } finally {
       setCalendarLoading(false);
     }
-  }, [authFetch]);
+  }, [authFetch, currentMonth]);
 
   const fetchOverdueCells = useCallback(
     async (forceRefresh = false) => {
-      /** CHANGE:
-       * Use the CELLS lock only.
-       * This prevents duplicate CELLS calls, but does NOT affect STATS.
-       */
+      /** Uses the CELLS lock only — does not block STATS. */
       if (!canStartFetch(cellsLockRef, forceRefresh)) {
-        console.log("   Already fetching CELLS — skipping duplicate call");
+        // A fetch is already in flight; queue one more so this request
+        // (e.g. a period change) is not silently dropped.
+        cellsPendingRefreshRef.current = true;
         return;
       }
-
-      console.log(">>> ENTERED fetchOverdueCells", { forceRefresh, period });
 
       setCellsLoading(true);
       setCellsError(null);
 
-      console.log("→ Starting fetchOverdueCells", {
-        forceRefresh,
-        period,
-        startDate: "2026-01-22",
-      });
-
       try {
-        const startDate = "2026-01-22"; // adjust as needed
+        // Derive the visible window from the selected period using
+        // South-Africa-time boundaries. "Today" looks back one week so
+        // recent overdue cells are still visible on the default view.
+        const range = getCellPeriodRange(period);
+        const startDate =
+          period === "custom"
+            ? customRange.start
+            : period === "today"
+              ? new Date(
+                  Date.parse(`${range.today}T00:00:00Z`) - 6 * 86400000,
+                )
+                  .toISOString()
+                  .slice(0, 10)
+              : range.start;
+        const endDate = period === "custom" ? customRange.end : range.end;
 
         let allEvents = [];
         let page = 1;
         const limit = 90;
 
         while (true) {
-          console.log(
-            `   Fetching cells page ${page} (limit=${limit}, start=${startDate})`,
-          );
-
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 100000);
 
           try {
-            const url = `${BACKEND_URL}/events/cells?page=${page}&limit=${limit}&start_date=${startDate}&status=incomplete`;
-            console.log(" → URL:", url);
+            const hierarchyParams = buildHierarchyParams();
+            const url = `${BACKEND_URL}/events/cells?all_cells=true&event_type=cells&page=${page}&limit=${limit}&start_date=${startDate}&end_date=${endDate}${hierarchyParams ? `&${hierarchyParams}` : ""}`;
 
             const res = await authFetch(url, { signal: controller.signal });
             clearTimeout(timeoutId);
 
-            console.log(` ← Response status: ${res.status}`);
-
             if (!res.ok) {
               const errText = await res.text().catch(() => "No error details");
-              console.warn(`Failed page ${page}: ${res.status} – ${errText}`);
               throw new Error(
                 `Cells page ${page} failed: ${res.status} – ${errText}`,
               );
@@ -448,8 +680,6 @@ const StatsDashboard = () => {
             const json = await res.json();
             const pageEvents =
               json.cells || json.data || json.events || json.results || [];
-
-            console.log(` ← Got ${pageEvents.length} cells on page ${page}`);
 
             if (pageEvents.length === 0) break;
 
@@ -460,76 +690,35 @@ const StatsDashboard = () => {
           } catch (err) {
             if (err?.name === "AbortError") {
               console.warn(`Cell fetch timeout on page ${page}`);
-            } else {
-              console.error(`Cell fetch error on page ${page}:`, err);
+              break; // keep whatever was collected before the timeout
             }
-            break;
+            throw err; // real failure → outer catch shows the error banner
           }
         }
 
-        console.log(`← Total cells fetched: ${allEvents.length}`);
-        if (allEvents.length > 0) console.table(allEvents.slice(0, 5));
-
-        // ────────────────────────────────────────────────
-        // Filter only incomplete / overdue / missed cells
-        // ────────────────────────────────────────────────
-        const overdueCells = allEvents.filter((cell) => {
-          if ("is_overdue" in cell) {
-            return !!cell.is_overdue; // true → show, false/null/undefined → hide
-          }
-
-          const raw = (cell.status || cell.Status || "").trim();
-          const status = raw.toLowerCase();
-
-          const isIncomplete =
-            status === "incomplete" ||
-            status.includes("incomplete") ||
-            status === "incomp" ||
-            status === "not completed";
-
-          const cellDate = cell.date ? new Date(cell.date) : null;
-          const isValidDate = cellDate && !isNaN(cellDate.getTime());
-
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-
-          const isPast = isValidDate && cellDate < today;
-
-          return isIncomplete && isPast;
-        });
-        console.log(
-          `Filtered down to ${overdueCells.length} overdue/incomplete cells (from ${allEvents.length} total)`,
-        );
-
-        if (overdueCells.length > 0) {
-          console.table(overdueCells.slice(0, 5), [
-            "eventName",
-            "date",
-            "status",
-            "eventLeaderName",
-          ]);
-        }
-
-        setCells(overdueCells);
-        console.log(
-          `Set cells state with ${overdueCells.length} overdue cells`,
-        );
+        setCells(Array.isArray(allEvents) ? allEvents : []);
       } catch (err) {
-        console.error("Overdue cells fetch failed:", err);
+        console.error("Stats cells fetch failed:", err);
         setCellsError(err.message || "Failed to load overdue cells");
         toast.error("Could not load overdue cells");
       } finally {
         setCellsLoading(false);
-        cellsLockRef.current = false;
-        console.log("fetchOverdueCells finished / released lock");
+        releaseFetchLock(cellsLockRef);
+        if (cellsPendingRefreshRef.current) {
+          cellsPendingRefreshRef.current = false;
+          fetchOverdueCells(false);
+        }
       }
     },
-    [authFetch],
+    [authFetch, period, customRange, buildHierarchyParams],
   );
   const isOverdue = useCallback((cell) => {
     if (!cell) return false;
     if ("is_overdue" in cell) {
       return !!cell.is_overdue;
+    }
+    if ("isOverdue" in cell) {
+      return !!cell.isOverdue;
     }
     const status = (cell.status || cell.Status || "").trim().toLowerCase();
     const isIncomplete =
@@ -538,35 +727,41 @@ const StatsDashboard = () => {
       status === "incomp" ||
       status === "not completed";
 
-    const cellDate = cell.date ? new Date(cell.date) : null;
-    const isValidDate = cellDate && !isNaN(cellDate.getTime());
+    // Compare calendar dates in the org's operating timezone
+    // (Africa/Johannesburg) instead of the browser's local midnight, so
+    // borderline cells don't flip depending on where the viewer is.
+    const cellDay = cell.date
+      ? new Date(cell.date).toLocaleDateString("en-CA", {
+          timeZone: "Africa/Johannesburg",
+        })
+      : null;
+    const todayStr = new Date().toLocaleDateString("en-CA", {
+      timeZone: "Africa/Johannesburg",
+    });
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const isPast = isValidDate && cellDate < today;
-
-    return isIncomplete && isPast;
+    return isIncomplete && !!cellDay && cellDay < todayStr;
   }, []);
 
   const fetchStats = useCallback(
     async (forceRefresh = false) => {
-      /** CHANGE:
-       * Use the STATS lock only.
-       * This prevents duplicate STATS calls, but does NOT affect CELLS.
-       */
       if (!canStartFetch(statsLockRef, forceRefresh)) {
-        console.log("   Already fetching STATS — skipping duplicate call");
+        // Queue one refresh so a period/filter change made mid-fetch is
+        // applied as soon as the in-flight request completes.
+        statsPendingRefreshRef.current = true;
         return;
       }
 
       setStats((prev) => ({ ...prev, loading: true, error: null }));
 
       try {
-        const response = await authFetch(
-          `${BACKEND_URL}/stats/dashboard-comprehensive?period=${period}`,
-          { retryOnAuthFailure: true, maxRetries: 1 },
-        );
+        const hierarchyParams = buildHierarchyParams();
+        const periodQuery =
+          period === "custom"
+            ? `period=custom&start_date=${customRange.start}&end_date=${customRange.end}`
+            : `period=${period}`;
+        const url = `${BACKEND_URL}/stats/dashboard-comprehensive?${periodQuery}${hierarchyParams ? `&${hierarchyParams}` : ""}`;
+
+        const response = await authFetch(url);
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -583,14 +778,17 @@ const StatsDashboard = () => {
         setStats({
           overview: data.overview,
           events: data.events || [],
-          /** CHANGE:
-           * The old code had data.fetchOverdueCells which was incorrect.
-           * This keeps it safer by checking common backend field names.
-           */
           overdueCells: data.overdueCells || data.overdue_cells || [],
           allTasks: data.allTasks || [],
           allUsers: data.allUsers || [],
-          groupedTasks: data.groupedTasks || [],
+          groupedTasks: (data.groupedTasks || []).map((group) => ({
+            ...group,
+            tasks: Array.isArray(group.tasks)
+              ? group.tasks
+              : Array.isArray(group.Tasks)
+                ? group.Tasks
+                : [],
+          })),
           dateRange: data.date_range || { start: "", end: "" },
           loading: false,
           error: null,
@@ -599,23 +797,63 @@ const StatsDashboard = () => {
         console.error("Fetch stats error:", err);
         setStats((prev) => ({ ...prev, loading: false, error: err.message }));
       } finally {
-        /** CHANGE:
-         * Always release only the stats lock here.
-         */
         releaseFetchLock(statsLockRef);
+        if (statsPendingRefreshRef.current) {
+          statsPendingRefreshRef.current = false;
+          fetchStats(false);
+        }
       }
     },
-    [period, authFetch],
+    [period, customRange, authFetch, buildHierarchyParams],
   );
 
   const handlePeriodChange = (e) => {
-    /** CHANGE:
-     * Before, period changes were blocked during fetch.
-     * Now, period changes are safe.
-     */
-
     setPeriod(e.target.value);
   };
+
+  const handleCustomStartChange = (e) => {
+    const value = e.target.value;
+    if (!value) return;
+    setCustomRange((prev) => ({
+      start: value,
+      end: value > prev.end ? value : prev.end, // keep start <= end
+    }));
+  };
+
+  const handleCustomEndChange = (e) => {
+    const value = e.target.value;
+    if (!value) return;
+    setCustomRange((prev) => ({
+      start: value < prev.start ? value : prev.start, // keep start <= end
+      end: value,
+    }));
+  };
+
+  // Rendered next to both Period selects while period === "custom".
+  const customRangeFields = (
+    <>
+      <TextField
+        type="date"
+        size="small"
+        label="Start"
+        value={customRange.start}
+        onChange={handleCustomStartChange}
+        InputLabelProps={{ shrink: true }}
+        inputProps={{ max: customRange.end }}
+        sx={{ width: 158 }}
+      />
+      <TextField
+        type="date"
+        size="small"
+        label="End"
+        value={customRange.end}
+        onChange={handleCustomEndChange}
+        InputLabelProps={{ shrink: true }}
+        inputProps={{ min: customRange.start }}
+        sx={{ width: 158 }}
+      />
+    </>
+  );
 
   /**
    * CHANGE:
@@ -623,17 +861,31 @@ const StatsDashboard = () => {
    * They won’t block each other because they use different locks.
    */
   useEffect(() => {
-    console.log("[OVERDUE + STATS FETCH TRIGGER]", {
-      period,
-      timestamp: new Date().toISOString(),
-    });
-
     fetchOverdueCells(false);
     fetchStats(false);
   }, [period, fetchOverdueCells, fetchStats]);
 
-  const filteredOverdueCells = useMemo(() => {
-    return [...cells].sort((a, b) => {
+  const cellPeople = useMemo(
+    () =>
+      [...new Set(cells.map((cell) => cell.eventLeaderName?.trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b)),
+    [cells],
+  );
+
+  const filteredCells = useMemo(() => {
+    return cells
+      .filter((cell) => {
+        const status = getCellStatus(cell);
+        const matchesStatus =
+          cellFilter === "all" ||
+          (cellFilter === "overdue" && isOverdue(cell)) ||
+          (cellFilter !== "overdue" && cellFilter === status);
+        const matchesPerson =
+          selectedCellPerson === "all" ||
+          cell.eventLeaderName?.trim() === selectedCellPerson;
+        return matchesStatus && matchesPerson;
+      })
+      .sort((a, b) => {
       const dateA = a.date
         ? new Date(a.date).getTime()
         : Number.MAX_SAFE_INTEGER;
@@ -641,11 +893,179 @@ const StatsDashboard = () => {
         ? new Date(b.date).getTime()
         : Number.MAX_SAFE_INTEGER;
       return dateB - dateA;
-    });
-  }, [cells]);
+      });
+  }, [cells, cellFilter, selectedCellPerson, isOverdue]);
 
-  const filteredTasks = useMemo(() => stats.allTasks, [stats.allTasks]);
-  const filteredEvents = useMemo(() => stats.events, [stats.events]);
+  const overdueCellCount = useMemo(
+    () => cells.filter((cell) => isOverdue(cell)).length,
+    [cells, isOverdue],
+  );
+
+  const cellFilterCounts = useMemo(() => {
+    const peopleFiltered = cells.filter(
+      (cell) =>
+        selectedCellPerson === "all" ||
+        cell.eventLeaderName?.trim() === selectedCellPerson,
+    );
+    const count = (filter) =>
+      filter === "all"
+        ? peopleFiltered.length
+        : filter === "overdue"
+          ? peopleFiltered.filter((cell) => isOverdue(cell)).length
+        : peopleFiltered.filter((cell) => getCellStatus(cell) === filter).length;
+
+    return {
+      all: count("all"),
+      overdue: count("overdue"),
+      incomplete: count("incomplete"),
+      completed: count("completed"),
+      didNotMeet: count("did_not_meet"),
+    };
+  }, [cells, selectedCellPerson, isOverdue]);
+
+  const taskPeople = useMemo(
+    () => {
+      const peopleByValue = new Map();
+      [...stats.allUsers, ...stats.groupedTasks.map((group) => group.user)]
+        .filter(Boolean)
+        .forEach((person) => {
+          const fullName = person.fullName || [person.name, person.surname].filter(Boolean).join(" ");
+          const value = person.email || person._id || fullName;
+          if (fullName && value) {
+            peopleByValue.set(value, {
+              ...peopleByValue.get(value),
+              ...person,
+              fullName,
+              value,
+            });
+          }
+        });
+      return [...peopleByValue.values()].sort((a, b) =>
+        a.fullName.localeCompare(b.fullName),
+      );
+    },
+    [stats.allUsers, stats.groupedTasks],
+  );
+
+  const taskPeopleLeaders = useMemo(() => {
+    const membersByLeader = new Map();
+    taskPeople.forEach((person) => {
+      [person.leader12, person.leader144, person.leader1728]
+        .filter(Boolean)
+        .forEach((leaderId) => {
+          const key = String(leaderId);
+          membersByLeader.set(key, (membersByLeader.get(key) || 0) + 1);
+        });
+    });
+    return taskPeople
+      .map((person) => ({
+        ...person,
+        teamSize: membersByLeader.get(String(person._id)) || 0,
+      }))
+      .filter((person) => person.teamSize > 0)
+      .sort((a, b) => a.fullName.localeCompare(b.fullName));
+  }, [taskPeople]);
+
+  const matchingTaskPeople = useMemo(() => {
+    const query = normalizePersonSearch(taskPersonSearch);
+    if (!query) return taskPeople;
+    const rankMatch = (person) => {
+      const fullName = normalizePersonSearch(person.fullName);
+      const email = normalizePersonSearch(person.email);
+      if (fullName === query || email === query) return 0;
+      if (fullName.startsWith(query) || email.startsWith(query)) return 1;
+      return 2;
+    };
+    return taskPeople
+      .filter((person) =>
+        normalizePersonSearch(`${person.fullName} ${person.email}`).includes(query),
+      )
+      .sort((a, b) => rankMatch(a) - rankMatch(b) || a.fullName.localeCompare(b.fullName));
+  }, [taskPeople, taskPersonSearch]);
+
+  const matchingTaskLeaders = useMemo(() => {
+    const matchingValues = new Set(matchingTaskPeople.map((person) => person.value));
+    return taskPeopleLeaders.filter((leader) => matchingValues.has(leader.value));
+  }, [matchingTaskPeople, taskPeopleLeaders]);
+
+  useEffect(() => {
+    taskListRef.current?.scrollTo({ top: 0 });
+  }, [taskPersonSearch, taskPeopleScope, selectedTeamLeader, taskFilter]);
+
+  const filteredTasks = useMemo(() => {
+    return stats.allTasks.filter((task) => {
+      const isCompleted = isTaskCompleted(task);
+      const isConsolidation = isConsolidationTask(task);
+      const matchesFilter =
+        taskFilter === "all" ||
+        (taskFilter === "completed" && isCompleted) ||
+        (taskFilter === "pending" && !isCompleted) ||
+        (taskFilter === "incomplete" && !isCompleted) ||
+        (taskFilter === "consolidation" && isConsolidation);
+      const matchesPerson = taskMatchesPerson(
+        task,
+        taskPersonSearch,
+        taskPeopleScope,
+        taskPeople,
+        user?._id || user?.id,
+        selectedTeamLeader?._id,
+      );
+
+      return matchesFilter && matchesPerson;
+    });
+  }, [stats.allTasks, taskFilter, taskPersonSearch, taskPeopleScope, taskPeople, user, selectedTeamLeader]);
+
+  const visibleGroupedTasks = useMemo(() => {
+    const visibleIds = new Set(filteredTasks.map((task) => task._id));
+
+    return stats.groupedTasks
+      .map((group) => {
+        const tasks = (group.tasks || group.Tasks || []).filter((task) =>
+          visibleIds.has(task._id),
+        );
+        // Recompute the header counts from the FILTERED tasks so the row
+        // never claims "3 captured" while only 1 filtered task is shown.
+        const completedCount = tasks.filter(isTaskCompleted).length;
+        return {
+          ...group,
+          tasks,
+          totalCount: tasks.length,
+          completedCount,
+          incompleteCount: tasks.length - completedCount,
+        };
+      })
+      .filter((group) => group.tasks.length > 0);
+  }, [stats.groupedTasks, filteredTasks]);
+
+  const taskFilterCounts = useMemo(() => {
+    const count = (filter) =>
+      stats.allTasks.filter((task) => {
+        const isCompleted = isTaskCompleted(task);
+        const isConsolidation = isConsolidationTask(task);
+        return (
+          (filter === "all" ||
+            (filter === "completed" && isCompleted) ||
+            (filter !== "completed" && filter !== "consolidation" && !isCompleted) ||
+            (filter === "consolidation" && isConsolidation)) &&
+          taskMatchesPerson(
+            task,
+            taskPersonSearch,
+            taskPeopleScope,
+            taskPeople,
+            user?._id || user?.id,
+            selectedTeamLeader?._id,
+          )
+        );
+      }).length;
+
+    return {
+      all: count("all"),
+      pending: count("pending"),
+      completed: count("completed"),
+      incomplete: count("incomplete"),
+      consolidation: count("consolidation"),
+    };
+  }, [stats.allTasks, taskPersonSearch, taskPeopleScope, taskPeople, user, selectedTeamLeader]);
 
   const getPeriodDisplayText = (periodType) => {
     switch (periodType) {
@@ -659,12 +1079,13 @@ const StatsDashboard = () => {
         return "Previous Week";
       case "previousMonth":
         return "Previous Month";
+      case "custom":
+        return `Custom: ${customRange.start} – ${customRange.end}`;
       default:
         return periodType;
     }
   };
 
-  // Excel helpers
   const formatDateForExcel = (dateStr) => {
     if (!dateStr) return "";
     try {
@@ -684,162 +1105,98 @@ const StatsDashboard = () => {
     }
   };
 
-  // Excel Download Function
-  const downloadFilteredStats = () => {
-    try {
-      const currentPeriod = getPeriodDisplayText(period);
-      const today = new Date().toISOString().split("T")[0];
-
-      let dataToExport = [];
-      let sheetName = "";
-      let fileName = "";
-
-      if (activeTab === 0) {
-        if (!filteredOverdueCells || filteredOverdueCells.length === 0) {
-          toast.info(
-            "No overdue cells data to download for the selected period.",
-          );
-          return;
-        }
-
-        dataToExport = filteredOverdueCells.map((cell) => ({
-          "Event ID": cell._id || "",
-          "Event Name": cell.eventName || "Unnamed",
-          "Event Type": cell.eventTypeName || "",
-          Date: cell.date ? formatDateForExcel(cell.date) : "",
-          Time: cell.time || "",
-          Location: cell.location || "",
-          "Event Leader": cell.eventLeaderName || "",
-          "Leader Email": cell.eventLeaderEmail || "",
-          Status: cell.status || cell.Status || "incomplete",
-          Description: cell.description || "",
-          "Attendees Count": cell.attendees ? cell.attendees.length : 0,
-          "Is Recurring": cell.isRecurring ? "Yes" : "No",
-          "Created At": cell.created_at
-            ? formatDateForExcel(cell.created_at)
-            : "",
-          "Updated At": cell.updated_at
-            ? formatDateForExcel(cell.updated_at)
-            : "",
-        }));
-
-        sheetName = "Overdue_Cells";
-        fileName = `overdue_cells_${currentPeriod
-          .toLowerCase()
-          .replace(/\s+/g, "_")}_${today}.xlsx`;
-      } else if (activeTab === 1) {
-        if (!filteredTasks || filteredTasks.length === 0) {
-          toast.info("No tasks data to download for the selected period.");
-          return;
-        }
-
-        dataToExport = filteredTasks.map((task) => ({
-          "Task ID": task._id || "",
-          "Task Name": task.name || task.taskType || "Untitled Task",
-          "Task Type": task.type || "",
-          "Contact Person": task.contacted_person?.name || "",
-          "Contact Phone":
-            task.contacted_person?.phone || task.contacted_person?.Number || "",
-          "Contact Email": task.contacted_person?.email || "",
-          "Assigned To": task.assignedfor || task.name || "",
-          "Assigned For": task.assignedfor || "",
-          "Due Date": task.followup_date
-            ? formatDateForExcel(task.followup_date)
-            : "",
-          Status: task.status || "pending",
-          "Task Stage": task.taskStage || "",
-          "Created At": task.created_at
-            ? formatDateForExcel(task.created_at)
-            : "",
-          "Updated At": task.updated_at
-            ? formatDateForExcel(task.updated_at)
-            : "",
-          "Member ID": task.memberID || "",
-          "Task Description": task.description || "",
-        }));
-
-        sheetName = "Tasks";
-        fileName = `tasks_${currentPeriod
-          .toLowerCase()
-          .replace(/\s+/g, "_")}_${today}.xlsx`;
-      } else if (activeTab === 2) {
-        if (!filteredEvents || filteredEvents.length === 0) {
-          toast.info("No events data to download for the selected period.");
-          return;
-        }
-
-        dataToExport = filteredEvents.map((event) => ({
-          "Event ID": event._id || "",
-          "Event Name": event.eventName || "",
-          "Event Type": event.eventTypeName || "",
-          Date: event.date ? formatDateForExcel(event.date) : "",
-          Time: event.time || "",
-          Location: event.location || "",
-          "Event Leader": event.eventLeaderName || "",
-          "Leader Email": event.eventLeaderEmail || "",
-          Description: event.description || "",
-          Status: event.status || event.Status || "incomplete",
-          "Is Recurring": event.isRecurring ? "Yes" : "No",
-          "Created At": event.created_at
-            ? formatDateForExcel(event.created_at)
-            : "",
-          "Updated At": event.updated_at
-            ? formatDateForExcel(event.updated_at)
-            : "",
-        }));
-
-        sheetName = "Events";
-        fileName = `events_${currentPeriod
-          .toLowerCase()
-          .replace(/\s+/g, "_")}_${today}.xlsx`;
-      }
-
-      if (dataToExport.length === 0) {
-        toast.info("No data to download for the selected period.");
-        return;
-      }
-
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
-
-      const wbout = XLSX.write(wb, {
-        bookType: "xlsx",
-        type: "array",
-        bookSST: false,
-      });
-
-      const blob = new Blob([wbout], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-
-      const link = document.createElement("a");
-      const url = URL.createObjectURL(blob);
-
-      link.href = url;
-      link.download = fileName;
-      link.target = "_blank";
-      link.rel = "noopener";
-      link.style.display = "none";
-      document.body.appendChild(link);
-      link.dispatchEvent(
-        new MouseEvent("click", {
-          view: window,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-
-      setTimeout(() => {
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }, 200);
-
-      toast.success(`Downloaded ${dataToExport.length} records (${sheetName})`);
-    } catch (error) {
-      console.error("Error downloading Excel file:", error);
-      toast.error("Error creating Excel file: " + error.message);
+  const downloadTasksExcel = () => {
+    if (filteredTasks.length === 0) {
+      toast.info("No tasks data to export for the selected filters.");
+      return;
     }
+
+    const rows = filteredTasks.map((task) => ({
+      "Task ID": task._id || "",
+      "Task Name": task.name || task.taskType || "Untitled Task",
+      "Task Type": task.type || task.taskType || "",
+      "Contact Person": task.contacted_person?.name || "",
+      "Assigned To": task.assignedfor || "",
+      "Due Date": task.followup_date
+        ? formatDateForExcel(task.followup_date)
+        : "",
+      Status: task.status || "pending",
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Tasks");
+    const workbookOutput = XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array",
+      bookSST: false,
+    });
+    const blob = new Blob([workbookOutput], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = `tasks_${period}_${new Date().toISOString().split("T")[0]}.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${rows.length} tasks to Excel`);
+  };
+
+  const downloadCellsExcel = () => {
+    if (filteredCells.length === 0) {
+      toast.info("No cells data to export for the selected filters.");
+      return;
+    }
+
+    const rows = filteredCells.map((cell) => ({
+      "Cell ID": cell._id || "",
+      "Cell Name": cell.eventName || "Unnamed Cell",
+      Date: cell.date ? formatDateForExcel(cell.date) : "",
+      Day: cell.day || "",
+      Leader: cell.eventLeaderName || "",
+      Location: cell.location || "",
+      Status: cell.status || cell.Status || "incomplete",
+      "Did Not Meet": cell.did_not_meet ? "Yes" : "No",
+      "Attendee Count": cell.attendee_count ?? cell.attendees?.length ?? 0,
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(rows),
+      "Cells",
+    );
+    XLSX.writeFile(
+      workbook,
+      `cells_${period}_${cellFilter}_${new Date().toISOString().slice(0, 10)}.xlsx`,
+    );
+    toast.success(`Exported ${rows.length} cells to Excel`);
+  };
+
+  const downloadCalendarExcel = () => {
+    if (calendarEvents.length === 0) {
+      toast.info("No events to export for this month.");
+      return;
+    }
+
+    const rows = calendarEvents.map((event) => ({
+      "Event ID": event._id || "",
+      "Event Name": event.eventName || "Unnamed Event",
+      Date: event.date ? formatDateForExcel(event.date) : "",
+      Day: event.day || "",
+      Time: event.time || "",
+      Location: event.location || "",
+      "Event Type": event.eventTypeName || "",
+      Leader: event.eventLeaderName || "",
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Calendar Events");
+    const month = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, "0")}`;
+    const today = new Date().toISOString().split("T")[0];
+    XLSX.writeFile(workbook, `calendar_events_${month}_${today}.xlsx`);
+    toast.success(`Exported ${rows.length} events to Excel`);
   };
   const handleDownloadCalendar = useCallback(() => {
     if (isDownloading) return;
@@ -906,9 +1263,6 @@ const StatsDashboard = () => {
   useEffect(() => {
     fetchCalendarEvents();
   }, [fetchCalendarEvents]);
-  useEffect(() => {
-    fetchCalendarEvents();
-  }, [currentMonth.getFullYear(), currentMonth.getMonth()]);
 
   useEffect(() => {
     const fetchEventTypes = async () => {
@@ -939,7 +1293,6 @@ const StatsDashboard = () => {
 
   useEffect(() => {
     const handleTaskUpdate = () => {
-      console.log("Task update detected, refreshing stats...");
       fetchStats(true);
       fetchOverdueCells(true);
     };
@@ -991,37 +1344,20 @@ const StatsDashboard = () => {
 
   const getEventsForDate = useCallback(
     (date) => {
-      console.log("Filtering for date:", date);
-
       return calendarEvents.filter((e) => {
         if (!e.date) return false;
 
-        // Create date at local midnight
         const eventDate = new Date(e.date);
         const eventYear = eventDate.getFullYear();
         const eventMonth = String(eventDate.getMonth() + 1).padStart(2, "0");
         const eventDay = String(eventDate.getDate()).padStart(2, "0");
         const eventDateStr = `${eventYear}-${eventMonth}-${eventDay}`;
 
-        console.log(
-          `Comparing event date ${eventDateStr} with selected date ${date} for event:`,
-          e,
-        );
-
         return eventDateStr === date;
       });
     },
     [calendarEvents],
   );
-
-  // And in eventCounts calculation:
-  const eventCounts = {};
-  calendarEvents.forEach((e) => {
-    if (e.date) {
-      const d = new Date(e.date).toISOString().split("T")[0];
-      eventCounts[d] = (eventCounts[d] || 0) + 1;
-    }
-  });
 
   const globalEvent = eventTypes?.find(
     (et) => et.name?.toLowerCase() === "global events",
@@ -1035,15 +1371,9 @@ const StatsDashboard = () => {
   if (shouldRefresh) {
     toast.success("Event created successfully!");
 
-    // Refresh all relevant data
     fetchStats(true);
     fetchOverdueCells(true);
     fetchCalendarEvents();
-
-    // Optional: small delay for better UX
-    setTimeout(() => {
-      console.log("✅ Event created - data refreshed");
-    }, 300);
   }
 }, [fetchStats, fetchOverdueCells, fetchCalendarEvents]);
 
@@ -1067,11 +1397,10 @@ const StatsDashboard = () => {
     });
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // force local midnight
+    today.setHours(0, 0, 0, 0);
     const todayStr = new Date().toLocaleDateString("en-CA", {
       timeZone: "Africa/Johannesburg",
     });
-    console.log("[EnhancedCalendar] todayStr calculated as:", todayStr);
 
     const goToPreviousMonth = () =>
       setCurrentMonth((prev) => {
@@ -1091,10 +1420,6 @@ const StatsDashboard = () => {
       const now = new Date();
       now.setHours(0, 0, 0, 0);
       const todayStr = now.toISOString().split("T")[0];
-      console.log(
-        "[goToToday] Setting currentMonth and selectedDate to:",
-        todayStr,
-      );
       setCurrentMonth(now);
       setSelectedDate(todayStr);
     };
@@ -1204,9 +1529,7 @@ const StatsDashboard = () => {
               <Box
                 key={d.date}
                 onClick={() => {
-                  console.log("User clicked:", d.date);
                   setSelectedDate(d.date);
-                  // Optional: force scroll or focus
                   window.scrollTo(0, 0);
                 }}
                 sx={{
@@ -1262,7 +1585,7 @@ const StatsDashboard = () => {
         </Box>
       </Box>
     );
-  }, [filteredEvents, currentMonth, selectedDate, isSmDown]);
+  }, [calendarEvents, currentMonth, selectedDate, isSmDown]);
 
   const StatCard = React.memo(
     ({ title, value, subtitle, icon, color = "primary" }) => (
@@ -1465,7 +1788,7 @@ const StatsDashboard = () => {
       >
         <Box>
           <Typography variant="h5" fontWeight="medium">
-            Dashboard
+            Stats Dashboard
           </Typography>
           {stats.dateRange.start && stats.dateRange.end && (
             <Typography variant="body2" color="text.secondary">
@@ -1475,71 +1798,22 @@ const StatsDashboard = () => {
           )}
         </Box>
 
-        <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
-          <FormControl size="small" sx={{ minWidth: 140 }}>
-            <InputLabel>Period</InputLabel>
-            <Select
-              value={period}
-              label="Period"
-              onChange={handlePeriodChange}
-              disabled={stats.loading}
-            >
-              {periodOptions.map((opt) => (
-                <MenuItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          {/* CHANGE: Refresh should refresh BOTH stats & cells */}
-          <Tooltip title="Refresh">
-            <IconButton
-              onClick={() => {
-                //CHANGE: forceRefresh=true so both fetches run even if a previous call is mid-flight.
-                fetchStats(true);
-                fetchOverdueCells(true);
-              }}
-              disabled={stats.loading || cellsLoading}
-            >
-              <Refresh />
-            </IconButton>
-          </Tooltip> 
-          {/* Download button should download based  */}
-          <Button
-            size="small"
-            onClick={downloadFilteredStats}
-            startIcon={ <Download />}
-            variant="outlined"
-            disabled={
-              stats.loading ||
-              cellsLoading ||
-              (activeTab === 0
-                ? filteredOverdueCells.length === 0
-                : activeTab === 1
-                ? filteredTasks.length === 0
-                : filteredEvents.length === 0)
-            }
-          >
-            {isDownloading ? "Downloading..." : "Download"}
-          </Button>
-        </Box>
       </Box>
 
       {(stats.loading || cellsLoading) && <LinearProgress sx={{ mb: 3 }} />}
 
       {/* Stat Cards */}
-      <Grid container spacing={3} mb={4}>
-        <Grid item xs={12} sm={6} md={4}>
+      <Grid container spacing={2} mb={3}>
+        <Grid item xs={6} sm={3} md={2.5}>
           <StatCard
             title="Overdue Cells"
             color="warning"
             subtitle={getPeriodDisplayText(period)}
-            value={filteredOverdueCells.length}
+            value={overdueCellCount}
             icon={<Warning />}
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={4}>
+        <Grid item xs={6} sm={3} md={2.5}>
           <StatCard
             title="Tasks Due"
             subtitle={getPeriodDisplayText(period)}
@@ -1558,9 +1832,9 @@ const StatsDashboard = () => {
           value={activeTab}
           onChange={(_, v) => setActiveTab(v)}
         >
-          <Tab label={`Overdue Cells (${filteredOverdueCells.length})`} />
-          <Tab label={`Tasks (${filteredTasks.length})`} />
-          <Tab label={`Calendar (${calendarEvents.length} events)`} />
+          <Tab label={`CELLS (${cells.length})`} />
+          <Tab label={`TASKS (${stats.allTasks.length})`} />
+          <Tab label={`CALENDAR (${calendarEvents.length} EVENTS)`} />
         </Tabs>
       </Paper>
 
@@ -1578,42 +1852,119 @@ const StatsDashboard = () => {
               boxShadow: 1,
             }}
           >
-            <Box
-              display="flex"
-              justifyContent="space-between"
-              alignItems="center"
-              mb={2.5}
-              flexWrap="wrap"
-              gap={2}
-            >
+            <Box mb={1.5}>
               <Box>
                 <Typography variant="h6" component="div" fontWeight={600}>
-                  Overdue Cells
+                  Cells
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {getPeriodDisplayText(period)} • {filteredOverdueCells.length}{" "}
-                  found
+                  {getPeriodDisplayText(period)} • {filteredCells.length} found
                 </Typography>
               </Box>
-              <Box display="flex" gap={1.5} alignItems="center">
-                <Chip
-                  label={getPeriodDisplayText(period)}
-                  color="warning"
-                  size="small"
-                  variant="outlined"
-                />
-                <Button
-                  color="warning"
-                  variant="outlined"
-                  size="small"
-                  disabled={filteredOverdueCells.length === 0}
-                  onClick={() => setOverdueModalOpen(true)}
-                  startIcon={<Visibility fontSize="small" />}
-                >
-                  View All
-                </Button>
-              </Box>
             </Box>
+
+            <Box
+              display="flex"
+              justifyContent="flex-start"
+              gap={1.5}
+              alignItems="center"
+              flexWrap="wrap"
+              mb={1.5}
+            >
+                <FormControl size="small" sx={{ minWidth: 150 }}>
+                  <InputLabel id="overdue-period-label">Period</InputLabel>
+                  <Select
+                    labelId="overdue-period-label"
+                    value={period}
+                    label="Period"
+                    onChange={handlePeriodChange}
+                  >
+                    {periodOptions.map((option) => (
+                      <MenuItem key={option.value} value={option.value}>
+                        {option.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                {period === "custom" && customRangeFields}
+                <FormControl size="small" sx={{ minWidth: 180 }}>
+                  <InputLabel id="cell-person-label">All People</InputLabel>
+                  <Select
+                    labelId="cell-person-label"
+                    value={selectedCellPerson}
+                    label="All People"
+                    onChange={(event) => setSelectedCellPerson(event.target.value)}
+                  >
+                    <MenuItem value="all">All People</MenuItem>
+                    {cellPeople.map((person) => (
+                      <MenuItem key={person} value={person}>
+                        {person}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<Download />}
+                  onClick={downloadCellsExcel}
+                  disabled={filteredCells.length === 0}
+                  sx={{ textTransform: "none", height: 40 }}
+                >
+                  Export Excel
+                </Button>
+                <Tooltip title="Refresh cells">
+                  <span>
+                    <IconButton
+                      aria-label="Refresh cells"
+                      onClick={() => fetchOverdueCells(true)}
+                      disabled={cellsLoading}
+                      size="small"
+                      sx={{ ml: "auto", width: 38, height: 38 }}
+                    >
+                      <Refresh />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+            </Box>
+
+            <Tabs
+              value={cellFilter}
+              onChange={(_, value) => setCellFilter(value)}
+              variant={isSmDown ? "scrollable" : "standard"}
+              scrollButtons="auto"
+              sx={{
+                minHeight: 36,
+                mb: 1.5,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                "& .MuiTabs-flexContainer": { justifyContent: "flex-start" },
+                "& .MuiTab-root": {
+                  minHeight: 36,
+                  minWidth: "auto",
+                  px: { xs: 1, sm: 1.5, md: 2 },
+                  py: 0.5,
+                  fontSize: "0.75rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  color: "text.secondary",
+                  "&.Mui-selected": {
+                    color: "text.primary",
+                    fontWeight: 600,
+                  },
+                },
+                "& .MuiTabs-indicator": {
+                  backgroundColor: "primary.main",
+                  height: 3,
+                },
+              }}
+            >
+              <Tab value="overdue" label={`OVERDUE (${cellFilterCounts.overdue})`} />
+              <Tab value="incomplete" label={`INCOMPLETE (${cellFilterCounts.incomplete})`} />
+              <Tab value="completed" label={`COMPLETED (${cellFilterCounts.completed})`} />
+              <Tab value="did_not_meet" label={`DID NOT MEET (${cellFilterCounts.didNotMeet})`} />
+              <Tab value="all" label={`ALL (${cellFilterCounts.all})`} />
+            </Tabs>
 
             {cellsLoading ? (
               <Box
@@ -1634,7 +1985,7 @@ const StatsDashboard = () => {
                   <Button
                     color="error"
                     size="small"
-                    onClick={fetchOverdueCells}
+                    onClick={() => fetchOverdueCells(true)}
                     startIcon={<Refresh />}
                   >
                     Retry
@@ -1643,7 +1994,7 @@ const StatsDashboard = () => {
               >
                 {cellsError}
               </Alert>
-            ) : filteredOverdueCells.length === 0 ? (
+            ) : filteredCells.length === 0 ? (
               <Box
                 sx={{
                   px: 3,
@@ -1665,16 +2016,16 @@ const StatsDashboard = () => {
                   }}
                 />
                 <Typography variant="h6" gutterBottom>
-                  No overdue cells
+                  No cells found
                 </Typography>
                 <Typography variant="body1" sx={{ maxWidth: 480 }}>
-                  All cells are up to date for the selected period.
+                  No cells match the selected period, person, and status.
                 </Typography>
               </Box>
             ) : (
               <Box sx={{ flexGrow: 1, overflowY: "auto", pr: 1 }}>
                 <Stack spacing={2}>
-                  {filteredOverdueCells.map((cell) => (
+                  {filteredCells.map((cell) => (
                     <Card
                       key={cell._id}
                       variant="outlined"
@@ -1805,15 +2156,15 @@ const StatsDashboard = () => {
                                 sx={{ minWidth: 110, fontWeight: 600 }}
                               />
                             )}
-                            {cell.attendees?.length > 0 && (
+                            {(cell.attendee_count ?? cell.attendees?.length ?? 0) > 0 && (
                               <Typography
                                 variant="caption"
                                 color="text.secondary"
                                 display="block"
                                 mt={1}
                               >
-                                {cell.attendees.length} attendee
-                                {cell.attendees.length !== 1 ? "s" : ""}
+                                {cell.attendee_count ?? cell.attendees.length} attendee
+                                {(cell.attendee_count ?? cell.attendees.length) !== 1 ? "s" : ""}
                               </Typography>
                             )}
                           </Box>
@@ -1835,34 +2186,284 @@ const StatsDashboard = () => {
               height: "calc(100vh - 320px)",
               display: "flex",
               flexDirection: "column",
+              borderRadius: 2,
+              boxShadow: 1,
             }}
           >
+            {/* Top Filter Row: Period, People, Export */}
             <Box
               sx={{
                 display: "flex",
-                justifyContent: "space-between",
-                alignItems: isXsDown ? "flex-start" : "center",
-                mb: { xs: 2.5, md: 3 },
-                flexShrink: 0,
-                flexDirection: isXsDown ? "column" : "row",
-                gap: isXsDown ? 1 : 0,
+                justifyContent: "flex-start",
+                alignItems: "center",
+                mb: 2,
+                flexWrap: "wrap",
+                gap: 1.5,
               }}
             >
-              <Box>
-                <Typography variant="subtitle1" gutterBottom>
-                  All Tasks by Person ({stats.groupedTasks.length} people •{" "}
-                  {filteredTasks.length} total)
-                </Typography>
-              </Box>
-              <Chip
-                label={`Period: ${getPeriodDisplayText(period)}`}
-                color="secondary"
+              <FormControl size="small" sx={{ minWidth: 140 }}>
+                <Select
+                  value={period}
+                  displayEmpty
+                  renderValue={(value) => (
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.8 }}>
+                      <Event sx={{ fontSize: 15, color: "text.secondary" }} />
+                      <span>Period: {periodOptions.find((option) => option.value === value)?.label}</span>
+                    </Box>
+                  )}
+                  onChange={handlePeriodChange}
+                  disabled={stats.loading}
+                  sx={{
+                    height: 38,
+                    borderRadius: 1.5,
+                    fontSize: "0.78rem",
+                    bgcolor: theme.palette.mode === "dark" ? "#15161c" : "background.paper",
+                    "& .MuiOutlinedInput-notchedOutline": {
+                      borderColor: theme.palette.mode === "dark" ? "#292b35" : "divider",
+                    },
+                  }}
+                >
+                  {periodOptions.map((opt) => (
+                    <MenuItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              {period === "custom" && customRangeFields}
+
+              <Button
+                size="small"
+                onClick={(event) => setPeopleFilterAnchor(event.currentTarget)}
+                endIcon={<KeyboardArrowDown sx={{ fontSize: 17 }} />}
+                aria-haspopup="true"
+                aria-expanded={Boolean(peopleFilterAnchor)}
+                sx={{
+                  height: 38,
+                  minWidth: 148,
+                  justifyContent: "space-between",
+                  px: 1.4,
+                  color: "text.primary",
+                  border: "1px solid",
+                  borderColor: theme.palette.mode === "dark" ? "#292b35" : "divider",
+                  borderRadius: 1.5,
+                  bgcolor: theme.palette.mode === "dark" ? "#15161c" : "background.paper",
+                  fontSize: "0.78rem",
+                  fontWeight: 500,
+                  textTransform: "none",
+                  "&:hover": {
+                    bgcolor: theme.palette.mode === "dark" ? "#20212a" : "action.hover",
+                    borderColor: theme.palette.mode === "dark" ? "#3b3e4b" : "text.secondary",
+                  },
+                }}
+              >
+                {taskPeopleScope === "mine"
+                  ? "My People"
+                  : taskPeopleScope === "team"
+                    ? selectedTeamLeader?.fullName || "My People"
+                    : taskPersonSearch || "All People"}
+              </Button>
+              <Popover
+                open={Boolean(peopleFilterAnchor)}
+                anchorEl={peopleFilterAnchor}
+                onClose={() => setPeopleFilterAnchor(null)}
+                anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+                transformOrigin={{ vertical: "top", horizontal: "left" }}
+                PaperProps={{
+                  sx: {
+                    mt: 0.75,
+                    width: 252,
+                    maxHeight: 380,
+                    overflow: "hidden",
+                    color: theme.palette.mode === "dark" ? "#f4f5f8" : "text.primary",
+                    bgcolor: theme.palette.mode === "dark" ? "#191a22" : "background.paper",
+                    border: "1px solid",
+                    borderColor: theme.palette.mode === "dark" ? "#292b35" : "divider",
+                    borderRadius: 1.5,
+                    boxShadow: "0 12px 32px rgba(0,0,0,0.28)",
+                  },
+                }}
+              >
+                <Box sx={{ px: 1.25, pt: 1, pb: 0.5 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    value={taskPersonSearch}
+                    onChange={(event) => setTaskPersonSearch(event.target.value)}
+                    placeholder="Search people"
+                    aria-label="Search people"
+                    InputProps={{
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <Search sx={{ fontSize: 17, color: "#12a5b5" }} />
+                        </InputAdornment>
+                      ),
+                    }}
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        height: 32,
+                        color: "inherit",
+                        fontSize: "0.72rem",
+                        bgcolor: theme.palette.mode === "dark" ? "#15161c" : "action.hover",
+                        "& fieldset": { borderColor: "transparent" },
+                        "&:hover fieldset": { borderColor: "#343744" },
+                        "&.Mui-focused fieldset": { borderColor: "#12a5b5" },
+                      },
+                    }}
+                  />
+                </Box>
+                <Box sx={{ maxHeight: 325, overflowY: "auto", px: 0.75, pb: 0.75 }}>
+                  <List dense disablePadding>
+                    <ListItemButton
+                      selected={taskPeopleScope === "all" && !taskPersonSearch}
+                      onClick={() => {
+                        setTaskPeopleScope("all");
+                        setSelectedTeamLeader(null);
+                        setTaskPersonSearch("");
+                        setPeopleFilterAnchor(null);
+                      }}
+                      sx={peopleFilterItemSx(theme)}
+                    >
+                      <Typography variant="caption" sx={{ flex: 1, fontWeight: 600 }}>
+                        All People
+                      </Typography>
+                      {taskPeopleScope === "all" && !taskPersonSearch && <Check sx={{ fontSize: 15, color: "#12a5b5" }} />}
+                    </ListItemButton>
+                    {matchingTaskLeaders.length > 0 && (
+                      <>
+                        <Typography sx={peopleFilterSectionSx(theme)}>
+                          Leaders (includes their team)
+                        </Typography>
+                        {matchingTaskLeaders.map((leader, index) => (
+                          <ListItemButton
+                            key={`leader-${leader.value}`}
+                            selected={taskPeopleScope === "team" && selectedTeamLeader?.value === leader.value}
+                            onClick={() => {
+                              setTaskPeopleScope("team");
+                              setSelectedTeamLeader(leader);
+                              setTaskPersonSearch("");
+                              setPeopleFilterAnchor(null);
+                            }}
+                            sx={peopleFilterItemSx(theme)}
+                          >
+                            <Avatar sx={peopleFilterAvatarSx(index)}>{leader.fullName.charAt(0).toUpperCase()}</Avatar>
+                            <Typography variant="caption" noWrap sx={{ flex: 1, fontSize: "0.7rem" }}>
+                              {leader.fullName}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: "text.disabled", fontSize: "0.62rem" }}>
+                              +{leader.teamSize} people
+                            </Typography>
+                          </ListItemButton>
+                        ))}
+                      </>
+                    )}
+
+                    {matchingTaskPeople.length > 0 && (
+                      <>
+                        <Typography sx={peopleFilterSectionSx(theme)}>
+                          Individual Members
+                        </Typography>
+                        {matchingTaskPeople.map((person, index) => (
+                          <ListItemButton
+                            key={`person-${person.value}`}
+                            onClick={() => {
+                              setTaskPeopleScope("all");
+                              setSelectedTeamLeader(null);
+                              setTaskPersonSearch(person.fullName);
+                              setPeopleFilterAnchor(null);
+                            }}
+                            sx={peopleFilterItemSx(theme)}
+                          >
+                            <Avatar sx={peopleFilterAvatarSx(index + matchingTaskLeaders.length)}>
+                              {person.fullName.charAt(0).toUpperCase()}
+                            </Avatar>
+                            <Typography variant="caption" noWrap sx={{ flex: 1, fontSize: "0.7rem" }}>
+                              {person.fullName}
+                            </Typography>
+                          </ListItemButton>
+                        ))}
+                      </>
+                    )}
+
+                    {!matchingTaskPeople.length && taskPersonSearch && (
+                      <Typography sx={{ px: 1.5, py: 2, color: "text.secondary", fontSize: "0.7rem" }}>
+                        No matching people
+                      </Typography>
+                    )}
+                  </List>
+                </Box>
+              </Popover>
+
+              <Button
                 size="small"
                 variant="outlined"
-              />
+                startIcon={<Download />}
+                onClick={downloadTasksExcel}
+                disabled={filteredTasks.length === 0}
+                sx={{ textTransform: "none", height: 40 }}
+              >
+                Export Excel
+              </Button>
+              <Tooltip title="Refresh tasks">
+                <span>
+                  <IconButton
+                    aria-label="Refresh tasks"
+                    onClick={() => fetchStats(true)}
+                    disabled={stats.loading}
+                    size="small"
+                    sx={{ ml: "auto", width: 38, height: 38 }}
+                  >
+                    <Refresh />
+                  </IconButton>
+                </span>
+              </Tooltip>
             </Box>
 
+            {/* Bottom Filter Row: Tabs */}
+            <Tabs
+              value={taskFilter}
+              onChange={(_, value) => setTaskFilter(value)}
+              variant={isSmDown ? "scrollable" : "standard"}
+              scrollButtons="auto"
+              sx={{
+                minHeight: 36,
+                mb: 1.5,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                "& .MuiTabs-flexContainer": {
+                  justifyContent: "flex-start", // Aligns tabs to the left like the screenshot
+                },
+                "& .MuiTab-root": {
+                  minHeight: 36,
+                  minWidth: "auto",
+                  px: { xs: 1, sm: 1.5, md: 2 },
+                  py: 0.5,
+                  fontSize: "0.75rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  color: "text.secondary",
+                  "&.Mui-selected": {
+                    color: "text.primary",
+                    fontWeight: 600,
+                  },
+                },
+                "& .MuiTabs-indicator": {
+                  backgroundColor: "primary.main",
+                  height: 3,
+                },
+              }}
+            >
+              <Tab value="all" label={`ALL CONTACTS (${taskFilterCounts.all})`} />
+              <Tab value="pending" label={`PENDING (${taskFilterCounts.pending})`} />
+              <Tab value="completed" label={`COMPLETED (${taskFilterCounts.completed})`} />
+              <Tab value="incomplete" label={`INCOMPLETE (${taskFilterCounts.incomplete})`} />
+              <Tab value="consolidation" label={`CONSOLIDATION (${taskFilterCounts.consolidation})`} />
+            </Tabs>
+
+            {/* Task List Content */}
             <Box
+              ref={taskListRef}
               sx={{
                 flexGrow: 1,
                 overflow: "auto",
@@ -1879,7 +2480,7 @@ const StatsDashboard = () => {
                 "&::-webkit-scrollbar-thumb:hover": { background: "#555" },
               }}
             >
-              {stats.groupedTasks.length === 0 && !stats.loading ? (
+              {visibleGroupedTasks.length === 0 && !stats.loading ? (
                 <Box
                   sx={{
                     textAlign: "center",
@@ -1893,14 +2494,13 @@ const StatsDashboard = () => {
                   <Task sx={{ fontSize: 48, opacity: 0.3, mb: 1.5 }} />
                   <Typography variant="body1">No tasks found</Typography>
                   <Typography variant="caption" sx={{ fontSize: "0.75rem" }}>
-                    No tasks found for {getPeriodDisplayText(period)}.
+                    No tasks found for the selected filters.
                   </Typography>
                 </Box>
               ) : (
                 <Stack spacing={1.5}>
-                  {stats.groupedTasks.map((group) => {
-                    const key = group.user.email || group.user.fullName;
-                    console.log('GROUP', group);
+                  {visibleGroupedTasks.map((group) => {
+                    const key = group.user?.email || group.user?.fullName || "unknown";
                     return (
                       <TaskGroupRow
                         key={key}
@@ -1951,16 +2551,17 @@ const StatsDashboard = () => {
                   <Typography variant="subtitle1" fontWeight="medium">
                     Event Calendar ({calendarEvents.length} events total)
                   </Typography>
-                <Box display="flex" gap={1}>       
-              <Button
-                  variant="outlined"
-                 size="small"
-                 startIcon={isDownloading ? <CircularProgress size={14} /> : <Download />}
-                 onClick={handleDownloadCalendar}
-                 disabled={isDownloading || calendarEvents.length === 0}
-                >
-                  {isDownloading ? "Downloading..." : "Download"}
-                  </Button>  
+                <Box display="flex" gap={1}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<Download />}
+                    onClick={downloadCalendarExcel}
+                    disabled={calendarEvents.length === 0}
+                    sx={{ textTransform: "none" }}
+                  >
+                    Export Excel
+                  </Button>
                   <Button
                     variant="contained"
                     size="small"
@@ -2309,99 +2910,6 @@ const StatsDashboard = () => {
   </DialogContent>
 </Dialog>
 
-      {/* OVERDUE CELLS MODAL */}
-      <Dialog
-        open={overdueModalOpen}
-        onClose={() => setOverdueModalOpen(false)}
-        maxWidth="md"
-        fullWidth
-        fullScreen={isXsDown}
-      >
-        <DialogTitle sx={{ background: "warning", color: "white", p: 3 }}>
-          <Box
-            display="flex"
-            alignItems="center"
-            justifyContent="space-between"
-          >
-            <Box display="flex" alignItems="center" gap={2}>
-              <Warning sx={{ fontSize: 32 }} />
-              <Box>
-                <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                  Overdue / Incomplete Cells ({filteredOverdueCells.length})
-                </Typography>
-                <Typography variant="body2" sx={{ opacity: 0.9 }}>
-                  Cells that need attention
-                </Typography>
-              </Box>
-            </Box>
-            <IconButton
-              onClick={() => setOverdueModalOpen(false)}
-              sx={{ color: "white" }}
-            >
-              <Close />
-            </IconButton>
-          </Box>
-        </DialogTitle>
-
-        <DialogContent dividers sx={{ p: 3 }}>
-          {filteredOverdueCells.length === 0 ? (
-            <Typography color="text.secondary" align="center" py={4}>
-              No overdue cells — great job!
-            </Typography>
-          ) : (
-            <Stack spacing={2}>
-              {filteredOverdueCells.map((cell) => (
-                <Card
-                  key={cell._id}
-                  variant="outlined"
-                  sx={{ p: 2, backgroundColor: "error.50" }}
-                >
-                  <Box display="flex" alignItems="center" gap={2}>
-                    <Avatar sx={{ bgcolor: "warning.main" }}>
-                      <Warning />
-                    </Avatar>
-                    <Box flex={1}>
-                      <Typography variant="subtitle1" fontWeight="bold">
-                        {cell.eventName || "Unnamed Cell"}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Leader: {cell.eventLeaderName || "Not assigned"}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        color="error"
-                        fontWeight="medium"
-                      >
-                        {formatDate(cell.date)} —{" "}
-                        {(
-                          cell.status ||
-                          cell.Status ||
-                          "INCOMPLETE"
-                        ).toUpperCase()}
-                      </Typography>
-                    </Box>
-                    <Chip label={cell.attendees?.length || 0} size="small" />
-                  </Box>
-                </Card>
-              ))}
-            </Stack>
-          )}
-        </DialogContent>
-
-        <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setOverdueModalOpen(false)} variant="outlined">
-            Close
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-      >
-        <Alert severity={snackbar.severity}>{snackbar.message}</Alert>
-      </Snackbar>
     </Container>
   );
 };

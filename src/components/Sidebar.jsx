@@ -20,9 +20,12 @@ import {
   Group,
   Event,
   BarChart,
+  Assessment,
   Assignment,
   HowToReg,
-  AdminPanelSettings
+  AdminPanelSettings,
+  Description,
+  AccessTime
 } from '@mui/icons-material';
 import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
@@ -86,6 +89,32 @@ const allMenuItems = [
     icon: AdminPanelSettings, 
     roles: ['admin'],
     level: 5
+  },
+  { 
+    label: 'REPORTING', 
+    divider: true, 
+    roles: [] 
+  },
+  { 
+    label: 'Reports', 
+    path: '/reports', 
+    icon: Description, 
+    roles: ['admin', 'leaderat12'],
+    level: 3
+  },
+  { 
+    label: 'Scheduled Reports', 
+    path: '/reporting/scheduled', 
+    icon: AccessTime, 
+    roles: ['admin', 'leaderat12'],
+    level: 3
+  },
+  { 
+    label: 'Reporting Dashboard', 
+    path: '/reporting/dashboard', 
+    icon: BarChart, 
+    roles: ['admin', 'leaderat12'],
+    level: 3
   },
   { 
     label: 'Help & Support', 
@@ -241,8 +270,50 @@ export default function Sidebar({ mode, setMode }) {
       </Box>
 
       <List sx={{ flexGrow: 1 }}>
-        {menuItems.map(({ label, path, icon, external }) => {
+        {menuItems.map(({ label, path, icon, external, divider }) => {
           const Icon = icon;
+          if (divider) {
+            const isActive = false;
+            return (
+              <ListItemButton
+                key={label}
+                disabled
+                component={external ? 'a' : Link}
+                to={external ? undefined : path}
+                href={external ? path : undefined}
+                target={external ? '_blank' : undefined}
+                rel={external ? 'noopener noreferrer' : undefined}
+                selected={isActive}
+                onClick={() => isMobile && setMobileOpen(false)}
+                sx={{
+                  px: 0,
+                  py: 0.25,
+                  textTransform: 'uppercase',
+                  color: mode === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)',
+                  fontSize: '0.7rem',
+                  fontWeight: 400,
+                  backgroundColor: 'transparent',
+                  borderLeft: '4px solid transparent',
+                  '&:hover': {
+                    backgroundColor: 'transparent',
+                  },
+                  '& .MuiListItemIcon-root': { color: 'inherit' },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 0, display: 'none' }}>
+                  <Icon />
+                </ListItemIcon>
+
+                <ListItemText
+                  primary={label}
+                  primaryTypographyProps={{
+                    fontSize: '0.7rem',
+                    fontWeight: 400,
+                  }}
+                />
+              </ListItemButton>
+            );
+          }
           const isActive = !external && location.pathname === path;
           return (
             <ListItemButton
