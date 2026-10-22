@@ -94,19 +94,19 @@ const styles = {
     padding: "1.5rem",
     borderRadius: "16px",
     marginBottom: "1rem",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.08)",
     flexShrink: 0,
   },
   searchFilterRow: {
     display: "flex",
     gap: "1rem",
     alignItems: "center",
-    marginBottom: "1.5rem",
+    marginBottom: "1.4rem",
     flexWrap: "wrap",
   },
   statusBadgeContainer: {
     display: "flex",
-    gap: "0.75rem",
+    gap: "0.76rem",
     flexWrap: "wrap",
   },
   eventsContent: {
