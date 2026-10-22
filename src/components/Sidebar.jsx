@@ -289,7 +289,7 @@ export default function Sidebar({ mode, setMode }) {
         />
       </Box>
 
-      <List sx={{ flexGrow: 1, px: 1.5 }}>
+      <List sx={{ flexGrow: 1 }}>
         {menuItems.map(({ label, path, icon, external, divider }) => {
           const Icon = icon;
           if (divider) {

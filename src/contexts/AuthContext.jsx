@@ -2,6 +2,7 @@ import React, { createContext, useState, useEffect, useCallback } from 'react';
 import { normalizeRole } from '../utils/roleNormalizer';
 import supabase from '../../supabaseClient';
 import { API_BASE } from '../api/config';
+import { createClient } from '@supabase/supabase-js';
 
 // ─── Supabase client ──────────────────────────────────────────────────────────
 // Required env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
@@ -83,7 +84,7 @@ export const AuthProvider = ({ children }) => {
   const [loading,         setLoading]         = useState(true);
   const [leaders,         setLeadersState]    = useState(null);
   const [isLeader,        setIsLeader]        = useState(false);
-  const [jwtToken,        setJwtToken]        = useState(null);
+  const [_jwtToken,        _setJwtToken]      = useState(null);
 
   // ── Persistence helpers ────────────────────────────────────────────────────
   const persistUser = (u) => {
@@ -122,6 +123,7 @@ export const AuthProvider = ({ children }) => {
 
   // ── Fetch profile from DB by email ────────────────────────────────────────
   const fetchProfileByEmail = async (email) => {
+    console.log('EMAIL', email);
     const { data: rows, error } = await supabase
       .from('Users')
       .select('*')
@@ -179,7 +181,7 @@ export const AuthProvider = ({ children }) => {
         }
 
         // Legacy credentials valid — create Supabase Auth account
-        const { data: signUpData, error: signUpError } =
+        const { data: _signUpData, error: signUpError } =
           await supabase.auth.signUp({ email, password });
 
         if (signUpError) {
@@ -445,8 +447,6 @@ export const AuthProvider = ({ children }) => {
   const setLeaders = (leadersData, leaderStatus) => {
     persistLeadersData(leadersData, leaderStatus);
   };
-
-  
 
   // ── Context value ──────────────────────────────────────────────────────────
   return (

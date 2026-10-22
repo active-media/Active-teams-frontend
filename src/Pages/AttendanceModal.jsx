@@ -3696,13 +3696,15 @@ const AttendanceModal = ({
             }),
           };
         }),
-        leaderEmail: currentUser?.email || "",
-        leaderName:
-          `${currentUser?.name || ""} ${currentUser?.surname || ""}`.trim(),
-        did_not_meet: true,
+        leaderEmail:event?.eventLeaderEmail || "",
+        leaderName: event?.eventLeaderName,    
+        leader12: event?.leader12,
+        session_id:event?.session_id,
+         did_not_meet: true,
         isTicketed: isTicketedEvent,
         week: get_current_week_identifier(),
         event_type: event?.eventType || event?.event_type_name || "Cells",
+        event_name: event?.eventName
       };
 
       let result;

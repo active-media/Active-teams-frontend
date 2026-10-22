@@ -236,10 +236,10 @@ const Signup = ({ onSignup, mode, setMode }) => {
     const fetchUsers = async () => {
       setOrgUsersLoading(true);
       try {
-        const url = `${BACKEND_URL}/users?organization=${encodeURIComponent(org_id)}`;
-        const response = await fetch(url);
-        if (!response.ok) throw new Error("Failed to fetch users");
-        const data = await response.json();
+        const { data, error } = await supabase
+          .from("Users")
+          .select("_id, name, surname, email")
+          .eq("Organization", org); // column name from your schema
 
         if (!active) return;
         if (error) throw error;
@@ -376,17 +376,97 @@ const Signup = ({ onSignup, mode, setMode }) => {
       setErrors((prev) => ({ ...prev, [e.target.name]: "" }));
   };
 
-  const handleInvitedByChange = (_event, newValue) => {
-    const label =
-      typeof newValue === "object"
-        ? newValue?.label || getUserLabel(newValue) || ""
-        : newValue || "";
-    const id = typeof newValue === "object" ? newValue?._id || "" : "";
+  const handleInvitedByChange = (event, newValue) => {
+    console.log("INVITEE", newValue);
+    const invitedByValue =
+      newValue && typeof newValue === "object" ? (newValue.label || "") : (newValue || "");
+    const invitedById =
+      newValue && typeof newValue === "object"
+        ? (newValue._id || newValue.key || "")
+        : "";
+
     setSelectedInvitedBy(typeof newValue === "object" ? newValue : null);
     setForm((prev) => ({ ...prev, invited_by: label, invited_by_id: id }));
     if (errors.invited_by) setErrors((prev) => ({ ...prev, invited_by: "" }));
   };
 
+  const handleGenderChange = (e) => {
+    const genderVal = e.target.value;
+    setForm((prev) => ({
+      ...prev,
+      gender: genderVal,
+    }));
+    if (errors.gender) setErrors((prev) => ({ ...prev, gender: "" }));
+  };
+
+  // const handleSubmit = async (e) => {
+  //   e.preventDefault();
+  //   if (!validate()) return;
+
+  //   setLoading(true);
+
+  //   const submitData = { ...form };
+  //   delete submitData.confirm_password;
+
+  //   try {
+  //     const res = await fetch(`${BACKEND_URL}/signup`, {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify(submitData),
+  //     });
+
+  //     const data = await res.json();
+
+  //     if (!res.ok) {
+  //       toast.error(data?.detail || "Signup failed. Please try again.", toastOptions);
+  //     } else {
+  //       const userData = {
+  //         name: submitData.name,
+  //         surname: submitData.surname,
+  //         date_of_birth: submitData.date_of_birth,
+  //         home_address: submitData.home_address,
+  //         phone_number: submitData.phone_number,
+  //         email: submitData.email,
+  //         gender: submitData.gender,
+  //         organization: submitData.organization,
+  //       };
+
+  //       setUserProfile(userData);
+  //       if (onSignup) onSignup(submitData);
+
+  //       try {
+  //         await login(submitData.email, submitData.password);
+  //         toast.success("You've been signed up!", toastOptions);
+  //       } catch {
+  //         toast.error("Signup successful, but automatic login failed. Please log in.", {
+  //           ...toastOptions,
+  //           autoClose: 5000,
+  //         });
+  //         navigate("/login");
+  //         return;
+  //       }
+
+  //       setWelcomeName(submitData.name || submitData.email);
+  //       setShowWelcome(true);
+
+  //       setTimeout(() => {
+  //         setForm(initialForm);
+  //         setShowWelcome(false);
+  //         setSelectedAddress(null);
+  //         setSelectedInvitedBy(null);
+  //         setAddressOptions([]);
+  //         setOrgUsers([]);
+  //         navigate("/");
+  //       }, 2000);
+  //     }
+  //   } catch {
+  //     toast.error("Network or server error occurred.", toastOptions);
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
+
+  // Build the label shown for each user in the Invited By dropdown
   const getUserLabel = (user) => {
     if (typeof user === "string") return user;
     const full = [user.name, user.surname].filter(Boolean).join(" ");
@@ -402,7 +482,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
 
     try {
       // 1. Create Supabase Auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const { error: authError } = await supabase.auth.signUp({
         email: form.email,
         password: form.password,
       });
@@ -450,7 +530,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
       // 3. Auto-login
       try {
         await login(form.email, form.password);
-      } catch (loginErr) {
+      } catch {
         toast.error(
           "Signup successful, but auto-login failed. Please log in manually.",
           {

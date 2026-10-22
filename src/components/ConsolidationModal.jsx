@@ -107,7 +107,8 @@ const ConsolidationModal = ({
   onFinish,
   attendeesWithStatus = [],
   consolidatedPeople = [],
-  currentEventId,
+  currentSessionId,
+  eventId,
 }) => {
   const [recipient, setRecipient] = useState(null);
   const [assignedTo, setAssignedTo] = useState("");
@@ -135,7 +136,7 @@ const ConsolidationModal = ({
         setLoadingRecipients(true);
         setError("");
         const response = await authFetch(
-          `${BASE_URL}/people/search?query=${encodeURIComponent(query.trim())}&limit=25`,
+          `${BASE_URL}/people/search-fast?query=${encodeURIComponent(query.trim())}&limit=25`,
         );
         if (response.ok) {
           const data = await response.json();
@@ -210,6 +211,7 @@ const ConsolidationModal = ({
     },
     [attendeesWithStatus],
   );
+  console.log('people',recipients);
 
   const handleSearch = useCallback(
     (query) => {
@@ -367,6 +369,10 @@ const ConsolidationModal = ({
       const normalizedLeaderEmail = (resolvedLeaderEmail || "").trim().toLowerCase();
 
       const consolidationData = {
+        session_id: cleanEventId(currentSessionId),
+        event_id: eventId,
+        memberID: leaderInfo.person_id,
+        person_id: recipient.person_id ,
         person_name: recipient.Name || recipient.name || "",
         person_surname: recipient.Surname || recipient.surname || "",
         person_email: recipient.Email || recipient.email || "",
@@ -375,7 +381,6 @@ const ConsolidationModal = ({
         decision_date: new Date().toISOString().split("T")[0],
         assigned_to: leaderInfo.leader,
         assigned_to_email: normalizedLeaderEmail,
-        event_id: cleanEventId(currentEventId),
         leaders: leadersArray,
         source: "service_consolidation",
         person_data: {
@@ -387,7 +392,7 @@ const ConsolidationModal = ({
         },
       };
 
-      console.log("Consolidation payload:", consolidationData);
+      console.log("Consolidation payload:", consolidationData, recipient);
 
       const response = await authFetch(
         `${BASE_URL}/service-checkin/create-consolidation`,
@@ -397,8 +402,17 @@ const ConsolidationModal = ({
         },
       );
 
-      if (response.ok) {
+      const responseTask = await authFetch(
+        `${BASE_URL}/consolidations`,
+        {
+          method: "POST",
+          body: JSON.stringify(consolidationData),
+        },
+      )
+
+      if (response.ok & responseTask.ok) {
         const responseData = await response.json();
+        const responseDataTask = await responseTask.json();
 
         setRecipient(null);
         setAssignedTo("");
@@ -418,7 +432,7 @@ const ConsolidationModal = ({
           taskStage,
           decisionType,
           leaderLevel: leaderInfo.level,
-          task_id: responseData.task_id,
+          task_id: responseDataTask.task_id,
           recipient_email: recipient.Email || recipient.email || "",
           recipient_phone: recipient.Phone || recipient.phone || "",
           leader_email: responseData.assigned_to_email || "",

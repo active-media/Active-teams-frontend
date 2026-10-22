@@ -189,7 +189,7 @@ function ServiceCheckIn() {
     return [];
   });
 
-  const [currentEventId, setCurrentEventId] = useState("");//session_id
+  const [currentSessionId, setCurrentSessionId] = useState("");//session_id
   const [eventSearch, setEventSearch] = useState("");
   const [events, setEvents] = useState([]);
   const [search, setSearch] = useState("");
@@ -293,7 +293,7 @@ function ServiceCheckIn() {
   // fixed, keep session captures visible across refetches.
   const sessionCaptured = useRef(new Map());
   const [sessionNew, setSessionNew] = useState(new Map());
-  useEffect(() => { sessionCaptured.current = new Map(); setSessionNew(new Map()); }, [currentEventId]);
+  useEffect(() => { sessionCaptured.current = new Map(); setSessionNew(new Map()); }, [currentSessionId]);
 
   const commitRealTimeData = useCallback((freshData) => {
     if (!freshData) return;
@@ -370,6 +370,7 @@ function ServiceCheckIn() {
       .map(event => {
         try {
           if (!event) return null;
+          
           const attendeesArray = Array.isArray(event.attendees) ? event.attendees : [];
           const newPeopleArray = Array.isArray(event.new_people) ? event.new_people : [];
           const consolidationsArray = Array.isArray(event.consolidations) ? event.consolidations : [];
@@ -514,7 +515,7 @@ function ServiceCheckIn() {
                 return isTodayService(e);
               })
               .sort((a, b) => (b.attendance + b.newPeople + b.consolidated) - (a.attendance + a.newPeople + a.consolidated));
-            if (todayOpen.length > 0) setCurrentEventId(todayOpen[0].session_id);
+            if (todayOpen.length > 0) setCurrentSessionId(todayOpen[0].session_id);
           }
         } else {
           setIsLoadingPeople(true);
@@ -551,7 +552,7 @@ function ServiceCheckIn() {
                 return isTodayService(e);
               })
               .sort((a, b) => (b.attendance + b.newPeople + b.consolidated) - (a.attendance + a.newPeople + a.consolidated));
-            if (todayOpen.length > 0) setCurrentEventId(todayOpen[0].session_id);
+            if (todayOpen.length > 0) setCurrentSessionId(todayOpen[0].session_id);
           }
         }
       } catch {
@@ -579,16 +580,16 @@ function ServiceCheckIn() {
   }, [search]);
 
   useEffect(() => {
-    if (!currentEventId) { setRealTimeData(null); return; }
+    if (!currentSessionId) { setRealTimeData(null); return; }
     let isMounted = true;
     const loadRT = async () => {
-      const data = await fetchRealTimeEventData(currentEventId);
+      const data = await fetchRealTimeEventData(currentSessionId);
       if (data && isMounted) commitRealTimeData(data);
     };
     loadRT();
     const handleAttendanceUpdated = (event) => {
-      if (event.detail?.eventId !== currentEventId) return;
-      fetchRealTimeEventData(currentEventId).then(data => {
+      if (event.detail?.eventId !== currentSessionId) return;
+      fetchRealTimeEventData(currentSessionId).then(data => {
         if (data && isMounted) commitRealTimeData(data);
       });
     };
@@ -599,7 +600,7 @@ function ServiceCheckIn() {
       window.removeEventListener("attendanceUpdated", handleAttendanceUpdated);
       clearInterval(evInterval);
     };
-  }, [currentEventId, fetchRealTimeEventData, fetchEvents, commitRealTimeData]);
+  }, [currentSessionId, fetchRealTimeEventData, fetchEvents, commitRealTimeData]);
 
   const getFilteredEvents = useCallback((eventsList = events) => {
   
@@ -637,16 +638,16 @@ function ServiceCheckIn() {
     
     const list = [...filtered];
 
-    // Only preserve currentEventId in the dropdown if it's actually a valid today event.
+    // Only preserve currentSessionId in the dropdown if it's actually a valid today event.
     // Don't re-add stale/closed events from previous weeks.
-    if (currentEventId && !list.some(ev => ev.session_id === currentEventId)) {
-      const cur = events.find(ev => ev.session_id === currentEventId);
+    if (currentSessionId && !list.some(ev => ev.session_id === currentSessionId)) {
+      const cur = events.find(ev => ev.session_id === currentSessionId);
       if (cur && getFilteredEvents([cur]).length > 0) {
         list.unshift(cur);
       }
     }
     return list;
-  }, [events, currentEventId, getFilteredEvents]);
+  }, [events, currentSessionId, getFilteredEvents]);
 
   // delete window.globalPeopleCache;
   // delete window.globalCacheTimestamp;
@@ -740,7 +741,8 @@ const sortedFilteredAttendees = useMemo(() => {
 
   // const presentCount = realTimeData?.present_count ;
   const [presentCount, setPresentCount] = useState(realTimeData?.present_count ||0);
-  const newPeopleCount = newPeopleFromPresent(realTimeData?.present_attendees || [], attendeeMap, mergedNewSet).length;
+  const newPeopleCount = realTimeData?.newPeople
+  console.log('real',realTimeData)
   const consolidationCount = realTimeData?.consolidation_count ?? realTimeData?.consolidations?.length ?? 0;
 
   const modalFilteredAttendees = useMemo(() => {
@@ -865,7 +867,7 @@ const sortedFilteredAttendees = useMemo(() => {
   );
 
   const handleFullRefresh = useCallback(async () => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
     setIsRefreshing(true);
     setOpenDialog(false);
     setEditingPerson(null);
@@ -876,7 +878,7 @@ const sortedFilteredAttendees = useMemo(() => {
     try {
       await authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" });
       const [data, cacheResponse] = await Promise.all([
-        fetchRealTimeEventData(currentEventId),
+        fetchRealTimeEventData(currentSessionId),
         authFetch(`${BASE_URL}/cache/people`),
       ]);
       if (data) commitRealTimeData(data);
@@ -894,14 +896,14 @@ const sortedFilteredAttendees = useMemo(() => {
     } finally {
       setIsRefreshing(false);
     }
-  }, [currentEventId, authFetch, fetchRealTimeEventData, commitRealTimeData]);
+  }, [currentSessionId, authFetch, fetchRealTimeEventData, commitRealTimeData]);
 
   const handleRemoveConsolidation = useCallback(async (consolidation) => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
     try {
       setIsDeleting(true);
       const response = await authFetch(
-        `${BASE_URL}/service-checkin/remove-consolidation?event_id=${currentEventId}&consolidation_id=${consolidation.id}&keep_person_in_attendees=true`,
+        `${BASE_URL}/service-checkin/remove-consolidation?event_id=${currentSessionId}&consolidation_id=${consolidation.id}&keep_person_in_attendees=true`,
         { method: "DELETE" }
       );
       if (response.ok) {
@@ -913,12 +915,12 @@ const sortedFilteredAttendees = useMemo(() => {
         } else {
           toast.success(result.message || "Consolidation removed successfully");
         }
-        const freshData = await fetchRealTimeEventData(currentEventId);
+        const freshData = await fetchRealTimeEventData(currentSessionId);
         if (freshData) commitRealTimeData(freshData);
       }
     } catch { toast.error("Failed to remove. Please try again."); }
     finally { setIsDeleting(false); }
-  }, [currentEventId, authFetch, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
+  }, [currentSessionId, authFetch, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
 
   const handleContextMenu = useCallback((event, person, type) => {
     event.preventDefault();
@@ -926,7 +928,7 @@ const sortedFilteredAttendees = useMemo(() => {
   }, []);
 
   const handleToggleCheckIn = useCallback(async (attendee, presentEntry) => {
-    if (!currentEventId) { toast.error("Please select an event"); return; }
+    if (!currentSessionId) { toast.error("Please select an event"); return; }
 
     const gridId = attendee?.person_id
     if (!gridId) { toast.error("Missing person ID"); return; }
@@ -986,8 +988,8 @@ const sortedFilteredAttendees = useMemo(() => {
         const response = await authFetch(`${BASE_URL}/service-checkin/checkin`, {
           method: "POST",
           body: JSON.stringify({
-            session_id: cleanEventId(currentEventId),
-            event_id: events.find(ev => ev.session_id === currentEventId)?.event_id,
+            session_id: cleanEventId(currentSessionId),
+            event_id: events.find(ev => ev.session_id === currentSessionId)?.event_id,
             person_data: {
               id: gridId, person_id: attendee?.person_id, name: attendee?.name, fullName,
               email: attendee?.email, phone: attendee?.phone, number: attendee?.number,
@@ -1013,8 +1015,8 @@ const sortedFilteredAttendees = useMemo(() => {
         const response = await authFetch(`${BASE_URL}/service-checkin/remove`, {
           method: "DELETE",
           body: JSON.stringify({ 
-            event_id: events.find(ev => ev.session_id === currentEventId)?.event_id,
-            session_id: cleanEventId(currentEventId), 
+            event_id: events.find(ev => ev.session_id === currentSessionId)?.event_id,
+            session_id: cleanEventId(currentSessionId), 
             person_id: presentId, type: "attendee" }),
         });
         const body = await readServerBody(response);
@@ -1038,21 +1040,24 @@ const sortedFilteredAttendees = useMemo(() => {
     } finally {
       setCheckInLoading(prev => { const s = new Set(prev); s.delete(gridId); return s; });
     }
-  }, [currentEventId, checkInLoading, presentIds, realTimeData, authFetch, fetchRealTimeEventData, commitRealTimeData]);
+  }, [currentSessionId, checkInLoading, presentIds, realTimeData, authFetch, fetchRealTimeEventData, commitRealTimeData]);
 
   const setPersonNewFlag = useCallback(async (person) => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
-    const personId = person?._id || person?.id || "";
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
+    const personId = person?.person_id 
     const entryKey = personId || String(person?.email || "").toLowerCase().trim();
     if (!entryKey) { toast.error("Missing person details"); return; }
     const fullName = `${person?.name || ""} ${person?.surname || ""}`.trim() || "This person";
     const currentlyNew = isNewInSet(person, mergedNewSet);
     const personData = {
+      person_id: personId,
       id: personId, name: person?.name,
       fullName: fullName === " " ? "" : fullName,
       email: person?.email || "",
       phone: person?.number || person?.phone || "",
       number: person?.number || person?.phone || "",
+      invitedBy:person?.invitedBy,
+      gender: person?.gender,
       leader12: person?.leader12 || "",
     };
 
@@ -1061,7 +1066,7 @@ const sortedFilteredAttendees = useMemo(() => {
       if (personId) {
         authFetch(`${BASE_URL}/service-checkin/remove`, {
           method: "DELETE",
-          body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: personId, type: "new_people" }),
+          body: JSON.stringify({ event_id: cleanEventId(currentSessionId), person_id: personId, type: "new_people" }),
         }).catch(() => { });
       }
       toast.info(`${fullName} no longer marked as new`);
@@ -1069,11 +1074,11 @@ const sortedFilteredAttendees = useMemo(() => {
       setSessionNew(prev => { const m = new Map(prev); m.set(entryKey, { ...personData, _id: personId }); return m; });
       authFetch(`${BASE_URL}/service-checkin/checkin`, {
         method: "POST",
-        body: JSON.stringify({event_id:events.find((e)=>e.session_id === currentEventId)?.event_id, person_data: personData, type: "new_person" }),
+        body: JSON.stringify({session_id: cleanEventId(currentSessionId), event_id: events.find((e)=>e.session_id === currentSessionId)?.event_id, person_data: personData, type: "new_person" }),
       }).catch(() => { });
       toast.success(`${fullName} marked as new this service`);
     }
-  }, [currentEventId, mergedNewSet, authFetch]);
+  }, [currentSessionId, mergedNewSet, authFetch]);
 
   const normalizeLeaderValue = useCallback((value) => {
     if (value == null) return "";
@@ -1219,7 +1224,7 @@ const sortedFilteredAttendees = useMemo(() => {
   }, [user, authFetch]);
 
   const handlePersonSave = useCallback(async (responseData) => {
-    if (!currentEventId) { toast.error("Please select an event first before adding people"); return; }
+    if (!currentSessionId) { toast.error("Please select an event first before adding people"); return; }
     try {
       if (editingPerson) {
         const { __updatedNewPerson, ...normalizedUpdate } = responseData;
@@ -1238,7 +1243,7 @@ const sortedFilteredAttendees = useMemo(() => {
           return { ...prev, new_people: patch(prev.new_people), present_attendees: patch(prev.present_attendees) };
         });
         setOpenDialog(false); setEditingPerson(null); setFormData(emptyForm);
-        fetchRealTimeEventData(currentEventId).then(fd => { if (fd) commitRealTimeData(fd); });
+        fetchRealTimeEventData(currentSessionId).then(fd => { if (fd) commitRealTimeData(fd); });
         authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => { });
         return;
       }
@@ -1279,14 +1284,15 @@ const sortedFilteredAttendees = useMemo(() => {
       if (insertedId) {
         authFetch(`${BASE_URL}/service-checkin/checkin`, {
           method: "POST",
-          body: JSON.stringify({event_id:events.find((e)=>e.session_id === currentEventId)?.event_id, session_id: cleanEventId(currentEventId), type: "new_person", person_data: {
+          body: JSON.stringify({event_id:events.find((e)=>e.session_id === currentSessionId)?.event_id, session_id: cleanEventId(currentSessionId), type: "new_person", person_data: {
+            person_id:newPersonData.person_id,
             id: insertedId, name: newPersonForGrid.name, fullName: fullName,
             email: newPersonForGrid.email || "", phone: newPersonForGrid.number || "",
             number: newPersonForGrid.number || "", leader12: newPersonForGrid.leader12 || "",
           } }),
         }).catch(() => { });
       }
-      fetchRealTimeEventData(currentEventId).then(fd => { if (fd) commitRealTimeData(fd); });
+      fetchRealTimeEventData(currentSessionId).then(fd => { if (fd) commitRealTimeData(fd); });
 
       // Create task for leader when new person is added
       try {
@@ -1298,7 +1304,7 @@ const sortedFilteredAttendees = useMemo(() => {
               leaderName: leaderInfo.leader,
               leaderEmail: resolvedLeaderEmail,
               person: newPersonForGrid,
-              eventId: cleanEventId(currentEventId),
+              eventId: cleanEventId(currentSessionId),
             });
           }
         }
@@ -1306,10 +1312,10 @@ const sortedFilteredAttendees = useMemo(() => {
         console.error("Failed to create new person task:", taskErr);
       }
     } catch (error) { toast.error(error.message || "Failed to save person"); }
-  }, [currentEventId, editingPerson, formData, authFetch, fetchRealTimeEventData, createNewPersonTaskForLeader, getHighestAvailableLeader, resolveLeaderEmail, commitRealTimeData]);
+  }, [currentSessionId, editingPerson, formData, authFetch, fetchRealTimeEventData, createNewPersonTaskForLeader, getHighestAvailableLeader, resolveLeaderEmail, commitRealTimeData]);
 
   const handleFinishConsolidation = useCallback(async (task) => {
-  if (!currentEventId) return;
+  if (!currentSessionId) return;
   const fullName = task.recipientName || `${task.person_name || ""} ${task.person_surname || ""}`.trim() || "Unknown Person";
   setConsolidationOpen(false);
   toast.success(`${fullName} consolidated successfully`);
@@ -1336,22 +1342,22 @@ const sortedFilteredAttendees = useMemo(() => {
   // keeps this optimistic consolidation (matched by id / created_at) until the
   // server write is visible, so it never disappears mid-flight.
   setTimeout(async () => {
-    commitRealTimeData(await fetchRealTimeEventData(currentEventId));
+    commitRealTimeData(await fetchRealTimeEventData(currentSessionId));
   }, 1500);
 
   notifyTaskUpdate?.();
   window.dispatchEvent(new CustomEvent("taskUpdated", { detail: { action: "consolidationCreated", task } }));
-}, [currentEventId, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
+}, [currentSessionId, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
 
   const handleSaveAndCloseEvent = useCallback(async () => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
-    const currentEvent = events.find(e => cleanEventId(e.id) === cleanEventId(currentEventId));
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
+    const currentEvent = events.find(e => cleanEventId(e.id) === cleanEventId(currentSessionId));
     if (!currentEvent) { toast.error("Selected event not found"); return; }
     if (!window.confirm(`Are you sure you want to close "${currentEvent.eventName}"? This action cannot be undone.`)) return;
 
     setIsClosingEvent(true);
     try {
-      const response = await authFetch(`${BASE_URL}/events/${currentEventId}/toggle-status`, { method: "PATCH" });
+      const response = await authFetch(`${BASE_URL}/events/${currentSessionId}/toggle-status`, { method: "PATCH" });
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
       if (result.already_closed) toast.info(result.message || "Event was already closed");
@@ -1359,13 +1365,13 @@ const sortedFilteredAttendees = useMemo(() => {
 
       setEvents(prev => {
         const updated = prev.map(e =>
-          cleanEventId(e.id) === cleanEventId(currentEventId)
+          cleanEventId(e.id) === cleanEventId(currentSessionId)
             ? { ...e, status: "complete", closed_by: result.closed_by, closed_at: result.closed_at }
             : e
         );
         const todayStr = saTodayKey();
         const nextEvent = updated.find(e => {
-          if (cleanEventId(e.id) === cleanEventId(currentEventId)) return false;
+          if (cleanEventId(e.id) === cleanEventId(currentSessionId)) return false;
           if (e.isGlobal !== true) return false;
           const typeName = (e.eventType || "").toLowerCase();
           if (["cells", "all cells", "cell"].includes(typeName)) return false;
@@ -1374,14 +1380,15 @@ const sortedFilteredAttendees = useMemo(() => {
           if (!e.rawDate) return false;
           return saDateKey(e.rawDate) === todayStr;
         });
-        setCurrentEventId(nextEvent?.session_id || "");
+        setCurrentSessionId(nextEvent?.session_id || "");
         return updated;
       });
 
       setRealTimeData(null);
       try {
         const payload = {
-          eventId: currentEventId,
+          eventId: getEventId(currentSessionId),
+          sessionId: currentSessionId,
           service_name: currentEvent.eventName || currentEvent.name || "",
           eventType: currentEvent.eventType || currentEvent.type || "",
           status: "complete",
@@ -1414,7 +1421,7 @@ const sortedFilteredAttendees = useMemo(() => {
     } finally {
       setIsClosingEvent(false);
     }
-  }, [currentEventId, events, authFetch, fetchEvents, attendees, realTimeData?.attendanceData, realTimeData?.consolidation_count, realTimeData?.consolidations, realTimeData?.newPeople, realTimeData?.new_people, realTimeData?.new_people_count, realTimeData?.present_attendees, realTimeData?.present_count, user?.email]);
+  }, [currentSessionId, events, authFetch, fetchEvents, attendees, realTimeData?.attendanceData, realTimeData?.consolidation_count, realTimeData?.consolidations, realTimeData?.newPeople, realTimeData?.new_people, realTimeData?.new_people_count, realTimeData?.present_attendees, realTimeData?.present_count, user?.email]);
 
   const handleUnsaveEvent = useCallback(async (event) => {
     try {
@@ -1430,15 +1437,15 @@ const sortedFilteredAttendees = useMemo(() => {
           ? { ...e, status: "incomplete", closed_by: undefined, closed_at: undefined }
           : e
       ));
-      setCurrentEventId(fullId);
+      setCurrentSessionId(fullId);
       setTimeout(() => fetchEvents(), 1500);
     } catch (error) { toast.error(error.message || "Failed to reopen event"); }
   }, [authFetch, fetchEvents]);
 
   const handleConsolidationClick = useCallback(() => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
     setConsolidationOpen(true);
-  }, [currentEventId]);
+  }, [currentSessionId]);
 
   const handleEditClick = useCallback((person) => {
     setEditingPerson(person);
@@ -1505,9 +1512,13 @@ const sortedFilteredAttendees = useMemo(() => {
   }, []);
 
   const handleAddPersonClick = useCallback(() => {
-    if (!currentEventId) { toast.error("Please select an event first before adding people"); return; }
+    if (!currentSessionId) { toast.error("Please select an event first before adding people"); return; }
     setEditingPerson(null); setFormData(emptyForm); setOpenDialog(true);
-  }, [currentEventId]);
+  }, [currentSessionId]);
+
+  const getEventId = (sessionId) => {
+    return events.find(e => e.session_id === sessionId)?.event_id;
+  }
 
   const handleViewEventDetails = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "attendance", data: data || [] }); }, []);
   const handleViewNewPeople = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "newPeople", data: data || [] }); }, []);
@@ -1587,7 +1598,7 @@ const sortedFilteredAttendees = useMemo(() => {
         field: "actions", headerName: "", width: isSm ? 96 : 120, sortable: false, filterable: false,
         renderCell: (params) => {
           const fullName = `${params.row.name || ""} ${params.row.surname || ""}`.trim();
-          const isDisabled = !currentEventId;
+          const isDisabled = !currentSessionId;
           const isCheckInLoading = checkInLoading.has(params.row._id);
     
           const btnSz = isSm ? "small" : "medium";
@@ -1629,7 +1640,8 @@ const sortedFilteredAttendees = useMemo(() => {
       },
     ];
     return base;
-  }, [isXs, isSm, isMd, currentEventId, checkInLoading, handleEditClick, handleToggleCheckIn, setPersonNewFlag]);
+  }, [isXs, isSm, isMd, currentSessionId, checkInLoading, handleEditClick, handleToggleCheckIn, setPersonNewFlag]);
+
 
   const StatsCard = useCallback(({ title, count, icon, color = "primary", onClick, disabled = false }) => (
     <Paper variant="outlined" onClick={onClick} sx={{
@@ -1673,18 +1685,18 @@ const sortedFilteredAttendees = useMemo(() => {
       <Grid container spacing={cardSpacing} mb={cardSpacing}>
         <Grid item xs={4}>
           <StatsCard title="Present" count={presentCount} icon={<GroupIcon />} color="primary"
-            onClick={() => { if (currentEventId) { setModalOpen(true); setModalSearch(""); setModalPage(0); } }}
-            disabled={!currentEventId} />
+            onClick={() => { if (currentSessionId) { setModalOpen(true); setModalSearch(""); setModalPage(0); } }}
+            disabled={!currentSessionId} />
         </Grid>
         <Grid item xs={4}>
           <StatsCard title="New People" count={newPeopleCount} icon={<PersonAddAltIcon />} color="success"
-            onClick={() => { if (currentEventId) { setNewPeopleModalOpen(true); setNewPeopleSearch(""); setNewPeoplePage(0); } }}
-            disabled={!currentEventId} />
+            onClick={() => { if (currentSessionId) { setNewPeopleModalOpen(true); setNewPeopleSearch(""); setNewPeoplePage(0); } }}
+            disabled={!currentSessionId} />
         </Grid>
         <Grid item xs={4}>
           <StatsCard title="Consolidated" count={consolidationCount} icon={<MergeIcon />} color="secondary"
-            onClick={() => { if (currentEventId) { setConsolidatedModalOpen(true); setConsolidatedSearch(""); setConsolidatedPage(0); } }}
-            disabled={!currentEventId} />
+            onClick={() => { if (currentSessionId) { setConsolidatedModalOpen(true); setConsolidatedSearch(""); setConsolidatedPage(0); } }}
+            disabled={!currentSessionId} />
         </Grid>
       </Grid>
 
@@ -1692,7 +1704,7 @@ const sortedFilteredAttendees = useMemo(() => {
       <Box mb={cardSpacing}>
         <Grid container spacing={1} mb={1} alignItems="center">
           <Grid item xs={12} sm={6} md={5}>
-            <Select size="small" value={currentEventId} onChange={e => setCurrentEventId(e.target.value)}
+            <Select size="small" value={currentSessionId} onChange={e => setCurrentSessionId(e.target.value)}
               displayEmpty fullWidth sx={{ boxShadow: 1, fontSize: isSm ? "0.8rem" : "0.9rem" }}>
               <MenuItem value="">
                 <Typography color="text.secondary" sx={{ fontSize: "inherit" }}>
@@ -1724,7 +1736,7 @@ const sortedFilteredAttendees = useMemo(() => {
             <Grid item md={3}>
               <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
                 <ActionButtons
-                  currentEventId={currentEventId} isDarkMode={isDarkMode} isSm={isSm}
+                  currentSessionId={currentSessionId} isDarkMode={isDarkMode} isSm={isSm}
                   isClosingEvent={isClosingEvent} isRefreshing={isRefreshing}
                   handleAddPersonClick={handleAddPersonClick}
                   handleConsolidationClick={handleConsolidationClick}
@@ -1738,7 +1750,7 @@ const sortedFilteredAttendees = useMemo(() => {
         {isMd && (
           <Stack direction="row" spacing={isSm ? 0.5 : 1} justifyContent="flex-start" alignItems="center" flexWrap="wrap" gap={0.5}>
             <ActionButtons
-              currentEventId={currentEventId} isDarkMode={isDarkMode} isSm={isSm}
+              currentSessionId={currentSessionId} isDarkMode={isDarkMode} isSm={isSm}
               isClosingEvent={isClosingEvent} isRefreshing={isRefreshing}
               handleAddPersonClick={handleAddPersonClick}
               handleConsolidationClick={handleConsolidationClick}
@@ -1810,7 +1822,7 @@ const sortedFilteredAttendees = useMemo(() => {
         onClose={() => { setOpenDialog(false); setEditingPerson(null); setFormData(emptyForm); }}
         onSave={handlePersonSave} formData={formData} setFormData={setFormData}
         isEdit={Boolean(editingPerson)} personId={editingPerson?._id || null}
-        currentEventId={currentEventId} preloadedPeople={attendees}
+        currentSessionId={currentSessionId} preloadedPeople={attendees}
         editingPersonObject={editingPerson}
       />
 
@@ -1823,7 +1835,7 @@ const sortedFilteredAttendees = useMemo(() => {
         <DialogContent dividers sx={{ p: isSm ? 1 : 2, overflowY: "auto" }}>
           <TextField size="small" placeholder="Search…" value={modalSearch}
             onChange={e => { setModalSearch(e.target.value); setModalPage(0); }} fullWidth sx={{ mb: 1.5 }} />
-          {!currentEventId
+          {!currentSessionId
             ? <Typography color="text.secondary" textAlign="center" py={4}>Please select an event</Typography>
             : modalFilteredAttendees.length === 0
               ? <Typography color="text.secondary" textAlign="center" py={4}>{modalSearch ? "No matching attendees" : "No attendees present"}</Typography>
@@ -1878,7 +1890,7 @@ const sortedFilteredAttendees = useMemo(() => {
           <Button variant="outlined" size="small" startIcon={<DownloadIcon />}
             onClick={() => exportToExcel(
               modalFilteredAttendees.map(a => ({ Name: a.name, Surname: a.surname, Email: a.email, Phone: a.phone, "Leader @1": a.leader1, "Leader @12": a.leader12, "Leader @144": a.leader144, CheckIn_Time: a.time || "", Status: "Present" })),
-              `Present_Attendees_${cleanEventId(currentEventId)}`
+              `Present_Attendees_${cleanEventId(currentSessionId)}`
             )}
             disabled={modalFilteredAttendees.length === 0}>
             {isSm ? "Export" : "Download XLSX"}
@@ -1896,7 +1908,7 @@ const sortedFilteredAttendees = useMemo(() => {
         <DialogContent dividers sx={{ p: isSm ? 1 : 2, overflowY: "auto" }}>
           <TextField size="small" placeholder="Search…" value={newPeopleSearch}
             onChange={e => { setNewPeopleSearch(e.target.value); setNewPeoplePage(0); }} fullWidth sx={{ mb: 1.5 }} />
-          {!currentEventId
+          {!currentSessionId
             ? <Typography color="text.secondary" textAlign="center" py={4}>Please select an event</Typography>
             : newPeopleFilteredList.length === 0
               ? <Typography color="text.secondary" textAlign="center" py={4}>{newPeopleSearch ? "No matching people" : "No new people present"}</Typography>
@@ -1962,7 +1974,7 @@ const sortedFilteredAttendees = useMemo(() => {
         <DialogContent dividers sx={{ p: isSm ? 1 : 2, overflowY: "auto" }}>
           <TextField size="small" placeholder="Search…" value={consolidatedSearch}
             onChange={e => { setConsolidatedSearch(e.target.value); setConsolidatedPage(0); }} fullWidth sx={{ mb: 1.5 }} />
-          {!currentEventId
+          {!currentSessionId
             ? <Typography color="text.secondary" textAlign="center" py={4}>Please select an event</Typography>
             : filteredConsolidatedPeople.length === 0
               ? <Typography color="text.secondary" textAlign="center" py={4}>{consolidatedSearch ? "No matching people" : "No consolidated people"}</Typography>
@@ -2025,7 +2037,7 @@ const sortedFilteredAttendees = useMemo(() => {
         <DialogActions sx={{ p: isSm ? 1 : 1.5, gap: 1 }}>
           <Button variant="contained" size="small" startIcon={<EmojiPeopleIcon />}
             onClick={() => { setConsolidatedModalOpen(false); handleConsolidationClick(); }}
-            disabled={!currentEventId}>
+            disabled={!currentSessionId}>
             {isSm ? "Add" : "Add Consolidation"}
           </Button>
           <Button onClick={() => setConsolidatedModalOpen(false)} variant="outlined" size="small">Close</Button>
@@ -2041,61 +2053,62 @@ const sortedFilteredAttendees = useMemo(() => {
       <ConsolidationModal
         open={consolidationOpen} onClose={() => setConsolidationOpen(false)}
         attendeesWithStatus={attendeesWithStatus} onFinish={handleFinishConsolidation}
-        consolidatedPeople={filteredConsolidatedPeople} currentEventId={cleanEventId(currentEventId)}
+        consolidatedPeople={filteredConsolidatedPeople} currentSessionId={currentSessionId}
+        eventId={getEventId(currentSessionId)}
       />
     </Box>
   );
 }
 
 function ActionButtons({
-  currentEventId, isDarkMode, isSm, isClosingEvent, isRefreshing,
+  currentSessionId, isDarkMode, isSm, isClosingEvent, isRefreshing,
   handleAddPersonClick, handleConsolidationClick, handleSaveAndCloseEvent,
   handleFullRefresh, theme,
 }) {
-  const iconColor = currentEventId ? (isDarkMode ? "white" : "black") : "text.disabled";
-  const iconFilter = currentEventId ? "drop-shadow(0px 2px 3px rgba(0,0,0,0.25))" : "none";
+  const iconColor = currentSessionId ? (isDarkMode ? "white" : "black") : "text.disabled";
+  const iconFilter = currentSessionId ? "drop-shadow(0px 2px 3px rgba(0,0,0,0.25))" : "none";
   const iconSz = isSm ? 28 : 34;
 
   return (
     <>
-      <Tooltip title={currentEventId ? "Add Person" : "Select event first"}>
+      <Tooltip title={currentSessionId ? "Add Person" : "Select event first"}>
         <span>
           <PersonAddIcon onClick={handleAddPersonClick} sx={{
-            cursor: currentEventId ? "pointer" : "not-allowed", fontSize: iconSz,
+            cursor: currentSessionId ? "pointer" : "not-allowed", fontSize: iconSz,
             color: iconColor, filter: iconFilter,
-            opacity: currentEventId ? 1 : 0.4,
-            "&:hover": { color: currentEventId ? "primary.main" : iconColor },
+            opacity: currentSessionId ? 1 : 0.4,
+            "&:hover": { color: currentSessionId ? "primary.main" : iconColor },
           }} />
         </span>
       </Tooltip>
-      <Tooltip title={currentEventId ? "Consolidation" : "Select event first"}>
+      <Tooltip title={currentSessionId ? "Consolidation" : "Select event first"}>
         <span>
           <EmojiPeopleIcon onClick={handleConsolidationClick} sx={{
-            cursor: currentEventId ? "pointer" : "not-allowed", fontSize: iconSz,
+            cursor: currentSessionId ? "pointer" : "not-allowed", fontSize: iconSz,
             color: iconColor, filter: iconFilter,
-            opacity: currentEventId ? 1 : 0.4,
-            "&:hover": { color: currentEventId ? "secondary.main" : iconColor },
+            opacity: currentSessionId ? 1 : 0.4,
+            "&:hover": { color: currentSessionId ? "secondary.main" : iconColor },
           }} />
         </span>
       </Tooltip>
-      <Tooltip title={currentEventId ? "Save and Close Event" : "Select event first"}>
+      <Tooltip title={currentSessionId ? "Save and Close Event" : "Select event first"}>
         <span>
           <Button variant="contained" size={isSm ? "small" : "medium"}
             startIcon={isClosingEvent ? <CloseIcon /> : <SaveIcon />}
-            onClick={handleSaveAndCloseEvent} disabled={!currentEventId || isClosingEvent}
+            onClick={handleSaveAndCloseEvent} disabled={!currentSessionId || isClosingEvent}
             sx={{
-              minWidth: "auto", px: isSm ? 1.2 : 2, opacity: currentEventId ? 1 : 0.4,
+              minWidth: "auto", px: isSm ? 1.2 : 2, opacity: currentSessionId ? 1 : 0.4,
               backgroundColor: theme.palette.warning.main,
-              "&:hover": currentEventId ? { backgroundColor: theme.palette.warning.dark, transform: "translateY(-1px)" } : {},
+              "&:hover": currentSessionId ? { backgroundColor: theme.palette.warning.dark, transform: "translateY(-1px)" } : {},
             }}>
             {isClosingEvent ? "Closing…" : "Save"}
           </Button>
         </span>
       </Tooltip>
-      <Tooltip title={currentEventId ? "Refresh" : "Select event first"}>
+      <Tooltip title={currentSessionId ? "Refresh" : "Select event first"}>
         <span>
           <IconButton onClick={handleFullRefresh} color="primary" size={isSm ? "small" : "medium"}
-            disabled={!currentEventId || isRefreshing} sx={{ opacity: currentEventId ? 1 : 0.4 }}>
+            disabled={!currentSessionId || isRefreshing} sx={{ opacity: currentSessionId ? 1 : 0.4 }}>
             <RefreshIcon />
           </IconButton>
         </span>
