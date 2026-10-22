@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useContext, useRef, useMemo } 
 import {
   Box, Typography, TextField, Grid, Button, useTheme, Snackbar, Alert, Slider,
   IconButton, InputAdornment, Fade, Paper, Avatar, MenuItem, Chip, Collapse,
+  LinearProgress, Skeleton,
 } from "@mui/material";
 import Cropper from "react-easy-crop";
 import getCroppedImg from "../components/cropImageHelper";
@@ -102,11 +103,31 @@ const getLeaderEntries = (leaders) => {
     });
   } else if (leaders && typeof leaders === "object") {
     Object.entries(leaders).forEach(([key, leader]) => {
-      const match = key.match(/^leader(?:[_\s-]?at)?[_\s@-]?(\d+)$/i) || key.match(/^(\d+)$/);
+      const normalizedKey = key.toLowerCase().replace(/[\s@_-]/g, "");
+      const match = normalizedKey.match(/^leader(?:at)?(\d+)$/) || normalizedKey.match(/^(\d+)$/);
       if (match) entries.set(Number(match[1]), getLeaderName(leader));
     });
   }
   return entries;
+};
+
+const getLeaderLevelFromRole = (role) => {
+  const normalizedRole = String(role || "").toLowerCase().replace(/[\s@_-]/g, "");
+  const match = normalizedRole.match(/^leader(?:at)?(\d+)$/);
+  const level = Number(match?.[1]);
+  return Number.isSafeInteger(level) && level > 0 ? level : null;
+};
+
+const getHierarchyLevels = (leaders) => {
+  const knownLevels = Object.keys(leaders)
+    .map((key) => Number(key.match(/^leaderAt(\d+)$/)?.[1]))
+    .filter((level) => Number.isSafeInteger(level) && level > 0);
+  const highestLevel = Math.max(144, ...knownLevels);
+  const levels = new Set(knownLevels);
+  for (let level = 1; level <= highestLevel; level *= 12) {
+    levels.add(level);
+  }
+  return [...levels].sort((a, b) => a - b);
 };
 
 const getDefaultAvatar = (gender) => {
@@ -115,6 +136,94 @@ const getDefaultAvatar = (gender) => {
   if (g === "male") return "https://cdn-icons-png.flaticon.com/512/6997/6997675.png";
   return "https://cdn-icons-png.flaticon.com/512/147/147144.png";
 };
+
+function ProfileLoadingSkeleton({ accent, cardBg, fieldBg, ink, line, pageBg }) {
+  const cardSx = {
+    p: { xs: 2.5, sm: 3 },
+    borderRadius: "20px",
+    bgcolor: cardBg,
+    border: `1px solid ${line}`,
+  };
+  const fieldSkeleton = (key) => (
+    <Grid size={{ xs: 12, sm: 6 }} key={key}>
+      <Skeleton width="30%" height={18} sx={{ mb: 0.75 }} />
+      <Skeleton variant="rounded" height={52} sx={{ bgcolor: fieldBg, border: `1px solid ${line}` }} />
+    </Grid>
+  );
+
+  return (
+    <Box aria-label="Loading profile" aria-busy="true" sx={{ minHeight: "100vh", bgcolor: pageBg }}>
+      <LinearProgress
+        aria-label="Loading profile"
+        sx={{
+          height: 4,
+          bgcolor: `${accent}30`,
+          "& .MuiLinearProgress-bar": { bgcolor: accent },
+        }}
+      />
+      <Box sx={{ bgcolor: accent, px: 2.5, pt: 3, pb: 7 }}>
+        <Box sx={{ maxWidth: 1040, mx: "auto" }}>
+          <Skeleton width={150} height={22} sx={{ bgcolor: "rgba(255,255,255,.25)" }} />
+          <Skeleton
+            width={{ xs: "90%", sm: "65%" }}
+            height={{ xs: 58, sm: 76 }}
+            sx={{ mt: 4, bgcolor: "rgba(255,255,255,.25)" }}
+          />
+        </Box>
+      </Box>
+      <Box
+        sx={{
+          maxWidth: 1040,
+          mx: "auto",
+          mt: 5,
+          px: 2,
+          pb: 5,
+          display: "grid",
+          gap: 2,
+          alignItems: "start",
+          gridTemplateColumns: { xs: "1fr", md: "300px 1fr" },
+        }}
+      >
+        <Box sx={{ ...cardSx, textAlign: "center" }}>
+          <Skeleton variant="circular" width={112} height={112} sx={{ mx: "auto", mb: 1.75 }} />
+          <Skeleton width="60%" height={32} sx={{ mx: "auto" }} />
+          <Skeleton width="38%" height={22} sx={{ mx: "auto", mb: 2 }} />
+          <Skeleton variant="rounded" height={40} sx={{ bgcolor: fieldBg }} />
+        </Box>
+        <Box sx={{ display: "grid", gap: 2 }}>
+          {[0, 1, 2].map((section) => (
+            <Box key={section} sx={cardSx}>
+              <Skeleton width={section === 0 ? 150 : 110} height={30} sx={{ bgcolor: `${ink}12` }} />
+              <Skeleton width="55%" height={20} sx={{ mb: 2 }} />
+              <Grid container spacing={2}>
+                {fieldSkeleton(`${section}-first`)}
+                {fieldSkeleton(`${section}-second`)}
+                {section === 0 && fieldSkeleton(`${section}-third`)}
+                {section === 0 && fieldSkeleton(`${section}-fourth`)}
+              </Grid>
+            </Box>
+          ))}
+        </Box>
+      </Box>
+      <Typography
+        role="status"
+        sx={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          p: 0,
+          m: -1,
+          overflow: "hidden",
+          clip: "rect(0, 0, 0, 0)",
+          whiteSpace: "nowrap",
+          border: 0,
+        }}
+      >
+        Loading your profile
+      </Typography>
+    </Box>
+  );
+}
 
 export default function Profile() {
   const theme = useTheme();
@@ -144,6 +253,7 @@ export default function Profile() {
   const [leaders, setLeaders] = useState({ leaderAt1: "", leaderAt12: "", leaderAt144: "" });
   const [form, setForm] = useState(emptyForm);
   const [originalForm, setOriginalForm] = useState(emptyForm);
+  const [hasUserEditedForm, setHasUserEditedForm] = useState(false);
   const [showPassword, setShowPassword] = useState({ current: false, new: false, confirm: false });
   const [errors, setErrors] = useState({});
   const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" });
@@ -204,18 +314,22 @@ export default function Profile() {
     nextLeaders.leaderAt1 = nextLeaders.leaderAt1 || profile?.invited_by || "";
     if (profile?.leaders) nextLeaders.leaderAt12 = nextLeaders.leaderAt12 || profile.invited_by || "";
     const selfName = `${data.name} ${data.surname}`.trim();
-    if (!nextLeaders.leaderAt144 || nextLeaders.leaderAt144.endsWith("(You)")) {
-      nextLeaders.leaderAt144 = selfName ? `${selfName} (You)` : "You";
+    const selfLevel = getLeaderLevelFromRole(profile?.role || loggedInUserRole) || 144;
+    const selfKey = `leaderAt${selfLevel}`;
+    if (!nextLeaders[selfKey] || nextLeaders[selfKey].endsWith("(You)")) {
+      nextLeaders[selfKey] = selfName ? `${selfName} (You)` : "You";
     }
-    [1, 12, 144].forEach((level) => {
-      if (!(`leaderAt${level}` in nextLeaders)) nextLeaders[`leaderAt${level}`] = "";
+    getHierarchyLevels(nextLeaders).forEach((level) => {
+      const key = `leaderAt${level}`;
+      if (!(key in nextLeaders)) nextLeaders[key] = "";
     });
     setLeaders(nextLeaders);
     localStorage.setItem("leaders", JSON.stringify(nextLeaders));
 
     setForm(data);
     setOriginalForm(data);
-  }, []);
+    setHasUserEditedForm(false);
+  }, [loggedInUserRole]);
 
   useEffect(() => {
     if (hasFetchedProfile.current) return;
@@ -273,7 +387,7 @@ export default function Profile() {
     [form, originalForm]
   );
   const passwordTouched = PASSWORD_KEYS.some((k) => form[k] !== "");
-  const hasChanges = profileChanged || passwordTouched;
+  const hasChanges = hasUserEditedForm && (profileChanged || passwordTouched);
 
   const validate = () => {
     const n = {};
@@ -305,6 +419,7 @@ export default function Profile() {
   };
 
   const handleChange = (field) => (e) => {
+    setHasUserEditedForm(true);
     let value = e.target.value;
     if (field === "phone") {
       value = value.replace(/\D/g, "");
@@ -317,6 +432,7 @@ export default function Profile() {
   const handleCancel = () => {
     setForm({ ...originalForm });
     setErrors({});
+    setHasUserEditedForm(false);
   };
 
   const handleSubmit = async (e) => {
@@ -359,6 +475,7 @@ export default function Profile() {
       const cleared = { ...form, currentPassword: "", newPassword: "", confirmPassword: "" };
       setForm(cleared);
       setOriginalForm(cleared);
+      setHasUserEditedForm(false);
 
       const message =
         profileUpdated && passwordUpdated ? "Profile and password updated"
@@ -498,19 +615,22 @@ export default function Profile() {
     </Box>
   );
 
-  const leaderSteps = Object.entries(leaders)
-    .map(([key, value]) => {
-      const match = key.match(/^leaderAt(\d+)$/);
-      return match ? { level: Number(match[1]), label: `Leader@${match[1]}`, value } : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.level - b.level);
+  const leaderSteps = getHierarchyLevels(leaders).map((level) => ({
+    level,
+    label: `Leader@${level}`,
+    value: leaders[`leaderAt${level}`],
+  }));
 
   if (loadingProfile) {
     return (
-      <Box sx={{ minHeight: "100vh", bgcolor: pageBg, display: "grid", placeItems: "center" }}>
-        <Typography sx={{ color: mute, fontFamily: BODY }}>Loading your profile…</Typography>
-      </Box>
+      <ProfileLoadingSkeleton
+        accent={accent}
+        cardBg={cardBg}
+        fieldBg={fieldBg}
+        ink={ink}
+        line={line}
+        pageBg={pageBg}
+      />
     );
   }
 
