@@ -1078,7 +1078,12 @@ const Events = () => {
   const [selectedEventTypeFilter, setSelectedEventTypeFilter] = useState(
     isActiveTeams ? "all" : ""
   );
-  const [rowsPerPage, setRowsPerPage] = useState(50);
+  // How much the Events screen pulls per batch. Remembered between visits so
+  // the next load starts at the same batch size instead of falling back to 50.
+  const [rowsPerPage, setRowsPerPage] = useState(() => {
+    const saved = Number(localStorage.getItem("ev_rows_per_page"));
+    return [10, 25, 50, 100].includes(saved) ? saved : 50;
+  });
   const [currentPage, setCurrentPage] = useState(1);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
@@ -2250,9 +2255,28 @@ const getFilteredEventTypes = (allEventTypes) => {
   const clearAllFilters = useCallback(() => {
     setSearchQuery("");
     setIsSearching(false);
-    setTotalEvents(events.length || 0)
 
-  }, [viewFilter, userRole, fetchEvents, rowsPerPage, DEFAULT_API_START_DATE]);
+    // `events` holds only the rows on screen — one page of `rowsPerPage` —
+    // not the result set, and it isn't even in this callback's dependency
+    // array, so it was also a stale closure. Deriving the total from it
+    // collapsed "1-50 of 134" into "1-50 of 50", and since `rowCount` feeds
+    // the DataGrid the page navigation disappeared with it. Restore the real
+    // total from the full unfiltered set the loader cached instead.
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+    const fullSet = eventsCache.current[cacheKey];
+    if (fullSet?.length) {
+      setTotalEvents(fullSet.length);
+      setTotalPages(Math.ceil(fullSet.length / rowsPerPage) || 1);
+    }
+  }, [
+    viewFilter,
+    userRole,
+    fetchEvents,
+    rowsPerPage,
+    DEFAULT_API_START_DATE,
+    selectedEventTypeFilter,
+    selectedStatus,
+  ]);
 
   const [allCurrentEvents, setAllCurrentEvents] = useState([]);
   const [isSearching, setIsSearching] = useState(null);
@@ -2404,6 +2428,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
     const cached = eventsCache.current[cacheKey];
 
+    localStorage.setItem("ev_rows_per_page", String(newRowsPerPage));
     setRowsPerPage(newRowsPerPage);
     setCurrentPage(1);
 

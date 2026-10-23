@@ -470,6 +470,37 @@ describe("Events page actions", () => {
       expect(searchBox).toHaveValue("");
     });
 
+    // `clearAllFilters` used to derive the total from `events` — which holds one
+    // page of rows, and wasn't even in its own dependency array. Searching and
+    // then clearing collapsed "1-50 of 134" into "1-50 of 50", and since rowCount
+    // feeds the DataGrid the page navigation vanished with it.
+    test("clearing filters keeps the full result count, not just the loaded page", async () => {
+      const many = [
+        makeEvt(),
+        ...Array.from({ length: 133 }, (_, i) =>
+          makeEvt({ _id: `evt-${i}`, eventName: `Service ${i}` }),
+        ),
+      ];
+      const routes = eventsRoutes({ events: many, total_events: 134, total_pages: 3 });
+      await openEventsView(routes);
+
+      // Only one page is on screen, but the counter reports the whole set.
+      expect(await screen.findByText("1-50 of 134")).toBeInTheDocument();
+
+      const searchBox = screen.getByPlaceholderText("Search by Event Name, Leader, or Email...");
+      fireEvent.click(searchBox);
+      fireEvent.change(searchBox, { target: { value: "zzz-no-match" } });
+      await waitFor(() => expect(screen.queryByText("Service 3")).not.toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: /CLEAR ALL/i }));
+
+      expect(await screen.findByText("1-50 of 134")).toBeInTheDocument();
+      // The pager must survive too — it is driven by the same count.
+      expect(
+        screen.getByText((_, el) => el?.textContent?.trim() === "Page 1 of 3"),
+      ).toBeTruthy();
+    });
+
     test.each([
       ["COMPLETE", "complete"],
       ["DID NOT MEET", "did_not_meet"],
