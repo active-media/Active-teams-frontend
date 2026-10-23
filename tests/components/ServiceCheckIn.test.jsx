@@ -648,7 +648,7 @@ describe("ServiceCheckIn event history paging", () => {
     }
   });
 
-  test("walks every page and keeps the events from all of them", async () => {
+  test("mounts on the first batch and pulls older pages on demand", async () => {
     const routes = pagingRoutes([
       { events: [service("a", "Service A", "2026-09-20")], has_more: true },
       { events: [service("b", "Service B", "2025-03-16")], has_more: true },
@@ -657,9 +657,18 @@ describe("ServiceCheckIn event history paging", () => {
     renderPage(routes);
     const history = await openHistory();
 
-    // The whole point: the older pages are reachable, not just the first 500.
+    // Mount is a single batch, so the screen is usable without the ~2 MB of
+    // back-catalogue it used to sweep in before showing anything.
     expect(await screen.findByTestId("history-a")).toBeInTheDocument();
+    expect(screen.queryByTestId("history-b")).not.toBeInTheDocument();
+    await waitFor(() => expect(eventDataCalls(routes)).toHaveLength(1));
+    await waitFor(() => expect(history).toHaveAttribute("data-count", "1"));
+
+    // Nothing is lost - the older pages arrive one batch per click.
+    fireEvent.click(screen.getByRole("button", { name: /load older events/i }));
     expect(await screen.findByTestId("history-b")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /load older events/i }));
     expect(await screen.findByTestId("history-c")).toBeInTheDocument();
     await waitFor(() => expect(history).toHaveAttribute("data-count", "3"));
 
@@ -688,11 +697,17 @@ describe("ServiceCheckIn event history paging", () => {
     renderPage(routes);
     const history = await openHistory();
 
-    // Partial history beats an empty page and beats an error toast.
+    // Mount itself is clean: the first batch lands with no error toast.
     expect(await screen.findByTestId("history-a")).toBeInTheDocument();
     await waitFor(() => expect(history).toHaveAttribute("data-count", "1"));
     expect(toast.error).not.toHaveBeenCalled();
-    expect(eventDataCalls(routes)).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: /load older events/i }));
+
+    // The batch already on screen survives the failure, and it is reported.
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(screen.getByTestId("history-a")).toBeInTheDocument();
+    expect(history).toHaveAttribute("data-count", "1");
   });
 
   test("a first page failing surfaces an error and loads nothing", async () => {

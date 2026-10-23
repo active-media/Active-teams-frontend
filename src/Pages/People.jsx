@@ -807,6 +807,10 @@ export const PeopleSection = () => {
             org: safeStr(data.organization || orgKey),
           });
 
+          // Remember which cache generation this payload came from so the poll
+          // below only re-downloads the full list when it actually changed.
+          window.globalCacheVersion = data?.cache_version ?? null;
+
           const mapped = (data?.cached_data || [])
             .map(mapRawPerson)
             .filter(Boolean);
@@ -819,35 +823,68 @@ export const PeopleSection = () => {
               window.globalCacheTimestamp = Date.now();
               window.globalPeopleCacheOrg = orgKey;
             }
-            // Poll every 3s until complete
+            // Poll every 3s until complete. /cache/people serialises all
+            // 17,737 people - 14.7 MB of JSON, 1.3 MB on the wire - while
+            // /cache/people/status is ~344 bytes and already reports
+            // is_complete and cache.version. Drive the loop from status and
+            // only re-download when the cache generation changed (plus a
+            // periodic catch-up). Re-downloading every tick was 20 full
+            // payloads per session, ~26 MB.
+            const CATCH_UP_EVERY = 5;
+            const MAX_POLL_ATTEMPTS = 20;
             await new Promise((resolve) => {
               let attempts = 0;
+              let lastVersion = window.globalCacheVersion ?? null;
+
+              const finish = (interval) => {
+                clearInterval(interval);
+                resolve();
+              };
+
               const interval = setInterval(async () => {
                 attempts++;
                 try {
-                  const pollRes = await authFetch(
-                    `${BACKEND_URL}/cache/people`,
+                  const statusRes = await authFetch(
+                    `${BACKEND_URL}/cache/people/status`,
                   );
-                  if (!pollRes?.ok) return;
-                  const pollData = await pollRes.json();
-                  const pollMapped = (pollData?.cached_data || [])
-                    .map(mapRawPerson)
-                    .filter(Boolean);
-                  if (pollMapped.length > 0) {
-                    setAllPeople(pollMapped);
-                    window.globalPeopleCache = pollMapped;
-                    window.globalCacheTimestamp = Date.now();
-                    window.globalPeopleCacheOrg = orgKey;
+                  if (!statusRes?.ok) return;
+                  const status = await statusRes.json();
+
+                  const isComplete = status?.is_complete ?? false;
+                  const version = status?.cache?.version ?? null;
+                  const versionChanged =
+                    version != null && version !== lastVersion;
+
+                  if (
+                    isComplete ||
+                    versionChanged ||
+                    attempts % CATCH_UP_EVERY === 0
+                  ) {
+                    const pollRes = await authFetch(
+                      `${BACKEND_URL}/cache/people`,
+                    );
+                    if (pollRes?.ok) {
+                      const pollData = await pollRes.json();
+                      const pollMapped = (pollData?.cached_data || [])
+                        .map(mapRawPerson)
+                        .filter(Boolean);
+                      if (pollMapped.length > 0) {
+                        window.globalCacheVersion =
+                          pollData?.cache_version ?? version;
+                        lastVersion = window.globalCacheVersion;
+                        setAllPeople(pollMapped);
+                        window.globalPeopleCache = pollMapped;
+                        window.globalCacheTimestamp = Date.now();
+                        window.globalPeopleCacheOrg = orgKey;
+                      }
+                    }
                   }
-                  if (pollData.is_complete || attempts >= 20) {
-                    clearInterval(interval);
-                    resolve();
+
+                  if (isComplete || attempts >= MAX_POLL_ATTEMPTS) {
+                    finish(interval);
                   }
                 } catch {
-                  if (attempts >= 20) {
-                    clearInterval(interval);
-                    resolve();
-                  }
+                  if (attempts >= MAX_POLL_ATTEMPTS) finish(interval);
                 }
               }, 3000);
             });

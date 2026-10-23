@@ -902,12 +902,14 @@ const StatsDashboard = () => {
     }
   }, [calendarEvents, formatDateForExcel, isDownloading]);
 
+  // One effect, not two. Both of these ran on mount with the same closure, and
+  // `fetchCalendarEvents` only bails out on `calendarLoading` as it stood in
+  // that render — neither saw the other's flag, so the same request went out
+  // twice every time the page loaded.
   useEffect(() => {
     fetchCalendarEvents();
-  }, [fetchCalendarEvents]);
-  useEffect(() => {
-    fetchCalendarEvents();
-  }, [currentMonth.getFullYear(), currentMonth.getMonth()]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchCalendarEvents, currentMonth.getFullYear(), currentMonth.getMonth()]);
 
   useEffect(() => {
     const fetchEventTypes = async () => {

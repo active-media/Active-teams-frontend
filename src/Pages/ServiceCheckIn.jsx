@@ -197,6 +197,13 @@ function ServiceCheckIn() {
   const [isLoadingPeople, setIsLoadingPeople] = useState(attendees.length === 0);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  // Event History reaches back to 2024-10-14, which is three pages of 500 - about
+  // 2 MB of JSON, 685 KB on the wire. Only the first batch is needed to mount:
+  // the check-in dropdown shows today's services only, and older rows exist for
+  // looking something up. The rest arrive on demand.
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
+  const historyPageRef = useRef(1);
   const [isClosingEvent, setIsClosingEvent] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
@@ -420,25 +427,63 @@ function ServiceCheckIn() {
   const SERVICE_EVENTS_PAGE_SIZE = 500;
   const MAX_SERVICE_EVENT_PAGES = 12; // 6,000 rows; a stop against a bad has_more.
 
-  const fetchAllServiceEvents = useCallback(async () => {
+  // "full" pages the whole window back to 2024-10-10 because the Event History
+  // panel renders that entire range - but it only ever has to happen once per
+  // mount. "recent" is the window the 30-second refresh needs: all it has to
+  // notice is a status or count change on services from the last week.
+  //
+  // Measured against production, the full sweep is 8.5 MB of JSON (704 KB on
+  // the wire, three requests) and the 7-day window is 168 KB (16.6 KB, one
+  // request). Re-running the full sweep every 30 seconds was 84.5 MB/hour per
+  // open check-in tab, which is what burned the workspace's 5 GB allowance.
+  const SERVICE_EVENTS_HISTORY_START = "2024-10-10";
+  const SERVICE_EVENTS_REFRESH_DAYS = 7;
+
+  const serviceEventsStartDate = useCallback((mode = "full") => {
+    if (mode !== "recent") return SERVICE_EVENTS_HISTORY_START;
+    const from = new Date();
+    from.setDate(from.getDate() - SERVICE_EVENTS_REFRESH_DAYS);
+    return from.toISOString().slice(0, 10);
+  }, []);
+
+  // Fetches exactly one page. History is deliberately fetched this way rather
+  // than swept end to end on mount: the first 500 rows are all the screen needs
+  // to be usable, so the remaining ~1.3 MB of history is only requested when
+  // someone actually asks to see older events.
+  const fetchServiceEventsPage = useCallback(async ({ page = 1, mode = "full" } = {}) => {
+    const res = await authFetch(
+      `${BASE_URL}/events/eventsdata?limit=${SERVICE_EVENTS_PAGE_SIZE}` +
+      `&page=${page}&start_date=${serviceEventsStartDate(mode)}&is_global=true`,
+    );
+    if (!res.ok) throw new Error(`eventsdata page ${page} failed (${res.status})`);
+
+    const data = await res.json();
+    const rows = Array.isArray(data.events) ? data.events : [];
+    // The refresh window is capped at one page by design, so it must never
+    // advertise more to load.
+    const maxPages = mode === "recent" ? 1 : MAX_SERVICE_EVENT_PAGES;
+    return {
+      rows,
+      hasMore: data.has_more === true && rows.length > 0 && page < maxPages,
+    };
+  }, [authFetch, serviceEventsStartDate]);
+
+  const fetchAllServiceEvents = useCallback(async (mode = "full") => {
+    const maxPages = mode === "recent" ? 1 : MAX_SERVICE_EVENT_PAGES;
     const collected = [];
-    for (let page = 1; page <= MAX_SERVICE_EVENT_PAGES; page += 1) {
-      const res = await authFetch(
-        `${BASE_URL}/events/eventsdata?limit=${SERVICE_EVENTS_PAGE_SIZE}` +
-        `&page=${page}&start_date=2024-10-10&is_global=true`,
-      );
-      if (!res.ok) {
+    for (let page = 1; page <= maxPages; page += 1) {
+      try {
+        const { rows, hasMore } = await fetchServiceEventsPage({ page, mode });
+        collected.push(...rows);
+        if (!hasMore) break;
+      } catch (err) {
         // A later page failing should not throw away the pages that worked.
         if (collected.length) break;
-        throw new Error(`eventsdata page ${page} failed (${res.status})`);
+        throw err;
       }
-      const data = await res.json();
-      const rows = Array.isArray(data.events) ? data.events : [];
-      collected.push(...rows);
-      if (!data.has_more || rows.length === 0) break;
     }
     return collected;
-  }, [authFetch]);
+  }, [fetchServiceEventsPage]);
 
   const hasInitialized = useRef(false);
   useEffect(() => {
@@ -458,7 +503,12 @@ function ServiceCheckIn() {
           setHasDataLoaded(true);
           setIsLoadingPeople(false);
 
-          const evRows = await fetchAllServiceEvents();
+          // Mount on the first batch of history only; older events are pulled
+          // on demand so the screen is not held up by ~2 MB of back-catalogue.
+          const firstBatch = await fetchServiceEventsPage({ page: 1 });
+          const evRows = firstBatch.rows;
+          historyPageRef.current = 1;
+          setHasMoreHistory(firstBatch.hasMore);
           {
             const transformed = transformEvents(evRows, normalisedPeople);
             const valid = filterValidEvents(transformed);
@@ -477,10 +527,13 @@ function ServiceCheckIn() {
           }
         } else {
           setIsLoadingPeople(true);
-          const [evRows, peopleRes] = await Promise.all([
-            fetchAllServiceEvents(),
+          const [firstBatch, peopleRes] = await Promise.all([
+            fetchServiceEventsPage({ page: 1 }),
             authFetch(`${BASE_URL}/cache/people`),
           ]);
+          const evRows = firstBatch.rows;
+          historyPageRef.current = 1;
+          setHasMoreHistory(firstBatch.hasMore);
 
           let normalisedPeople = [];
           if (peopleRes.ok) {
@@ -520,17 +573,67 @@ function ServiceCheckIn() {
         setIsLoadingHistory(false);
       }
     })();
-  }, [authFetch, fetchAllServiceEvents, filterValidEvents, transformEvents]);
+  }, [authFetch, fetchServiceEventsPage, filterValidEvents, transformEvents]);
 
-  const fetchEvents = useCallback(async () => {
+  const fetchEvents = useCallback(async (mode = "full") => {
     try {
-      const rows = await fetchAllServiceEvents();
+      const rows = await fetchAllServiceEvents(mode);
       const transformed = transformEvents(rows, attendees);
       const valid = filterValidEvents(transformed);
-      setEvents(valid);
+
+      if (mode !== "recent") {
+        setEvents(valid);
+      } else {
+        // The recent window only carries the last week of rows. Swapping the
+        // whole state for them would throw away the Event History the first
+        // load fetched, so refresh the rows this window covers in place and
+        // append anything genuinely new.
+        setEvents(prev => {
+          const freshById = new Map(valid.map(e => [e.id, e]));
+          const seen = new Set(prev.map(e => e.id));
+          const merged = prev.map(e => freshById.get(e.id) ?? e);
+          const added = valid.filter(e => !seen.has(e.id));
+          return added.length ? [...merged, ...added] : merged;
+        });
+      }
     } catch { toast.error("Failed to fetch events. Please try again."); }
     finally { setIsLoadingEvents(false); setIsLoadingHistory(false); }
   }, [fetchAllServiceEvents, attendees, transformEvents, filterValidEvents]);
+
+  // Pulls the next batch of Event History. Everything above this point was
+  // already on screen, so nothing is refetched or reordered - the older rows
+  // are appended in place.
+  const loadOlderEvents = useCallback(async () => {
+    if (isLoadingMoreHistory || !hasMoreHistory) return;
+    setIsLoadingMoreHistory(true);
+    try {
+      const nextPage = historyPageRef.current + 1;
+      const { rows, hasMore } = await fetchServiceEventsPage({ page: nextPage });
+      historyPageRef.current = nextPage;
+      setHasMoreHistory(hasMore);
+
+      // Rows already on screen were enriched against the people list, so run
+      // the same treatment before merging or older events would look different
+      // from the ones loaded at mount.
+      const valid = filterValidEvents(transformEvents(rows, attendees));
+      setEvents(prev => {
+        const seen = new Set(prev.map(e => e.id));
+        const added = valid.filter(e => !seen.has(e.id));
+        return added.length ? [...prev, ...added] : prev;
+      });
+    } catch {
+      toast.error("Failed to load older events.");
+    } finally {
+      setIsLoadingMoreHistory(false);
+    }
+  }, [
+    isLoadingMoreHistory,
+    hasMoreHistory,
+    fetchServiceEventsPage,
+    transformEvents,
+    filterValidEvents,
+    attendees,
+  ]);
 
   useEffect(() => {
     if (!search.trim()) setSortModel([]);
@@ -551,7 +654,8 @@ function ServiceCheckIn() {
       });
     };
     window.addEventListener("attendanceUpdated", handleAttendanceUpdated);
-    const evInterval = setInterval(() => fetchEvents(), 30_000);
+    // Refresh the recent window only - see SERVICE_EVENTS_REFRESH_DAYS.
+    const evInterval = setInterval(() => fetchEvents("recent"), 30_000);
     return () => {
       isMounted = false;
       window.removeEventListener("attendanceUpdated", handleAttendanceUpdated);
@@ -1345,7 +1449,8 @@ const sortedFilteredAttendees = useMemo(() => {
       } catch (err) {
         console.error("Failed to save event history:", err);
       }
-      setTimeout(() => fetchEvents(), 500);
+      // The event that just changed is inside the recent window.
+      setTimeout(() => fetchEvents("recent"), 500);
     } catch (error) {
       if (error.message.includes("404")) toast.error("Event not found.");
       else if (error.message.includes("400")) toast.error("Invalid event ID.");
@@ -1370,7 +1475,9 @@ const sortedFilteredAttendees = useMemo(() => {
           : e
       ));
       setCurrentEventId(fullId);
-      setTimeout(() => fetchEvents(), 1500);
+      // Status was already updated optimistically above; this just re-syncs
+      // from the server for whatever falls inside the recent window.
+      setTimeout(() => fetchEvents("recent"), 1500);
     } catch (error) { toast.error(error.message || "Failed to reopen event"); }
   }, [authFetch, fetchEvents]);
 
@@ -1707,6 +1814,35 @@ const sortedFilteredAttendees = useMemo(() => {
               events={getFilteredClosedEvents()} searchTerm={eventSearch}
               isLoading={isLoadingEvents && events.length === 0 && isLoadingHistory}
             />
+
+            {/* History past the first batch is fetched on demand rather than
+                swept in at mount - see fetchServiceEventsPage. */}
+            {(hasMoreHistory || isLoadingMoreHistory) && (
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 1.5,
+                  py: 2,
+                }}
+              >
+                <Button
+                  variant="outlined"
+                  onClick={loadOlderEvents}
+                  disabled={isLoadingMoreHistory || !hasMoreHistory}
+                  sx={{ borderRadius: "20px", textTransform: "none" }}
+                >
+                  {isLoadingMoreHistory ? "Loading…" : "Load older events"}
+                </Button>
+                <Typography
+                  variant="caption"
+                  sx={{ color: isDarkMode ? "#aaa" : "#6b7280" }}
+                >
+                  {events.length} loaded
+                </Typography>
+              </Box>
+            )}
           </Box>
         )}
       </Box>

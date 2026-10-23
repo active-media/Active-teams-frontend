@@ -506,6 +506,20 @@ export default function DailyTasks() {
 
       let attempts = 0;
       const MAX_ATTEMPTS = 30; // 30 * 2s = 60s max
+      // /cache/people serialises all 17,737 people: 14.7 MB of JSON, 1.3 MB on
+      // the wire. /cache/people/status is ~344 bytes and already reports
+      // is_complete and cache.version, so the loop is driven from status and
+      // the full payload is only pulled when the cache generation actually
+      // changed (plus a periodic catch-up so a slow load still streams in).
+      // Pulling it on every 2-second tick cost up to 39 MB per session.
+      const CATCH_UP_EVERY = 10;
+      let lastVersion = window.globalCacheVersion ?? null;
+
+      const stopPolling = () => {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        setIsLoadingPeople(false);
+      };
 
       pollIntervalRef.current = setInterval(async () => {
         attempts++;
@@ -515,10 +529,13 @@ export default function DailyTasks() {
           const status = await res.json();
 
           const isComplete = status?.is_complete ?? false;
-          const progress = status?.cache?.load_progress ?? 0;
+          const version = status?.cache?.version ?? null;
 
-          // Fetch latest partial data if progressing
-          if (progress > 0) {
+          const versionChanged = version != null && version !== lastVersion;
+          const shouldDownload =
+            isComplete || versionChanged || attempts % CATCH_UP_EVERY === 0;
+
+          if (shouldDownload) {
             const dataRes = await authFetch(`${API_URL}/cache/people`);
             if (dataRes?.ok) {
               const data = await dataRes.json();
@@ -527,24 +544,18 @@ export default function DailyTasks() {
                 const mapped = rawPeople.map(mapPerson);
                 window.globalPeopleCache = mapped;
                 window.globalCacheTimestamp = Date.now();
+                window.globalCacheVersion = data?.cache_version ?? version;
+                lastVersion = window.globalCacheVersion;
                 setAllPeople(mapped);
               }
             }
           }
 
           // Done — stop polling, hide banner
-          if (isComplete || attempts >= MAX_ATTEMPTS) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-            setIsLoadingPeople(false);
-          }
+          if (isComplete || attempts >= MAX_ATTEMPTS) stopPolling();
         } catch (err) {
           console.error("Poll error:", err);
-          if (attempts >= MAX_ATTEMPTS) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-            setIsLoadingPeople(false);
-          }
+          if (attempts >= MAX_ATTEMPTS) stopPolling();
         }
       }, 2000); // poll every 2 seconds
     },
@@ -617,6 +628,9 @@ export default function DailyTasks() {
             const mapped = rawPeople.map(mapPerson);
             window.globalPeopleCache = mapped;
             window.globalCacheTimestamp = Date.now();
+            // Remember which cache generation this payload came from so the
+            // poll below can tell a real change from an unchanged cache.
+            window.globalCacheVersion = data?.cache_version ?? null;
             setAllPeople(mapped);
 
             // If backend is still loading, poll until complete
