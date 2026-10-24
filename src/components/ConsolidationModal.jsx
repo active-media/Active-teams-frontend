@@ -394,15 +394,15 @@ const ConsolidationModal = ({
 
       console.log("Consolidation payload:", consolidationData, recipient);
 
-      const response = await authFetch(
-        `${BASE_URL}/service-checkin/create-consolidation`,
-        {
-          method: "POST",
-          body: JSON.stringify(consolidationData),
-        },
-      );
+      // const response = await authFetch(
+      //   `${BASE_URL}/service-checkin/create-consolidation`,
+      //   {
+      //     method: "POST",
+      //     body: JSON.stringify(consolidationData),
+      //   },
+      // );
 
-      const responseTask = await authFetch(
+      const response = await authFetch(
         `${BASE_URL}/consolidations`,
         {
           method: "POST",
@@ -410,9 +410,8 @@ const ConsolidationModal = ({
         },
       )
 
-      if (response.ok & responseTask.ok) {
+      if (response.ok) {
         const responseData = await response.json();
-        const responseDataTask = await responseTask.json();
 
         setRecipient(null);
         setAssignedTo("");
@@ -432,7 +431,7 @@ const ConsolidationModal = ({
           taskStage,
           decisionType,
           leaderLevel: leaderInfo.level,
-          task_id: responseDataTask.task_id,
+          task_id: responseData.task_id,
           recipient_email: recipient.Email || recipient.email || "",
           recipient_phone: recipient.Phone || recipient.phone || "",
           leader_email: responseData.assigned_to_email || "",

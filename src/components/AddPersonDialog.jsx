@@ -374,6 +374,7 @@ function AddressSearchField({ value, onChange, error, disabled }) {
 export default function AddPersonDialog({
   open, onClose, onSave, formData, setFormData,
   isEdit = false, personId = null, editingPersonObject = null,
+  currentSessionId = null,
 }) {
   const { authFetch, user } = useContext(AuthContext);
 
@@ -597,6 +598,39 @@ export default function AddPersonDialog({
           const data = await response.json();
           const created = data.person || data;
           peopleStore.ready = false;
+
+          if (currentSessionId) {
+            try {
+              const generatedPersonId = created?._id || created?.id || created?.person_id || "";
+              const newPersonConsolidation = {
+                person_name: payload.name,
+                person_surname: payload.surname,
+                person_email: payload.email,
+                person_phone: payload.number,
+                person_id: generatedPersonId,
+                decision_type: "first_time",
+                decision_date: new Date().toISOString().split("T")[0],
+                assigned_to: normalizedLeaders.leader1 || payload.leader1 || "",
+                assigned_to_email: "",
+                leaders: [normalizedLeaders.leader1, normalizedLeaders.leader12, normalizedLeaders.leader144].filter(Boolean),
+                event_id: "" ,
+                source: "service_consolidation",
+                session_id: currentSessionId,
+                notes: "New person added during registration",
+                task_type: "New person",
+                event_leader_name: user?.name ? `${user.name} ${user.surname || ""}`.trim() : "",
+                event_leader_email: user?.email || "",
+              };
+              await authFetch(`${BASE_URL}/consolidations`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(newPersonConsolidation),
+              });
+            } catch (consolidationErr) {
+              console.warn("New-person consolidation creation failed:", consolidationErr);
+            }
+          }
+
           onSave({
             ...data,
             person: {

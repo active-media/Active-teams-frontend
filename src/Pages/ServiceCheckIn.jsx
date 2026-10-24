@@ -1351,13 +1351,13 @@ const sortedFilteredAttendees = useMemo(() => {
 
   const handleSaveAndCloseEvent = useCallback(async () => {
     if (!currentSessionId) { toast.error("Please select an event first"); return; }
-    const currentEvent = events.find(e => cleanEventId(e.id) === cleanEventId(currentSessionId));
+    const currentEvent = events.find(e => e.session_id === currentSessionId);
     if (!currentEvent) { toast.error("Selected event not found"); return; }
     if (!window.confirm(`Are you sure you want to close "${currentEvent.eventName}"? This action cannot be undone.`)) return;
 
     setIsClosingEvent(true);
     try {
-      const response = await authFetch(`${BASE_URL}/events/${currentSessionId}/toggle-status`, { method: "PATCH" });
+      const response = await authFetch(`${BASE_URL}/events/${currentSessionId}/${currentEvent.event_id}/toggle-status`, { method: "PATCH" });
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
       if (result.already_closed) toast.info(result.message || "Event was already closed");
