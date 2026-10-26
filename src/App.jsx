@@ -15,6 +15,7 @@ import { PeopleSection as People } from "./Pages/People";
 import Events from "./Pages/Events";
 import Stats from "./Pages/Stats";
 import Reports from "./Pages/Reports";
+import CellsDrilldown from "./Pages/CellsDrilldown";
 import ScheduledReports from "./Pages/ScheduledReports";
 import ReportingDashboard from "./Pages/ReportingDashboard";
 import ReportingDashboardLegacy from "./features/reporting/_legacy/ReportingDashboardLegacy";
@@ -43,6 +44,8 @@ const ProtectedEvents = withAuthCheck(Events, ['admin', 'leader', 'leaderAt12', 
 const ProtectedStats = withAuthCheck(Stats, ['admin','leaderAt12']);
 const ReportingRoles = ['admin', 'super_admin', 'leader', 'leaderAt12'];
 const ProtectedReports = withAuthCheck(Reports, ReportingRoles, false, true);
+const ProtectedCellsLeader = withAuthCheck(() => <CellsDrilldown mode="leader" />, ReportingRoles, false, true);
+const ProtectedCellsCell = withAuthCheck(() => <CellsDrilldown mode="cell" />, ReportingRoles, false, true);
 const ProtectedScheduledReports = withAuthCheck(ScheduledReports, ReportingRoles, false, true);
 const ProtectedReportingDashboard = withAuthCheck(ReportingDashboard, ReportingRoles, false, true);
 const ProtectedReportHistory = withAuthCheck(ReportHistory, ReportingRoles, false, true);
@@ -220,6 +223,8 @@ function App() {
             <Route path="/events" element={<ProtectedEvents title="Events" />} />
             <Route path="/stats" element={<ProtectedStats title="Stats" />} />
             <Route path="/reports" element={<ProtectedReports title="Reports" />} />
+            <Route path="/reports/cells_graph/leader/:leaderId" element={<ProtectedCellsLeader title="Reports" />} />
+            <Route path="/reports/cells_graph/cell/:cellId" element={<ProtectedCellsCell title="Reports" />} />
             <Route path="/reports/:reportType" element={<ProtectedReports title="Reports" />} />
             <Route path="/reporting/history" element={<ProtectedReportHistory title="Report History" />} />
             <Route path="/reporting/scheduled" element={<ProtectedScheduledReports title="Scheduled Reports" />} />

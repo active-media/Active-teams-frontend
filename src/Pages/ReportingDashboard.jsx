@@ -41,6 +41,22 @@ const KPI_ICONS = {
   staff_interns_youth: ManageAccountsOutlinedIcon,
 };
 
+/* Where each KPI box leads. null = page not built yet, so the box renders
+   as a disabled "Coming soon" card instead of a dead click. */
+const KPI_ROUTES = {
+  total_attendance: "/reporting/attendance",
+  active_cells: "/reports/cells_graph",
+  service_target: "/reporting/service-target",
+  twelve_tasks: "/reporting/twelve-tasks",
+  life_class: null,
+  school_of_leaders: null,
+  plan_40: null,
+  staff_interns_youth: null,
+};
+
+/* Carry the dashboard's period, custom dates and campus into the sub-page. */
+const CARRIED_PARAMS = ["period", "start_date", "end_date", "custom", "campus"];
+
 function formatValue(item) {
   const raw = item.value;
   if (raw === null || raw === undefined || raw === "") return "—";
@@ -271,18 +287,41 @@ const cardSx = {
   backgroundImage: "none",
 };
 
-function KpiCard({ item }) {
+function KpiCard({ item, to }) {
   const Icon = KPI_ICONS[item.key] || InsightsIcon;
+  const linkProps = to ? { component: RouterLink, to } : {};
   return (
-    <Paper variant="outlined" sx={{ ...cardSx, p: 2 }}>
+    <Paper
+      variant="outlined"
+      {...linkProps}
+      aria-disabled={to ? undefined : true}
+      sx={{
+        ...cardSx,
+        p: 2,
+        display: "block",
+        textDecoration: "none",
+        color: "inherit",
+        ...(to
+          ? {
+              cursor: "pointer",
+              transition: "border-color 120ms, box-shadow 120ms",
+              "&:hover, &:focus-visible": { borderColor: "primary.main", boxShadow: 1 },
+            }
+          : { opacity: 0.65, cursor: "default" }),
+      }}
+    >
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
         <Box sx={{ width: 32, height: 32, borderRadius: 1.5, display: "grid", placeItems: "center",
           bgcolor: (t) => alpha(t.palette.primary.main, 0.14), color: "primary.main" }}>
           <Icon sx={{ fontSize: 18 }} />
         </Box>
-        <Typography variant="caption" sx={{ color: item.caption && item.tone !== "neutral" ? `${item.tone}.main` : "text.secondary" }}>
-          {item.caption}
-        </Typography>
+        {to ? (
+          <Typography variant="caption" sx={{ color: item.caption && item.tone !== "neutral" ? `${item.tone}.main` : "text.secondary" }}>
+            {item.caption}
+          </Typography>
+        ) : (
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Coming soon</Typography>
+        )}
       </Stack>
       <Typography variant="h5" fontWeight={700} sx={{ mt: 1.5, lineHeight: 1.2 }}>{item.value}</Typography>
       <Typography variant="caption" color="text.secondary">{item.label}</Typography>
@@ -416,6 +455,18 @@ export default function ReportingDashboard() {
 
   const campuses = dashboard?.campuses || [];
 
+  const kpiLink = (key) => {
+    const route = KPI_ROUTES[key];
+    if (!route) return null;
+    const carried = new URLSearchParams();
+    CARRIED_PARAMS.forEach((k) => {
+      const v = searchParams.get(k);
+      if (v) carried.set(k, v);
+    });
+    const qs = carried.toString();
+    return qs ? `${route}?${qs}` : route;
+  };
+
   const isNetworkError = error && /failed to fetch|networkerror|load failed/i.test(error.message || "");
 
   return (
@@ -468,7 +519,7 @@ export default function ReportingDashboard() {
         <>
           {kpis.length > 0 && (
             <Box sx={{ display: "grid", gap: 2, mb: 2.5, gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(4, 1fr)" } }}>
-              {kpis.map((item) => <KpiCard key={item.key} item={item} />)}
+              {kpis.map((item) => <KpiCard key={item.key} item={item} to={kpiLink(item.key)} />)}
             </Box>
           )}
 
