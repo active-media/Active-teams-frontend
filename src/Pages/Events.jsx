@@ -1018,6 +1018,7 @@ const Events = () => {
   const currentUser = JSON.parse(localStorage.getItem("userProfile")) || {};
   const userOrganization = currentUser?.Organization || currentUser?.organization || "";
   const userOrgId = currentUser?.org_id || "";
+  // alert("userOrgId: " + userOrgId + ", userOrganization: " + userOrganization);
   
   // Determine isActiveTeams immediately from user data
   const isActiveTeams = userOrgId === "active-teams" || userOrganization === "Active Church";
@@ -1088,6 +1089,7 @@ const Events = () => {
   // did-not-meet event until the user manually changed the filter.
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedDateRange, setSelectedDateRange] = useState("all");
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
@@ -1498,8 +1500,6 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
       toast.dismiss(TOAST_ID);
     }
   };
-  const paginatedEvents = useMemo(() => events, [events]);
-
   const startIndex = useMemo(() => {
     return totalEvents > 0 ? (currentPage - 1) * rowsPerPage + 1 : 0;
   }, [currentPage, rowsPerPage, totalEvents]);
@@ -1521,7 +1521,8 @@ const fetchEventsFilters = (filters) => {
   const params = {
     page: filters.page || currentPage,
     limit: filters.limit || rowsPerPage,
-    start_date: filters.start_date || DEFAULT_API_START_DATE,
+    start_date: "2026-10-24",
+    // filters.start_date || DEFAULT_API_START_DATE,
   };
 
   // Never send status="all". The backend treats any non-empty status as an exact
@@ -1626,11 +1627,17 @@ const fetchEventsFilters = (filters) => {
           const filtered = allEvents;
 
           console.log("Final events to display:", filtered.length);
- 
-          setEvents(filtered);
+          const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+          eventsCache.current[cacheKey] = filtered;
+          const pageSize = filters.limit || rowsPerPage;
+          const eventCount = data.total_events ?? filtered.length;
+          const page = filters.page || currentPage;
+          const start = (page - 1) * pageSize;
+
+          setEvents(filtered.slice(start, start + pageSize));
           console.log("FETCHED EVENTS:",filtered);
-          setTotalEvents(data.total_events || 0);
-          setTotalPages(data.total_pages || 1);
+          setTotalEvents(eventCount);
+          setTotalPages(Math.ceil(eventCount / pageSize) || 1);
         } catch (error) {
           console.error(" Fetch error:", error);
           setEvents([]);
@@ -1662,13 +1669,13 @@ const [fetchedEventTypes, setFetchedEventTypes] = useState([]);
 const fetchEventTypes = useCallback(async () => {
   try {
     const token = localStorage.getItem("access_token");
-    const org_id = localStorage.getItem("org_id");
+    const org_id = userOrgId || currentUser?.org_id || "";
     const {data:eventTypesData, error} = await supabase.from('event_types').select('*').eq("org_id",org_id)
     if (error){
       console.log("supabase error: ",error.message);
       throw new Error("supabase error: ",error.message);
     }
-    console.log("EVENT TYPES DATA:", eventTypesData);
+
 
    
     
@@ -2262,7 +2269,8 @@ const getFilteredEventTypes = (allEventTypes) => {
   const clearAllFilters = useCallback(() => {
     setSearchQuery("");
     setIsSearching(false);
-    setTotalEvents(events.length || 0)
+    setSelectedDateRange("all");
+    setCurrentPage(1);
 
   }, [viewFilter, userRole, fetchEvents, rowsPerPage, DEFAULT_API_START_DATE]);
 
@@ -2366,6 +2374,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   const searchDebounceRef = useRef(null);
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   useEffect(() => {
+    setCurrentPage(1);
     if (searchQuery.trim() === "") {
       clearAllFilters();
       setIsSearching(false);
@@ -2394,15 +2403,89 @@ const getFilteredEventTypes = (allEventTypes) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allCurrentEvents, debouncedSearchTerm, selectedStatus, isSearching]);
 
+  const hasActiveSearch = Boolean(isSearching && debouncedSearchTerm.trim());
+  const dateFilteredEvents = useMemo(() => {
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+    const sourceEvents = hasActiveSearch
+      ? filteredEvents
+      : eventsCache.current[cacheKey] || events;
+
+    if (selectedDateRange === "all") return sourceEvents;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    let rangeStart;
+    let rangeEnd = new Date(today);
+    rangeEnd.setDate(rangeEnd.getDate() + 1);
+
+    if (selectedDateRange === "this-week" || selectedDateRange === "last-week") {
+      const mondayOffset = (today.getDay() + 6) % 7;
+      rangeStart = new Date(today);
+      rangeStart.setDate(today.getDate() - mondayOffset);
+      if (selectedDateRange === "last-week") {
+        rangeStart.setDate(rangeStart.getDate() - 7);
+        rangeEnd = new Date(rangeStart);
+        rangeEnd.setDate(rangeEnd.getDate() + 7);
+      } else {
+        rangeEnd.setDate(rangeStart.getDate() + 7);
+      }
+    } else if (selectedDateRange === "this-month") {
+      rangeStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    } else if (selectedDateRange === "last-month") {
+      rangeStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      rangeEnd = new Date(today.getFullYear(), today.getMonth(), 1);
+    } else {
+      rangeStart = new Date(today);
+      rangeStart.setMonth(rangeStart.getMonth() - 3);
+    }
+
+    return sourceEvents.filter((event) => {
+      if (!event?.date) return false;
+      const dateText = String(event.date);
+      const eventDate = /^\d{4}-\d{2}-\d{2}$/.test(dateText)
+        ? new Date(`${dateText}T00:00:00`)
+        : new Date(dateText);
+      return (
+        !Number.isNaN(eventDate.getTime()) &&
+        eventDate >= rangeStart &&
+        eventDate < rangeEnd
+      );
+    });
+  }, [
+    allCurrentEvents,
+    events,
+    filteredEvents,
+    hasActiveSearch,
+    selectedDateRange,
+    selectedEventTypeFilter,
+    selectedStatus,
+    viewFilter,
+  ]);
+  const paginatedEvents = useMemo(() => {
+    if (!hasActiveSearch && selectedDateRange === "all") return events;
+    const start = (currentPage - 1) * rowsPerPage;
+    return dateFilteredEvents.slice(start, start + rowsPerPage);
+  }, [
+    currentPage,
+    dateFilteredEvents,
+    events,
+    hasActiveSearch,
+    rowsPerPage,
+    selectedDateRange,
+  ]);
+
   // Keep the result counter in step with the rows. This has to be an effect,
   // not a write inside the memo above: writing state during render discarded
   // the count. Keying it on filteredEvents also covers the case where the
   // click-loaded set lands *after* the user's keystroke, which would otherwise
   // leave the counter stuck on zero.
   useEffect(() => {
-    if (!isSearching) return;
-    setTotalEvents(filteredEvents.length);
-  }, [isSearching, filteredEvents]);
+    if (!hasActiveSearch && selectedDateRange === "all") return;
+    const pages = Math.ceil(dateFilteredEvents.length / rowsPerPage) || 1;
+    setTotalEvents(dateFilteredEvents.length);
+    setTotalPages(pages);
+    setCurrentPage((page) => Math.min(page, pages));
+  }, [dateFilteredEvents, hasActiveSearch, rowsPerPage, selectedDateRange]);
   console.log(
     "issearching",
     isSearching,
@@ -2413,17 +2496,36 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handleRowsPerPageChange = useCallback((e) => {
     const newRowsPerPage = Number(e.target.value);
+    if (!Number.isInteger(newRowsPerPage) || newRowsPerPage < 1) return;
+
     const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
     const cached = eventsCache.current[cacheKey];
 
     setRowsPerPage(newRowsPerPage);
     setCurrentPage(1);
 
+    if (hasActiveSearch || selectedDateRange !== "all") {
+      setTotalEvents(dateFilteredEvents.length);
+      setTotalPages(Math.ceil(dateFilteredEvents.length / newRowsPerPage) || 1);
+      return;
+    }
+
     if (cached) {
+      setTotalEvents(cached.length);
       setTotalPages(Math.ceil(cached.length / newRowsPerPage) || 1);
       setEvents(cached.slice(0, newRowsPerPage));
+    } else {
+      fetchEvents({ page: 1, limit: newRowsPerPage }, true);
     }
-  }, [selectedEventTypeFilter, selectedStatus, viewFilter]);
+  }, [
+    fetchEvents,
+    dateFilteredEvents.length,
+    hasActiveSearch,
+    selectedDateRange,
+    selectedEventTypeFilter,
+    selectedStatus,
+    viewFilter,
+  ]);
 
 
   const handleCaptureClick = useCallback(async (event) => {
@@ -2590,7 +2692,6 @@ const getFilteredEventTypes = (allEventTypes) => {
   const handleAttendanceSubmit = useCallback(
     async (data) => {
       try {
-        const token = localStorage.getItem("access_token");
         // const eventId = getAttendanceEventId(selectedEvent);
         const eventId = selectedEvent?.event_id;
         if (!eventId) {
@@ -2645,13 +2746,12 @@ const getFilteredEventTypes = (allEventTypes) => {
         }
 
 
-        const response = await fetch(
+        const response = await authFetch(
           `${BACKEND_URL.replace(/\/$/, "")}/submit-attendance/${eventId}`,
           {
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(payload),
           },
@@ -2729,6 +2829,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       }
     },
     [
+      authFetch,
       selectedEvent,
       currentUser,
       BACKEND_URL,
@@ -3202,17 +3303,33 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handlePageChange = useCallback(
     (newPage) => {
+      const page = Math.min(Math.max(newPage, 1), Math.max(totalPages, 1));
+      if (isLoading) return;
+
+      setCurrentPage(page);
+      if (hasActiveSearch || selectedDateRange !== "all") return;
+
       const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
       const cached = eventsCache.current[cacheKey];
 
-      setCurrentPage(newPage);
-
       if (cached) {
-        const skip = (newPage - 1) * rowsPerPage;
+        const skip = (page - 1) * rowsPerPage;
         setEvents(cached.slice(skip, skip + rowsPerPage));
+      } else {
+        fetchEvents({ page, limit: rowsPerPage }, true);
       }
     },
-    [selectedEventTypeFilter, selectedStatus, viewFilter, rowsPerPage]
+    [
+      fetchEvents,
+      hasActiveSearch,
+      isLoading,
+      rowsPerPage,
+      selectedDateRange,
+      selectedEventTypeFilter,
+      selectedStatus,
+      totalPages,
+      viewFilter,
+    ]
   );
   const handleNextPage = useCallback(() => {
     if (currentPage < totalPages && !isLoading) {
@@ -4552,6 +4669,33 @@ const getTypeValue = (type) => {
                 }}
               />
 
+              <select
+                aria-label="Filter events by date range"
+                value={selectedDateRange}
+                onChange={(event) => {
+                  setSelectedDateRange(event.target.value);
+                  setCurrentPage(1);
+                }}
+                style={{
+                  minWidth: isMobileView ? "100%" : "160px",
+                  padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
+                  border: `1px solid ${isDarkMode ? theme.palette.divider : "#ccc"}`,
+                  borderRadius: "4px",
+                  backgroundColor: isDarkMode
+                    ? theme.palette.background.paper
+                    : "#fff",
+                  color: isDarkMode ? theme.palette.text.primary : "#000",
+                  fontSize: isMobileView ? "14px" : "0.95rem",
+                }}
+              >
+                <option value="all">All dates</option>
+                <option value="this-week">This week</option>
+                <option value="last-week">Last week</option>
+                <option value="this-month">This month</option>
+                <option value="last-month">Last month</option>
+                <option value="last-3-months">Last 3 months</option>
+              </select>
+
               <Button
                 variant="outlined"
                 onClick={clearAllFilters}
@@ -4728,7 +4872,7 @@ const getTypeValue = (type) => {
                         />
                       </>
                     ))
-                    : filteredEvents.map((event) => (
+                    : paginatedEvents.map((event) => (
                       <>
                         <MobileEventCard
                           key={event._id}
@@ -4976,7 +5120,7 @@ const getTypeValue = (type) => {
                               "data-recurring": isRecurring,
                             };
                           })
-                          : filteredEvents.map((event, idx) => {
+                          : paginatedEvents.map((event, idx) => {
                             const id =
                               event._id || event.id || event.UUID || idx;
 
@@ -4995,7 +5139,7 @@ const getTypeValue = (type) => {
                       }
                       columns={[
                         ...generateDynamicColumns(
-                          !isSearching ? paginatedEvents : filteredEvents,
+                          paginatedEvents,
                           isOverdue,
                           selectedEventTypeFilter,
                         ),

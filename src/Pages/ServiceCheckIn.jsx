@@ -504,6 +504,7 @@ function ServiceCheckIn() {
           {
             const transformed = transformEvents(evRows, normalisedPeople);
             const valid = filterValidEvents(transformed);
+            console.log("Transformed Events: 2",valid);
             setEvents(valid);
             setIsLoadingEvents(false);
             setIsLoadingHistory(false);
@@ -540,7 +541,6 @@ function ServiceCheckIn() {
           {
             const transformed = transformEvents(evRows, normalisedPeople);
             const valid = filterValidEvents(transformed);
-            console.log("Transformed Events:",valid);
             setEvents(valid);
             setIsLoadingEvents(false);
             setIsLoadingHistory(false);

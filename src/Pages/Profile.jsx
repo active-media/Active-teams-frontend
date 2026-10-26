@@ -368,63 +368,14 @@ if (profile?.leaders) {
       try {
         setLoadingProfile(true);
 
-        const token = localStorage.getItem("access_token") ||
-          localStorage.getItem("token") ||
-          localStorage.getItem("accessToken");
-
-        if (!token) {
-          console.log("No token found");
-          setLoadingProfile(false);
-          return;
+        const response = await authFetch(`${BACKEND_URL}/profile/me/details`);
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || errorData.message || `HTTP ${response.status}`);
         }
-
-        let userId = null;
-
-        try {
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          userId = payload.user_id || payload.sub || payload.id;
-
-          if (userId) {
-            localStorage.setItem("userId", userId);
-          }
-        } catch (e) {
-          console.error("Failed to decode token:", e);
-        }
-
-        if (!userId) {
-          setLoadingProfile(false);
-          return;
-        }
-
-        let profileData = null;
-
-        if (authFetch) {
-          try {
-            const response = await authFetch(`${BACKEND_URL}/profile/${userId}`);
-            if (response.ok) {
-              profileData = await response.json();
-            }
-          } catch (error) {
-            console.error("AuthFetch error:", error);
-          }
-        }
-
-        if (!profileData) {
-          try {
-            const response = await fetch(`${BACKEND_URL}/profile/${userId}`, {
-              headers: {
-                "Authorization": `Bearer ${token}`,
-                "Content-Type": "application/json",
-              }
-            });
-
-            if (response.ok) {
-              profileData = await response.json();
-            }
-          } catch (error) {
-            console.error("Direct fetch error:", error);
-          }
-        }
+        const profileData = await response.json();
+        const userId = profileData?._id || profileData?.id;
+        if (userId) localStorage.setItem("userId", String(userId));
 
         if (profileData && isMounted) {
           const finalProfileData = {
@@ -459,6 +410,13 @@ if (profile?.leaders) {
         }
       } catch (error) {
         console.error("Profile loading error:", error);
+        if (isMounted) {
+          setSnackbar({
+            open: true,
+            message: `Failed to load profile: ${error.message}`,
+            severity: "error",
+          });
+        }
       } finally {
         if (isMounted) {
           setLoadingProfile(false);

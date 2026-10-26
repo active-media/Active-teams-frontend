@@ -109,7 +109,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   const [peopleData, setPeopleData] = useState([]);
   const [priceTiers, setPriceTiers] = useState([]);
   const [isTicketedEvent,setIsTicketedEvent] = useState(false);
-  console.log('CURRENT EVENT TYPE:', selectedEventType);
+  console.log('CURRENT EVENT TYPE:', selectedEventType, eventTypeFlags);
   
   const isSelectingFromDropdown = useRef(false); 
 
@@ -271,9 +271,9 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
       selectedEventType,
       eventTypes: eventTypes.map((et) => ({
         name: et.name,
-        isGlobal: et.isGlobal,
-        isTicketed: et.isTicketed,
-        hasPersonSteps: et.hasPersonSteps,
+        isGlobal: et.is_global,
+        isTicketed: et.is_ticketed,
+        hasPersonSteps: et.has_person_steps,
       })),
     });
     setIsTicketedEvent(eventTypes.find((et) => et.display_name === formData.eventType)?.is_ticketed || false);
@@ -292,9 +292,9 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
         return {
           eventType:
             objName,
-          isGlobal: !!source.isGlobal,
-          isTicketed: !!source.isTicketed,
-          hasPersonSteps: !!source.hasPersonSteps,
+          isGlobal: !!source.is_global,
+          isTicketed: !!source.is_ticketed,
+          hasPersonSteps: !!source.has_person_steps,
         };
       }
       if (selectedEventType) {
@@ -378,7 +378,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
       ]);
     }
   }, [isTicketedEvent]);
-
+const peopleSearchRequestRef = useRef(0);
 const fetchPeople = async (q) => {
   if (!q?.trim() || q.trim().length < 2) {
     setPeopleData([]);
@@ -783,7 +783,7 @@ const fetchPeople = async (q) => {
         payload.leader1 = formData.leader1 || "";
         payload.leader12 = formData.leader12 || "";
       }
-
+      
       const response = await authFetch(
         eventId
           ? `${BACKEND_URL}/events/${eventId}`
