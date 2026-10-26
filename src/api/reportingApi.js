@@ -24,6 +24,7 @@ export function buildQueryString(params = {}) {
   if (params.format) query.set("format", params.format);
   if (params.limit != null) query.set("limit", String(params.limit));
   if (params.organization) query.set("organization", params.organization);
+  if (params.scope) query.set("scope", params.scope);
 
   return query.toString();
 }
@@ -94,6 +95,18 @@ export function getReport(authFetch, type, params = {}) {
     return Promise.resolve(REPORT_FIXTURES.reports[type] || REPORT_FIXTURES.reports.twelve_tasks);
   }
   return requestJson(authFetch, queryPath(`/reporting/reports/${encodeURIComponent(type)}`, params));
+}
+
+/** A leader's cells plus their whole downline. scope: "downline" (default) | "direct". */
+export function getCellsLeader(authFetch, leaderId, params = {}) {
+  if (useFixtures) return Promise.resolve({});
+  return requestJson(authFetch, queryPath(`/reporting/reports/cells_graph/leader/${encodeURIComponent(leaderId)}`, params));
+}
+
+/** Stats for a single cell (event_id). */
+export function getCellsCell(authFetch, eventId, params = {}) {
+  if (useFixtures) return Promise.resolve({});
+  return requestJson(authFetch, queryPath(`/reporting/reports/cells_graph/cell/${encodeURIComponent(eventId)}`, params));
 }
 
 export function generateReport(authFetch, type, params = {}) {

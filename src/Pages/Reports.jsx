@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Alert, Box, Button, Card, Chip, LinearProgress, Stack, TextField, Typography } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -29,6 +29,7 @@ export default function Reports() {
   const { authFetch, user } = useContext(AuthContext);
   const { reportType } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [catalog, setCatalog] = useState([]);
   const [envelope, setEnvelope] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -36,8 +37,13 @@ export default function Reports() {
   const [exporting, setExporting] = useState("");
   const [saving, setSaving] = useState(false);
   const [organization, setOrganization] = useState(user?.Organization || user?.organization || "");
-  const [periodValue, setPeriodValue] = useState({ period: DEFAULT_PERIOD, start_date: "", end_date: "", isCustom: false });
-  const [campus, setCampus] = useState(ALL_CAMPUSES);
+  const [periodValue, setPeriodValue] = useState(() => ({
+    period: searchParams.get("period") || DEFAULT_PERIOD,
+    start_date: searchParams.get("start_date") || "",
+    end_date: searchParams.get("end_date") || "",
+    isCustom: searchParams.get("custom") === "true",
+  }));
+  const [campus, setCampus] = useState(() => searchParams.get("campus") || ALL_CAMPUSES);
   const isSuper = Boolean(user?.is_supreme_admin) || normalizeRole(user?.role) === "superadmin";
   const params = useMemo(() => ({
     ...(periodValue.isCustom && periodValue.start_date && periodValue.end_date
@@ -45,6 +51,20 @@ export default function Reports() {
       : { period: periodValue.period }),
     campus,
   }), [periodValue, campus]);
+
+  // Mirror the selection into the URL so drill-down links (and the dashboard's links) keep it.
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (periodValue.isCustom) {
+      next.set("custom", "true");
+      if (periodValue.start_date) next.set("start_date", periodValue.start_date);
+      if (periodValue.end_date) next.set("end_date", periodValue.end_date);
+    } else if (periodValue.period) {
+      next.set("period", periodValue.period);
+    }
+    if (campus && campus !== ALL_CAMPUSES) next.set("campus", campus);
+    setSearchParams(next, { replace: true });
+  }, [periodValue, campus, setSearchParams]);
 
   useEffect(() => {
     let active = true;

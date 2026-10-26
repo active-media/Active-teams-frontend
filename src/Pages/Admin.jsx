@@ -23,7 +23,8 @@ import {
   MusicNote as MusicIcon,
   Handshake as HandshakeIcon,
   LocalPolice as SecurityIcon,
-  Coffee as CoffeeIcon
+  Coffee as CoffeeIcon,
+  Phone as PhoneIcon
 } from '@mui/icons-material';
 import NewUserModal from '../components/NewUserModal';
 
@@ -40,7 +41,7 @@ const SUPREME_ADMIN_EMAIL = "plaatjiessamuel98@gmail.com";
 export default function AdminDashboard() {
   const theme = useTheme();
   const { authFetch, user: currentUser } = useContext(AuthContext);
-  const isSupremeAdmin = currentUser?.is_supreme_admin || currentUser?.email === SUPREME_ADMIN_EMAIL;
+  const isSupremeAdmin = currentUser?.is_supreme_admin === true;
 
   const isXsDown = useMediaQuery(theme.breakpoints.down("xs"));
   const isSmDown = useMediaQuery(theme.breakpoints.down("sm"));
@@ -90,7 +91,7 @@ export default function AdminDashboard() {
   const [supremeAdminError, setSupremeAdminError] = useState('');
   const [showOrgModal, setShowOrgModal] = useState(false);
   const [editingOrg, setEditingOrg] = useState(null);
-  const [orgFormData, setOrgFormData] = useState({ name: '', address: '', phone: '', email: '' });
+  const [orgFormData, setOrgFormData] = useState({ name: '' });
   const [orgFormErrors, setOrgFormErrors] = useState({});
   const [savingOrg, setSavingOrg] = useState(false);
   const [deletingOrg, setDeletingOrg] = useState(false);
@@ -359,6 +360,20 @@ export default function AdminDashboard() {
     finally { setUpdatingRole(false); }
   };
 
+  // Super admin shortcut: promote a user to admin of the org currently being viewed
+  const handleMakeAdmin = async (user) => {
+    if (!isSupremeAdmin || !user || user.role === 'admin') return;
+    if (!window.confirm(`Make ${user.name} an admin of ${selectedOrg}?`)) return;
+    await handleRoleChange(user.id, 'admin');
+  };
+
+  // A brand-new org may have no 'admin' role yet, so always offer it
+  const rolesForModal = useMemo(() => (
+    organizationRoles.some(r => r.name === 'admin')
+      ? organizationRoles
+      : [{ name: 'admin', count: 0, is_system: true, color: '#f44336' }, ...organizationRoles]
+  ), [organizationRoles]);
+
   const handleDeleteUser = async () => {
     if (!selectedUser) return;
     setDeletingUser(true);
@@ -392,42 +407,41 @@ export default function AdminDashboard() {
 
   // ─── org CRUD ───────────────────────────────────────────────────────────────
   const handleOpenCreateOrg = () => { setEditingOrg(null); setOrgFormData({ name: '', address: '', phone: '', email: '' }); setOrgFormErrors({}); setShowOrgModal(true); };
-  const handleOpenEditOrg = (org) => {
+const handleOpenEditOrg = (org) => {
     const id = org.id || org._id;
     if (!id || id === 'undefined') { alert('Invalid organization ID'); return; }
     setEditingOrg({ ...org, id, _id: id });
-    setOrgFormData({ name: org.name || '', address: org.address || '', phone: org.phone || '', email: org.email || '' });
-    setOrgFormErrors({}); setShowOrgModal(true); setOrgAnchorEl(null);
+    setOrgFormData({ name: org.name || '' });
+    setOrgFormErrors({}); setOrgAnchorEl(null);
+    setShowOrgModal(true);
   };
   const validateOrgForm = () => {
     const errors = {};
     if (!orgFormData.name.trim()) errors.name = 'Name is required';
-    if (!orgFormData.email.trim()) errors.email = 'Email is required';
-    else if (!/\S+@\S+\.\S+/.test(orgFormData.email)) errors.email = 'Invalid email';
     setOrgFormErrors(errors);
     return !Object.keys(errors).length;
   };
-  const handleSaveOrganization = async () => {
+const handleSaveOrganization = async () => {
     if (!validateOrgForm()) return;
     setSavingOrg(true);
     try {
+      const name = orgFormData.name.trim();
       const oldName = editingOrg?.name;
-      const url = editingOrg ? `${API_BASE_URL}/organizations/${editingOrg.id || editingOrg._id}` : `${API_BASE_URL}/organizations`;
-      const method = editingOrg ? 'PUT' : 'POST';
-      const payload = { name: orgFormData.name };
-      if (orgFormData.address) payload.address = orgFormData.address;
-      if (orgFormData.phone) payload.phone = orgFormData.phone;
-      if (orgFormData.email) payload.email = orgFormData.email;
-      const res = await authFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const isEdit = !!editingOrg;
+      const id = editingOrg?.id || editingOrg?._id;
+      const url = isEdit ? `${API_BASE_URL}/organizations/${id}` : `${API_BASE_URL}/organizations`;
+      const method = isEdit ? 'PUT' : 'POST';
+      const res = await authFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to save'); }
-      addActivityLog(editingOrg ? 'ORG_UPDATED' : 'ORG_CREATED', `${editingOrg ? 'Updated' : 'Created'}: ${orgFormData.name}`);
+      addActivityLog(isEdit ? 'ORG_UPDATED' : 'ORG_CREATED', `${isEdit ? 'Updated' : 'Created'}: ${name}`);
       await fetchOrgs();
-      if (editingOrg && oldName !== orgFormData.name && selectedOrg === oldName) {
-        handleOrgChange(orgFormData.name);
-      }
+      if (isEdit && oldName !== name && selectedOrg === oldName) handleOrgChange(name);
       setShowOrgModal(false);
-    } catch (e) { alert(`Error: ${e.message}`); }
-    finally { setSavingOrg(false); }
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setSavingOrg(false);
+    }
   };
   const handleDeleteOrganization = async (orgId, orgName) => {
     if (!orgId || orgId === 'undefined') { alert('Invalid ID'); return; }
@@ -496,7 +510,7 @@ export default function AdminDashboard() {
               <Typography variant="body2" color="text.secondary">{user.email}</Typography>
               {isSupremeAdmin && user.organization && (
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-                  <BusinessIcon fontSize="inherit" /> {user.organization}
+                  <BusinessIcon /> {user.organization}
                 </Typography>
               )}
               <Chip label={getRoleDisplay(user.role)} color={getRoleColor(user.role)} size="small" icon={getRoleIcon(user.role)} sx={{ mt: 0.5 }} />
@@ -509,8 +523,8 @@ export default function AdminDashboard() {
             <Typography variant="caption" color="text.secondary">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'No date'}</Typography>
           </Box>
           <Stack direction="row" spacing={0.5}>
-            <Tooltip title="Change Role"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowRoleModal(true); }} sx={{ boxShadow: 1, borderRadius: 1 }}><Shield fontSize="small" /></IconButton></Tooltip>
-            <Tooltip title="Delete User"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowDeleteConfirm(true); }} sx={{ color: 'error.main', boxShadow: 1, borderRadius: 1 }}><Delete fontSize="small" /></IconButton></Tooltip>
+            <Tooltip title="Change Role"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowRoleModal(true); }} sx={{ boxShadow: 1, borderRadius: 1 }}><Shield /></IconButton></Tooltip>
+            <Tooltip title="Delete User"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowDeleteConfirm(true); }} sx={{ color: 'error.main', boxShadow: 1, borderRadius: 1 }}><Delete /></IconButton></Tooltip>
           </Stack>
         </Stack>
       </CardContent>
@@ -550,7 +564,7 @@ export default function AdminDashboard() {
     }} onClick={onSelect}>
       <Stack direction="row" justifyContent="space-between" alignItems="center">
         <Stack direction="row" spacing={1} alignItems="center">
-          <Avatar sx={{ width: 24, height: 24, bgcolor: role.color || '#9c27b0' }}><PersonIcon fontSize="small" /></Avatar>
+          <Avatar sx={{ width: 24, height: 24, bgcolor: role.color || '#9c27b0' }}><PersonIcon /></Avatar>
           <Typography variant="body1" fontWeight="medium">{role.name}</Typography>
           {!role.is_system && <Chip label="custom" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.625rem' }} />}
         </Stack>
@@ -566,7 +580,7 @@ export default function AdminDashboard() {
         <Typography variant="h4" fontWeight="bold" textAlign="center" gutterBottom>Admin Dashboard</Typography>
         <Grid container spacing={cardSpacing} mb={cardSpacing}>
           {Array.from({ length: 6 }).map((_, i) => (
-            <Grid item xs={6} sm={4} md={2} key={i}>
+            <Grid size={{ xs: 6, sm: 4, md: 2 }} key={i}>
               <Card sx={{ height: '100%' }}>
                 <CardContent sx={{ textAlign: 'center', p: 2 }}>
                   <Skeleton variant="circular" width={56} height={56} sx={{ mx: 'auto', mb: 1 }} />
@@ -580,8 +594,8 @@ export default function AdminDashboard() {
         <Paper sx={{ boxShadow: 3, borderRadius: 2, overflow: 'hidden' }}>
           <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
             <Grid container spacing={2}>
-              <Grid item xs={12} sm={8}><Skeleton variant="rounded" height={40} /></Grid>
-              <Grid item xs={12} sm={4}><Skeleton variant="rounded" height={40} /></Grid>
+              <Grid size={{ xs: 12, sm: 8 }}><Skeleton variant="rounded" height={40} /></Grid>
+              <Grid size={{ xs: 12, sm: 4 }}><Skeleton variant="rounded" height={40} /></Grid>
             </Grid>
           </Box>
           {isMdDown
@@ -593,6 +607,55 @@ export default function AdminDashboard() {
     );
   }
 
+  // ─── Organization tab content ───────────────────────────────────────────────
+  const orgTabContent = () => (
+    <Box sx={{ p: getResponsiveValue(1,2,3,3,3), pt: 3 }}>
+      <Typography variant="h6" fontWeight="bold" sx={{ mb: 2 }}>Organizations</Typography>
+      <Grid container spacing={cardSpacing}>
+        {organizations.map(org => (
+          <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={org.id || org._id}>
+            <Card sx={cardStyles}>
+              <CardContent>
+                <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+                  <Avatar sx={{ bgcolor: '#1976d2', width: 48, height: 48, boxShadow: 2 }}><BusinessIcon /></Avatar>
+                  <Box>
+                    <Typography variant="h6" fontWeight="bold">{org.name}</Typography>
+                    <Typography variant="body2" color="text.secondary">{org.email}</Typography>
+                    {org.phone && (
+                      <Typography variant="body2" color="text.secondary">
+                        <PhoneIcon /> {org.phone}
+                      </Typography>
+                    )}
+                  </Box>
+                </Stack>
+                {isSupremeAdmin && (
+                  <Box sx={{ display: "flex", justifyContent: "flex-end", my: 1 }}>
+                    <Button variant="outlined" size="small" startIcon={<EditIcon />} sx={{ mr: 1, borderRadius: 1 }} onClick={() => handleOpenEditOrg(org)}>Edit</Button>
+                    <Button variant="outlined" size="small" startIcon={<Delete />} sx={{ ml: 1, borderRadius: 1, color: "error.main"}} onClick={() => { if (window.confirm("Delete " + org.name + "? This cannot be undone.")) { handleDeleteOrganization(org.id || org._id, org.name); }}}>Delete</Button>
+                  </Box>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+        {organizations.length === 0 && (
+          <Grid size={12}>
+            <Box sx={{ textAlign: "center", py: 8 }}>
+              <BusinessIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} /> <Typography variant="h6" color="text.secondary">No organizations found</Typography>
+            </Box>
+          </Grid>
+        )}
+      </Grid>
+      {isSupremeAdmin && (
+        <Box sx={{ mt: 3 }}>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreateOrg} sx={{ boxShadow: 1, borderRadius: 2, width: "100%" }}>
+            <Typography variant="body1">Create New Organization</Typography>
+          </Button>
+        </Box>
+      )}
+    </Box>
+  );
+
   // ─── main render ─────────────────────────────────────────────────────────────
   return (
     <Box p={containerPadding} sx={{ maxWidth: "1400px", margin: "0 auto", mt: getResponsiveValue(2,3,4,5,5), minHeight: "100vh" }}>
@@ -602,6 +665,7 @@ export default function AdminDashboard() {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Typography variant="h4" fontWeight="bold">Admin Dashboard</Typography>
           {selectedOrg && <Chip icon={<BusinessIcon />} label={selectedOrg} color="primary" variant="outlined" />}
+          {isSupremeAdmin && <Chip icon={<AdminPanelSettings />} label="Super Admin" color="error" size="small" />}
         </Box>
         {isSupremeAdmin && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -617,13 +681,13 @@ export default function AdminDashboard() {
                   </Box>
                   <Box sx={{ display: 'flex', gap: 1, width: '100%' }}>
                     <Typography variant="caption" color="text.secondary" noWrap>{org.email}</Typography>
-                    <IconButton size="small" onClick={(e) => { e.stopPropagation(); handleOpenEditOrg(org); }} sx={{ ml: 'auto' }}><EditIcon fontSize="small" /></IconButton>
+                    <IconButton size="small" onClick={(e) => { e.stopPropagation(); handleOpenEditOrg(org); }} sx={{ ml: 'auto' }}><EditIcon /></IconButton>
                   </Box>
                 </MenuItem>
               ))}
               <Divider />
               <MenuItem onClick={handleOpenCreateOrg} sx={{ color: 'primary.main' }}>
-                <AddIcon fontSize="small" sx={{ mr: 1 }} /><Typography variant="body2">Add New Organization</Typography>
+                <AddIcon sx={{ mr: 1 }} /><Typography variant="body2">Add New Organization</Typography>
               </MenuItem>
             </Menu>
           </Box>
@@ -632,7 +696,7 @@ export default function AdminDashboard() {
 
       {/* Stats cards */}
       <Grid container spacing={cardSpacing} sx={{ mb: cardSpacing }}>
-        <Grid item xs={6} sm={4} md={2}>
+        <Grid size={{ xs: 6, sm: 4, md: 2 }}>
           <Card sx={cardStyles}>
             <CardContent sx={{ textAlign: 'center', p: getResponsiveValue(1.5,2,2.5,3,3) }}>
               <Avatar sx={{ bgcolor: '#2196f3', width: 56, height: 56, mb: 2, mx: 'auto', boxShadow: 2 }}><People /></Avatar>
@@ -651,7 +715,7 @@ export default function AdminDashboard() {
               { role: 'user', color: '#4caf50', icon: <PersonIcon /> },
               { role: 'registrant', color: '#ff9800', icon: <RegistrantIcon /> },
             ].map(({ role, color, icon }) => (
-              <Grid item xs={6} sm={4} md={2} key={role}>
+            <Grid size={{ xs: 6, sm: 4, md: 2 }} key={role}>
                 <Card sx={cardStyles}>
                   <CardContent sx={{ textAlign: 'center', p: getResponsiveValue(1.5,2,2.5,3,3) }}>
                     <Avatar sx={{ bgcolor: color, width: 56, height: 56, mb: 2, mx: 'auto', boxShadow: 2 }}>{icon}</Avatar>
@@ -663,7 +727,7 @@ export default function AdminDashboard() {
             ));
           }
           return Object.entries(roleStats).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([role, count], i) => (
-            <Grid item xs={6} sm={4} md={2} key={role}>
+            <Grid size={{ xs: 6, sm: 4, md: 2 }} key={role}>
               <Card sx={cardStyles}>
                 <CardContent sx={{ textAlign: 'center', p: getResponsiveValue(1.5,2,2.5,3,3) }}>
                   <Avatar sx={{ bgcolor: roleCardColors[i % roleCardColors.length], width: 56, height: 56, mb: 2, mx: 'auto', boxShadow: 2 }}>{getRoleIcon(role)}</Avatar>
@@ -679,11 +743,12 @@ export default function AdminDashboard() {
       {/* Main panel */}
       <Paper sx={{ boxShadow: 3, borderRadius: 2, overflow: 'hidden' }}>
         <Box sx={{ borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: getResponsiveValue('column','column','row','row','row'), justifyContent: 'space-between', alignItems: getResponsiveValue('stretch','stretch','center','center','center'), p: 2, gap: getResponsiveValue(2,2,0,0,0) }}>
-          <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} variant={isMdDown ? "fullWidth" : "standard"}>
+<Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} variant={isMdDown ? "fullWidth" : "standard"}>
             <Tab label="USERS" sx={{ fontWeight: 600 }} />
             <Tab label="ROLES & PERMISSIONS" sx={{ fontWeight: 600 }} />
             <Tab label="ACTIVITY LOG" sx={{ fontWeight: 600 }} />
-          </Tabs>
+            {isSupremeAdmin && <Tab label="ORGANIZATIONS" sx={{ fontWeight: 600 }} />}
+</Tabs>
           <Box sx={{ display: 'flex', gap: 1 }}>
             <Button variant="outlined" startIcon={<Refresh />} onClick={handleManualRefresh} sx={{ boxShadow: 1, borderRadius: 2, height: 40 }} size={getResponsiveValue("small","small","medium","medium","medium")}>Refresh</Button>
             {isSupremeAdmin && <Button variant="contained" startIcon={<AdminPanelSettings />} onClick={() => setShowSupremeAdminModal(true)} sx={{ boxShadow: 1, borderRadius: 2, height: 40 }} size={getResponsiveValue("small","small","medium","medium","medium")}>Add Supreme</Button>}
@@ -747,8 +812,12 @@ export default function AdminDashboard() {
                           {isSupremeAdmin && <TableCell><Typography variant="body2" color="text.secondary">{user.organization || 'N/A'}</Typography></TableCell>}
                           <TableCell align="right">
                             <Stack direction="row" spacing={1} justifyContent="flex-end">
-                              <Tooltip title="Change Role"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowRoleModal(true); }} sx={{ boxShadow: 1, borderRadius: 1 }}><Shield fontSize="small" /></IconButton></Tooltip>
-                              <Tooltip title="Delete User"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowDeleteConfirm(true); }} sx={{ color: 'error.main', boxShadow: 1, borderRadius: 1 }}><Delete fontSize="small" /></IconButton></Tooltip>
+                              <Tooltip title="Change Role"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowRoleModal(true); }} sx={{ boxShadow: 1, borderRadius: 1 }}><Shield /></IconButton></Tooltip>
+                              {isSupremeAdmin && (
+                                <Tooltip title={`Make admin of ${selectedOrg}`}>
+                                  <IconButton size="small" disabled={user.role === 'admin' || updatingRole} onClick={() => handleMakeAdmin(user)} sx={{ boxShadow: 1, borderRadius: 1 }}><AdminPanelSettings /></IconButton>
+                                </Tooltip>
+                              )}
                             </Stack>
                           </TableCell>
                         </TableRow>
@@ -771,7 +840,7 @@ export default function AdminDashboard() {
             </Alert>
             <Grid container spacing={cardSpacing}>
               {uniqueRoles.map((role, i) => (
-                <Grid item xs={12} sm={6} md={4} lg={3} key={role}>
+                <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={role}>
                   <Card sx={cardStyles}>
                     <CardContent>
                       <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
@@ -828,6 +897,9 @@ export default function AdminDashboard() {
             )}
           </Box>
         )}
+
+        {/* Organizations tab (super admin only) */}
+        {activeTab === 3 && isSupremeAdmin && orgTabContent()}
       </Paper>
 
       {/* Modals */}
@@ -859,11 +931,6 @@ export default function AdminDashboard() {
         <DialogContent>
           <Stack spacing={3} sx={{ mt: 1 }}>
             <TextField label="Organization Name *" value={orgFormData.name} onChange={e => setOrgFormData({ ...orgFormData, name: e.target.value })} error={!!orgFormErrors.name} helperText={orgFormErrors.name} fullWidth required disabled={savingOrg} />
-            <TextField label="Address" value={orgFormData.address} onChange={e => setOrgFormData({ ...orgFormData, address: e.target.value })} fullWidth multiline rows={2} disabled={savingOrg} />
-            <Grid container spacing={2}>
-              <Grid item xs={6}><TextField label="Phone" value={orgFormData.phone} onChange={e => setOrgFormData({ ...orgFormData, phone: e.target.value })} fullWidth disabled={savingOrg} /></Grid>
-              <Grid item xs={6}><TextField label="Email *" type="email" value={orgFormData.email} onChange={e => setOrgFormData({ ...orgFormData, email: e.target.value })} error={!!orgFormErrors.email} helperText={orgFormErrors.email} fullWidth required disabled={savingOrg} /></Grid>
-            </Grid>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 3, gap: 1 }}>
@@ -906,7 +973,7 @@ export default function AdminDashboard() {
                     <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => { setShowRoleModal(false); setShowCreateRoleModal(true); }} sx={{ borderRadius: 2 }}>ADD ROLE</Button>
                   </Box>
                   <Stack spacing={1} sx={{ maxHeight: 400, overflowY: 'auto', pr: 1 }}>
-                    {organizationRoles.map(role => <RoleOption key={role.name} role={role} onSelect={() => handleRoleChange(selectedUser.id, role.name)} />)}
+                    {rolesForModal.map(role => <RoleOption key={role.name} role={role} onSelect={() => handleRoleChange(selectedUser.id, role.name)} />)}
                   </Stack>
                 </>
               )}
