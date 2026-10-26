@@ -1,35 +1,71 @@
-import React, { useState, useEffect, useRef, useContext, useMemo, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useContext,
+  useMemo,
+  useCallback,
+} from "react";
 import {
-  Checkbox, FormControlLabel, Menu, DialogContentText,
-  ListItemIcon, ListItemText,
+  Checkbox,
+  FormControlLabel,
+  Menu,
+  DialogContentText,
+  ListItemIcon,
+  ListItemText,
 } from "@mui/material";
 import {
-  Box, Typography, Paper, Grid, TextField, Button,
-  Table, TableBody, TableCell, TableHead, TableRow,
-  IconButton, useTheme, useMediaQuery, TablePagination,
-  MenuItem, Select, Chip, Card, CardContent, Stack,
-  Divider, Dialog, DialogTitle, DialogContent, DialogActions,
-  Tooltip, Skeleton, Tabs, Tab,
+  Box,
+  Typography,
+  Paper,
+  Grid,
+  TextField,
+  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  IconButton,
+  useTheme,
+  useMediaQuery,
+  TablePagination,
+  MenuItem,
+  Select,
+  Chip,
+  Card,
+  CardContent,
+  Stack,
+  Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Tooltip,
+  Skeleton,
+  Tabs,
+  Tab,
 } from "@mui/material";
-import { DataGrid, GridToolbar } from "@mui/x-data-grid";
+import { DataGrid } from "@mui/x-data-grid";
 import AddPersonDialog from "../components/AddPersonDialog";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
-import GroupIcon from "@mui/icons-material/Group";
-import { PersonAdd as PersonAddIcon } from "@mui/icons-material";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
+import GroupIcon from "@mui/icons-material/Group";
+import PersonAddAltIcon  from "@mui/icons-material/PersonAddAlt";
+import MergeIcon from "@mui/icons-material/Merge";
+import PersonAddIcon from "@mui/icons-material/PersonAdd";
+import CloseIcon from "@mui/icons-material/Close";
+import SaveIcon from "@mui/icons-material/Save";
+import RefreshIcon from "@mui/icons-material/Refresh";
+// "@aldabil/react-scheduler"
 import ConsolidationModal from "../components/ConsolidationModal";
 import EmojiPeopleIcon from "@mui/icons-material/EmojiPeople";
-import PersonAddAltIcon from "@mui/icons-material/PersonAddAlt";
-import MergeIcon from "@mui/icons-material/Merge";
 import EventHistory from "../components/EventHistory";
 import { saveToEventHistory } from "../utils/eventhistory";
-import SaveIcon from "@mui/icons-material/Save";
-import CloseIcon from "@mui/icons-material/Close";
-import RefreshIcon from "@mui/icons-material/Refresh";
 import DownloadIcon from "@mui/icons-material/Download";
 import DeleteConfirmationModal from "../components/DeleteConfirmationModal";
 import EventHistoryModal from "../components/EventHistoryModal";
@@ -37,6 +73,12 @@ import { AuthContext } from "../contexts/AuthContext";
 import * as XLSX from "xlsx";
 import { DeleteForever as DeleteForeverIcon } from "@mui/icons-material";
 import { useTaskUpdate } from "../contexts/TaskUpdateContext";
+import {
+  getTokens,
+  inputSx as sharedInputSx,
+  outlinedBtnSx as sharedOutlinedBtnSx,
+  primaryBtnSx as sharedPrimaryBtnSx,
+} from "../theme/checkinTokens";
 import {
   getEntryId,
   findPresentEntry,
@@ -65,6 +107,8 @@ const isTodayService = (event) => {
 };
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
+const DISPLAY = "'Bricolage Grotesque', 'Figtree', system-ui, sans-serif";
+const BODY = "'Figtree', system-ui, sans-serif";
 
 const CACHE_DURATION = 5 * 60 * 1000;
 
@@ -72,10 +116,10 @@ function buildSearchableText(person) {
   const leaderText = Array.isArray(person.leaders)
     ? person.leaders.map((l) => l.name || "").join(" ")
     : [
-      person.leader1 || person["Leader @1"] || "",
-      person.leader12 || person["Leader @12"] || "",
-      person.leader144 || person["Leader @144"] || "",
-    ].join(" ");
+        person.leader1 || person["Leader @1"] || "",
+        person.leader12 || person["Leader @12"] || "",
+        person.leader144 || person["Leader @144"] || "",
+      ].join(" ");
 
   return [
     person.name || person.Name || "",
@@ -87,7 +131,9 @@ function buildSearchableText(person) {
     person.stage || person.Stage || "",
     person.invitedBy || person.InvitedBy || "",
     person.address || person.Address || "",
-  ].join(" ").toLowerCase();
+  ]
+    .join(" ")
+    .toLowerCase();
 }
 
 function matchesSearch(person, terms) {
@@ -103,12 +149,16 @@ function isPriorityPerson(first, last) {
   const fn = (first || "").toLowerCase();
   const sn = (last || "").toLowerCase();
   return PRIORITY_PEOPLE.some(
-    (p) => p.surnameIncludes.some(s => sn.includes(s)) && p.firstNameIncludes.some(f => fn.includes(f))
+    (p) =>
+      p.surnameIncludes.some((s) => sn.includes(s)) &&
+      p.firstNameIncludes.some((f) => fn.includes(f)),
   );
 }
 
 function normalisePerson(p) {
-  let leader1 = "", leader12 = "", leader144 = "";
+  let leader1 = "",
+    leader12 = "",
+    leader144 = "";
 
   if (Array.isArray(p.leaders) && p.leaders.length) {
     for (const l of p.leaders) {
@@ -131,15 +181,19 @@ function normalisePerson(p) {
     email: p.Email || p.email || "",
     phone: p.Number || p.number || p.phone || "",
     number: p.Number || p.number || p.phone || "",
-    leader1, leader12, leader144,
+    leader1,
+    leader12,
+    leader144,
     gender: p.Gender || p.gender || "",
     address: p.Address || p.address || "",
     birthday: p.Birthday || p.birthday || "",
     dob: p.Birthday || p.birthday || "",
     invitedBy: p.InvitedBy || p.invitedBy || "",
     stage: p.Stage || p.stage || "Win",
-    dateCreated: p.DateCreated || p.created_at || p.createdAt || p.CreatedAt || "",
-    created_at: p.created_at || p.DateCreated || p.createdAt || p.CreatedAt || "",
+    dateCreated:
+      p.DateCreated || p.created_at || p.createdAt || p.CreatedAt || "",
+    created_at:
+      p.created_at || p.DateCreated || p.createdAt || p.CreatedAt || "",
     fullName: p.FullName || `${name} ${surname}`.trim(),
     leaders: p.leaders || [],
     LeaderId: p.LeaderId || p.leaderId || null,
@@ -156,9 +210,19 @@ function s2ab(s) {
 }
 
 const emptyForm = {
-  name: "", surname: "", email: "", phone: "", number: "", gender: "",
-  invitedBy: "", leader1: "", leader12: "", leader144: "",
-  stage: "Win", dob: "", address: "",
+  name: "",
+  surname: "",
+  email: "",
+  phone: "",
+  number: "",
+  gender: "",
+  invitedBy: "",
+  leader1: "",
+  leader12: "",
+  leader144: "",
+  stage: "Win",
+  dob: "",
+  address: "",
 };
 
 const cleanEventId = (id) => id?.split("_")[0] ?? id;
@@ -172,7 +236,8 @@ const getCachedPeople = () => {
 
 const getCacheTimestamp = () => {
   const cache = window.globalPeopleCache;
-  if (cache && typeof cache === "object" && cache.timestamp) return cache.timestamp;
+  if (cache && typeof cache === "object" && cache.timestamp)
+    return cache.timestamp;
   return window.globalCacheTimestamp;
 };
 
@@ -183,7 +248,7 @@ function ServiceCheckIn() {
   const [attendees, setAttendees] = useState(() => {
     const cache = getCachedPeople();
     const ts = getCacheTimestamp();
-    if (cache && ts && (Date.now() - ts < CACHE_DURATION)) {
+    if (cache && ts && Date.now() - ts < CACHE_DURATION) {
       return cache.map(normalisePerson);
     }
     return [];
@@ -204,7 +269,9 @@ function ServiceCheckIn() {
   const [sortModel, setSortModel] = useState([]);
   const [realTimeData, setRealTimeData] = useState(null);
   const [, setHasDataLoaded] = useState(attendees.length > 0);
-  const [isLoadingPeople, setIsLoadingPeople] = useState(attendees.length === 0);
+  const [isLoadingPeople, setIsLoadingPeople] = useState(
+    attendees.length === 0,
+  );
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [isClosingEvent, setIsClosingEvent] = useState(false);
@@ -221,10 +288,24 @@ function ServiceCheckIn() {
   const [activeTab, setActiveTab] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [checkInLoading, setCheckInLoading] = useState(new Set());
-  const [deleteConfirmation, setDeleteConfirmation] = useState({ open: false, personId: null, personName: "" });
-  const [eventHistoryModal, setEventHistoryModal] = useState({ open: false, event: null, type: null, data: [] });
+  const [deleteConfirmation, setDeleteConfirmation] = useState({
+    open: false,
+    personId: null,
+    personName: "",
+  });
+  const [eventHistoryModal, setEventHistoryModal] = useState({
+    open: false,
+    event: null,
+    type: null,
+    data: [],
+  });
   const [formData, setFormData] = useState(emptyForm);
-  const [, setContextMenu] = useState({ mouseX: null, mouseY: null, data: null, type: null });
+  const [, setContextMenu] = useState({
+    mouseX: null,
+    mouseY: null,
+    data: null,
+    type: null,
+  });
 
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down("xs"));
@@ -233,16 +314,90 @@ function ServiceCheckIn() {
   const isLg = useMediaQuery(theme.breakpoints.down("lg"));
   const isDarkMode = theme.palette.mode === "dark";
 
-  const rv = useCallback((xs, sm, md, lg, xl) => {
-    if (isXs) return xs; if (isSm) return sm; if (isMd) return md; if (isLg) return lg; return xl;
-  }, [isXs, isSm, isMd, isLg]);
+  const accent = theme.palette.primary.main;
+  const ink = isDarkMode ? "#f1f0f8" : "#1c1b2e";
+  const mute = isDarkMode ? "#9a98b0" : "#6c6a80";
+  const line = isDarkMode ? "#2a2a38" : "#e3e1ec";
+  const fieldBg = isDarkMode ? "#1d1d29" : "#f8f7fb";
+  const cardBg = isDarkMode ? "#16161f" : "#ffffff";
+  const pageBg = isDarkMode ? "#0d0d14" : "#f3f2f7";
+  const modalTokens = getTokens(isDarkMode);
+  const serviceDialogTableSx = {
+    "& .MuiTableCell-root": {
+      py: 1.1,
+      fontFamily: BODY,
+      fontSize: "0.8rem",
+      color: modalTokens.ink,
+      borderColor: modalTokens.line,
+    },
+    "& .MuiTableHead .MuiTableCell-root": {
+      bgcolor: modalTokens.fieldBg,
+      color: modalTokens.mute,
+      fontSize: "0.72rem",
+      fontWeight: 700,
+      whiteSpace: "nowrap",
+    },
+    "& .MuiTableBody .MuiTypography-root": {
+      fontFamily: BODY,
+    },
+  };
+  const serviceDialogPaginationSx = {
+    color: modalTokens.mute,
+    fontFamily: BODY,
+    "& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows": {
+      color: modalTokens.mute,
+      fontFamily: BODY,
+    },
+    "& .MuiTablePagination-select": { fontFamily: BODY },
+    "& .MuiSvgIcon-root": { color: modalTokens.mute },
+  };
+  const inputSx = {
+    "& .MuiOutlinedInput-root": {
+      bgcolor: cardBg,
+      borderRadius: "12px",
+      fontFamily: BODY,
+      height: 44,
+      "& fieldset": { borderColor: line, borderWidth: 1.5 },
+      "&:hover fieldset": { borderColor: accent },
+      "&.Mui-focused fieldset": { borderColor: accent, borderWidth: 1.5 },
+    },
+  };
+  const outlinedBtnSx = {
+    height: 44,
+    borderRadius: "12px",
+    textTransform: "none",
+    fontWeight: 600,
+    fontFamily: BODY,
+    color: ink,
+    borderColor: line,
+    borderWidth: 1.5,
+    bgcolor: cardBg,
+    "&:hover": { borderColor: accent, borderWidth: 1.5, bgcolor: cardBg },
+  };
+  const iconBtnSx = (disabled) => ({
+    p: isSm ? "4px" : "7px",
+    color: mute,
+    opacity: disabled ? 0.4 : 1,
+    "&:hover": { bgcolor: fieldBg, color: ink },
+  });
+
+  const rv = useCallback(
+    (xs, sm, md, lg, xl) => {
+      if (isXs) return xs;
+      if (isSm) return sm;
+      if (isMd) return md;
+      if (isLg) return lg;
+      return xl;
+    },
+    [isXs, isSm, isMd, isLg],
+  );
 
   const containerPadding = rv(0.5, 1, 2, 3, 3);
   const cardSpacing = rv(0.5, 1, 1.5, 2, 2);
 
   const attendeeMap = useMemo(() => {
     const map = new Map();
-    attendees.forEach(a => map.set(a._id, a));
+    attendees.forEach((a) => map.set(a._id, a));
     return map;
   }, [attendees]);
 
@@ -297,7 +452,7 @@ function ServiceCheckIn() {
 
   const commitRealTimeData = useCallback((freshData) => {
     if (!freshData) return;
-    setRealTimeData(prev => {
+    setRealTimeData((prev) => {
       if (!prev) return freshData;
       // Reconcile consolidations: a freshly created consolidation is shown
       // optimistically before the server write is visible on a refetch. Keep
@@ -305,8 +460,8 @@ function ServiceCheckIn() {
       // don't briefly "disappear"; older ids defer to server truth.
       const freshCons = freshData.consolidations || [];
       const prevCons = prev.consolidations || [];
-      const freshIds = new Set(freshCons.map(c => c.id || c._id));
-      const preserved = prevCons.filter(c => {
+      const freshIds = new Set(freshCons.map((c) => c.id || c._id));
+      const preserved = prevCons.filter((c) => {
         if (freshIds.has(c.id || c._id)) return false;
         const createdMs = c.created_at ? new Date(c.created_at).getTime() : 0;
         return createdMs > Date.now() - 20000;
@@ -314,7 +469,11 @@ function ServiceCheckIn() {
       let result;
       if (preserved.length) {
         const mergedCons = [...freshCons, ...preserved];
-        result = { ...freshData, consolidations: mergedCons, consolidation_count: mergedCons.length };
+        result = {
+          ...freshData,
+          consolidations: mergedCons,
+          consolidation_count: mergedCons.length,
+        };
       } else {
         result = freshData;
       }
@@ -322,12 +481,18 @@ function ServiceCheckIn() {
       // because of the server's date-bucket ambiguity.
       if (sessionCaptured.current.size > 0) {
         const present = [...(result.present_attendees || [])];
-        const ids = new Set(present.map(a => getEntryId(a)));
+        const ids = new Set(present.map((a) => getEntryId(a)));
         const added = [];
-        sessionCaptured.current.forEach((entry, gid) => { if (gid && !ids.has(gid)) added.push(entry); });
+        sessionCaptured.current.forEach((entry, gid) => {
+          if (gid && !ids.has(gid)) added.push(entry);
+        });
         if (added.length) {
           const mergedPresent = [...present, ...added];
-          result = { ...result, present_attendees: mergedPresent, present_count: mergedPresent.length };
+          result = {
+            ...result,
+            present_attendees: mergedPresent,
+            present_count: mergedPresent.length,
+          };
         }
       }
       return result;
@@ -337,7 +502,7 @@ function ServiceCheckIn() {
   const transformEvents = useCallback((eventsData, normalisedPeople) => {
     const peopleById = new Map();
     const peopleByEmail = new Map();
-    normalisedPeople.forEach(p => {
+    normalisedPeople.forEach((p) => {
       if (p._id) peopleById.set(p._id, p);
       if (p.email) peopleByEmail.set(p.email.toLowerCase(), p);
     });
@@ -350,7 +515,10 @@ function ServiceCheckIn() {
 
     const mapEntry = (entry, isNew = false) => {
       const id = entry.id || entry._id || entry.person_id;
-      const fp = findPerson(id, entry.email || entry.Email || entry.person_email);
+      const fp = findPerson(
+        id,
+        entry.email || entry.Email || entry.person_email,
+      );
       return {
         ...entry,
         name: entry.name || entry.Name || fp?.name || "",
@@ -367,37 +535,77 @@ function ServiceCheckIn() {
     };
 
     return eventsData
-      .map(event => {
+      .map((event) => {
         try {
           if (!event) return null;
-          
-          const attendeesArray = Array.isArray(event.attendees) ? event.attendees : [];
-          const newPeopleArray = Array.isArray(event.new_people) ? event.new_people : [];
-          const consolidationsArray = Array.isArray(event.consolidations) ? event.consolidations : [];
+          const attendeesArray = Array.isArray(event.attendees)
+            ? event.attendees
+            : [];
+          const newPeopleArray = Array.isArray(event.new_people)
+            ? event.new_people
+            : [];
+          const consolidationsArray = Array.isArray(event.consolidations)
+            ? event.consolidations
+            : [];
 
-          const attendanceData = attendeesArray.map(a => mapEntry(a));
-          const newPeopleData = newPeopleArray.map(np => mapEntry(np, true));
-          const consolidatedData = consolidationsArray.map(c => {
+          const attendanceData = attendeesArray.map((a) => mapEntry(a));
+          const newPeopleData = newPeopleArray.map((np) => mapEntry(np, true));
+          const consolidatedData = consolidationsArray.map((c) => {
             const nestedPerson = c.person_data || c.person || {};
             const id = c.person_id || c.id || c._id || nestedPerson.id;
             const email =
-              c.person_email || c.email || nestedPerson.email || nestedPerson.Email;
+              c.person_email ||
+              c.email ||
+              nestedPerson.email ||
+              nestedPerson.Email;
             const fp = findPerson(id, email);
             return {
               ...c,
               name:
-                c.person_name || c.name || nestedPerson.name || nestedPerson.Name || fp?.name || "",
+                c.person_name ||
+                c.name ||
+                nestedPerson.name ||
+                nestedPerson.Name ||
+                fp?.name ||
+                "",
               surname:
-                c.person_surname || c.surname || nestedPerson.surname || nestedPerson.Surname || fp?.surname || "",
+                c.person_surname ||
+                c.surname ||
+                nestedPerson.surname ||
+                nestedPerson.Surname ||
+                fp?.surname ||
+                "",
               person_name:
-                c.person_name || c.name || nestedPerson.name || nestedPerson.Name || fp?.name || "",
+                c.person_name ||
+                c.name ||
+                nestedPerson.name ||
+                nestedPerson.Name ||
+                fp?.name ||
+                "",
               person_surname:
-                c.person_surname || c.surname || nestedPerson.surname || nestedPerson.Surname || fp?.surname || "",
-              person_email: c.person_email || c.email || nestedPerson.email || nestedPerson.Email || fp?.email || "",
+                c.person_surname ||
+                c.surname ||
+                nestedPerson.surname ||
+                nestedPerson.Surname ||
+                fp?.surname ||
+                "",
+              person_email:
+                c.person_email ||
+                c.email ||
+                nestedPerson.email ||
+                nestedPerson.Email ||
+                fp?.email ||
+                "",
               person_phone:
-                c.person_phone || c.phone || nestedPerson.phone || nestedPerson.Number || fp?.phone || "",
+                c.person_phone ||
+                c.phone ||
+                nestedPerson.phone ||
+                nestedPerson.Number ||
+                fp?.phone ||
+                "",
               assigned_to: c.assigned_to || c.assignedTo || "",
-              decision_type: c.decision_type || c.consolidation_type || "Commitment",
+              decision_type:
+                c.decision_type || c.consolidation_type || "Commitment",
               status: c.status || "active",
               leader1: fp?.leader1 || c.leader1 || "",
               leader12: fp?.leader12 || c.leader12 || "",
@@ -434,7 +642,9 @@ function ServiceCheckIn() {
             created_at: event.created_at,
             updated_at: event.updated_at,
           };
-        } catch { return null; }
+        } catch {
+          return null;
+        }
       })
       .filter(Boolean);
   }, []);
@@ -492,7 +702,7 @@ function ServiceCheckIn() {
         const cacheHit =
           getCachedPeople() &&
           getCacheTimestamp() &&
-          (Date.now() - getCacheTimestamp() < CACHE_DURATION);
+          Date.now() - getCacheTimestamp() < CACHE_DURATION;
 
         if (cacheHit) {
           const normalisedPeople = getCachedPeople().map(normalisePerson);
@@ -510,9 +720,14 @@ function ServiceCheckIn() {
             setIsLoadingHistory(false);
 
             const todayOpen = valid
-              .filter(e => {
+              .filter((e) => {
                 const status = e.status?.toLowerCase() || "";
-                if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
+                if (
+                  ["complete", "closed", "cancelled", "did_not_meet"].includes(
+                    status,
+                  )
+                )
+                  return false;
                 return isTodayService(e);
               })
               .sort((a, b) => (b.attendance + b.newPeople + b.consolidated) - (a.attendance + a.newPeople + a.consolidated));
@@ -546,9 +761,14 @@ function ServiceCheckIn() {
             setIsLoadingHistory(false);
 
             const todayOpen = valid
-              .filter(e => {
+              .filter((e) => {
                 const status = e.status?.toLowerCase() || "";
-                if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
+                if (
+                  ["complete", "closed", "cancelled", "did_not_meet"].includes(
+                    status,
+                  )
+                )
+                  return false;
                 return isTodayService(e);
               })
               .sort((a, b) => (b.attendance + b.newPeople + b.consolidated) - (a.attendance + a.newPeople + a.consolidated));
@@ -615,7 +835,7 @@ function ServiceCheckIn() {
   }, [events]);
 
   const getFilteredClosedEvents = useCallback(() => {
-    const closed = events.filter(event => {
+    const closed = events.filter((event) => {
       if (event.isGlobal !== true && event.isGlobal !== "true") return false;
       const typeName = (event.eventType || "").toLowerCase();
       if (["cells", "all cells", "cell"].includes(typeName)) return false;
@@ -625,11 +845,13 @@ function ServiceCheckIn() {
     });
     if (!eventSearch.trim()) return closed;
     const q = eventSearch.toLowerCase();
-    return closed.filter(e =>
-      e.eventName?.toLowerCase().includes(q) ||
-      (e.date && new Date(e.date).toLocaleDateString().toLowerCase().includes(q)) ||
-      e.status?.toLowerCase().includes(q) ||
-      e.closed_by?.toLowerCase().includes(q)
+    return closed.filter(
+      (e) =>
+        e.eventName?.toLowerCase().includes(q) ||
+        (e.date &&
+          new Date(e.date).toLocaleDateString().toLowerCase().includes(q)) ||
+        e.status?.toLowerCase().includes(q) ||
+        e.closed_by?.toLowerCase().includes(q),
     );
   }, [events, eventSearch]);
 
@@ -661,7 +883,7 @@ function ServiceCheckIn() {
 
   const mergedNewSet = useMemo(() => {
     const entries = new Map();
-    (realTimeData?.new_people || []).forEach(e => {
+    (realTimeData?.new_people || []).forEach((e) => {
       const key = getEntryId(e) || String(e?.email || "")?.toLowerCase();
       if (key) entries.set(`server:${key}`, e);
     });
@@ -687,7 +909,7 @@ function ServiceCheckIn() {
   const filteredAttendees = useMemo(() => {
     if (!search.trim()) return attendeesWithStatus;
     const terms = search.toLowerCase().trim().split(/\s+/);
-    const filtered = attendeesWithStatus.filter(p => matchesSearch(p, terms));
+    const filtered = attendeesWithStatus.filter((p) => matchesSearch(p, terms));
     return [...filtered].sort((a, b) => {
       const sa = isPriorityPerson(a.name, a.surname) ? 1 : 0;
       const sb = isPriorityPerson(b.name, b.surname) ? 1 : 0;
@@ -696,7 +918,7 @@ function ServiceCheckIn() {
     });
   }, [attendeesWithStatus, search]);
 
-const sortedFilteredAttendees = useMemo(() => {
+  const sortedFilteredAttendees = useMemo(() => {
     const result = [...filteredAttendees];
     const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
@@ -706,9 +928,11 @@ const sortedFilteredAttendees = useMemo(() => {
       const v = value.toString().toLowerCase();
       let score = 0;
       for (const term of terms) {
-        if (v === term) score += 10;           // exact match
-        else if (v.startsWith(term)) score += 5; // starts with
-        else if (v.includes(term)) score += 2;   // contains
+        if (v === term)
+          score += 10; // exact match
+        else if (v.startsWith(term))
+          score += 5; // starts with
+        else if (v.includes(term)) score += 2; // contains
       }
       return score;
     };
@@ -724,7 +948,9 @@ const sortedFilteredAttendees = useMemo(() => {
             if (sa !== sb) return sort === "desc" ? sa - sb : sb - sa;
           }
           // Fall back to normal alphabetical sort
-          const cmp = (a[field] || "").toString().toLowerCase()
+          const cmp = (a[field] || "")
+            .toString()
+            .toLowerCase()
             .localeCompare((b[field] || "").toString().toLowerCase());
           return sort === "desc" ? -cmp : cmp;
         });
@@ -746,10 +972,11 @@ const sortedFilteredAttendees = useMemo(() => {
   const consolidationCount = realTimeData?.consolidation_count ?? realTimeData?.consolidations?.length ?? 0;
 
   const modalFilteredAttendees = useMemo(() => {
-    const full = (realTimeData?.present_attendees || []).map(a => {
+    const full = (realTimeData?.present_attendees || []).map((a) => {
       const fp = attendeeMap.get(a.id || a._id) || {};
       return {
-        ...a, ...fp,
+        ...a,
+        ...fp,
         name: fp.name || a.name || "",
         surname: fp.surname || a.surname || "",
         email: fp.email || a.email || "",
@@ -763,41 +990,51 @@ const sortedFilteredAttendees = useMemo(() => {
       };
     });
     const sorted = [...full].sort((a, b) =>
-      `${a.name} ${a.surname}`.toLowerCase().localeCompare(`${b.name} ${b.surname}`.toLowerCase())
+      `${a.name} ${a.surname}`
+        .toLowerCase()
+        .localeCompare(`${b.name} ${b.surname}`.toLowerCase()),
     );
     if (!modalSearch.trim()) return sorted;
     const terms = modalSearch.toLowerCase().trim().split(/\s+/);
-    return sorted.filter(p => matchesSearch(p, terms));
+    return sorted.filter((p) => matchesSearch(p, terms));
   }, [realTimeData, attendeeMap, modalSearch]);
 
   const modalPaginatedAttendees = useMemo(
-    () => modalFilteredAttendees.slice(
-      modalPage * modalRowsPerPage,
-      modalPage * modalRowsPerPage + modalRowsPerPage
-    ),
-    [modalFilteredAttendees, modalPage, modalRowsPerPage]
+    () =>
+      modalFilteredAttendees.slice(
+        modalPage * modalRowsPerPage,
+        modalPage * modalRowsPerPage + modalRowsPerPage,
+      ),
+    [modalFilteredAttendees, modalPage, modalRowsPerPage],
   );
 
   const newPeopleFilteredList = useMemo(() => {
-    const full = newPeopleFromPresent(realTimeData?.present_attendees || [], attendeeMap, mergedNewSet);
+    const full = newPeopleFromPresent(
+      realTimeData?.present_attendees || [],
+      attendeeMap,
+      mergedNewSet,
+    );
     const sorted = [...full].sort((a, b) =>
-      `${a.name} ${a.surname}`.toLowerCase().localeCompare(`${b.name} ${b.surname}`.toLowerCase())
+      `${a.name} ${a.surname}`
+        .toLowerCase()
+        .localeCompare(`${b.name} ${b.surname}`.toLowerCase()),
     );
     if (!newPeopleSearch.trim()) return sorted;
     const terms = newPeopleSearch.toLowerCase().trim().split(/\s+/);
-    return sorted.filter(p => matchesSearch(p, terms));
+    return sorted.filter((p) => matchesSearch(p, terms));
   }, [realTimeData, attendeeMap, mergedNewSet, newPeopleSearch]);
 
   const newPeoplePaginatedList = useMemo(
-    () => newPeopleFilteredList.slice(
-      newPeoplePage * newPeopleRowsPerPage,
-      newPeoplePage * newPeopleRowsPerPage + newPeopleRowsPerPage
-    ),
-    [newPeopleFilteredList, newPeoplePage, newPeopleRowsPerPage]
+    () =>
+      newPeopleFilteredList.slice(
+        newPeoplePage * newPeopleRowsPerPage,
+        newPeoplePage * newPeopleRowsPerPage + newPeopleRowsPerPage,
+      ),
+    [newPeopleFilteredList, newPeoplePage, newPeopleRowsPerPage],
   );
 
   const filteredConsolidatedPeople = useMemo(() => {
-    const full = (realTimeData?.consolidations || []).map(cons => {
+    const full = (realTimeData?.consolidations || []).map((cons) => {
       const nestedPerson = cons.person_data || cons.person || {};
       const personId = cons.person_id || nestedPerson.id || cons.id || cons._id;
       const personEmail =
@@ -810,16 +1047,19 @@ const sortedFilteredAttendees = useMemo(() => {
         attendeeMap.get(personId) ||
         (personEmail
           ? [...attendeeMap.values()].find(
-              a => a.email?.toLowerCase() === personEmail.toLowerCase(),
+              (a) => a.email?.toLowerCase() === personEmail.toLowerCase(),
             )
           : null) ||
-        attendees.find(a =>
-          a.name === (cons.person_name || cons.name || nestedPerson.name) &&
-          a.surname === (cons.person_surname || cons.surname || nestedPerson.surname)
+        attendees.find(
+          (a) =>
+            a.name === (cons.person_name || cons.name || nestedPerson.name) &&
+            a.surname ===
+              (cons.person_surname || cons.surname || nestedPerson.surname),
         ) ||
         {};
       return {
-        ...cons, ...fp,
+        ...cons,
+        ...fp,
         person_name:
           fp.name ||
           cons.person_name ||
@@ -834,8 +1074,7 @@ const sortedFilteredAttendees = useMemo(() => {
           nestedPerson.surname ||
           nestedPerson.Surname ||
           "",
-        person_email:
-          fp.email || personEmail || "",
+        person_email: fp.email || personEmail || "",
         person_phone:
           fp.phone ||
           fp.number ||
@@ -850,20 +1089,22 @@ const sortedFilteredAttendees = useMemo(() => {
       };
     });
     const sorted = [...full].sort((a, b) =>
-      `${a.person_name} ${a.person_surname}`.toLowerCase()
-        .localeCompare(`${b.person_name} ${b.person_surname}`.toLowerCase())
+      `${a.person_name} ${a.person_surname}`
+        .toLowerCase()
+        .localeCompare(`${b.person_name} ${b.person_surname}`.toLowerCase()),
     );
     if (!consolidatedSearch.trim()) return sorted;
     const terms = consolidatedSearch.toLowerCase().trim().split(/\s+/);
-    return sorted.filter(p => matchesSearch(p, terms));
+    return sorted.filter((p) => matchesSearch(p, terms));
   }, [realTimeData, attendeeMap, attendees, consolidatedSearch]);
 
   const consolidatedPaginatedList = useMemo(
-    () => filteredConsolidatedPeople.slice(
-      consolidatedPage * consolidatedRowsPerPage,
-      consolidatedPage * consolidatedRowsPerPage + consolidatedRowsPerPage
-    ),
-    [filteredConsolidatedPeople, consolidatedPage, consolidatedRowsPerPage]
+    () =>
+      filteredConsolidatedPeople.slice(
+        consolidatedPage * consolidatedRowsPerPage,
+        consolidatedPage * consolidatedRowsPerPage + consolidatedRowsPerPage,
+      ),
+    [filteredConsolidatedPeople, consolidatedPage, consolidatedRowsPerPage],
   );
 
   const handleFullRefresh = useCallback(async () => {
@@ -924,7 +1165,12 @@ const sortedFilteredAttendees = useMemo(() => {
 
   const handleContextMenu = useCallback((event, person, type) => {
     event.preventDefault();
-    setContextMenu({ mouseX: event.clientX - 2, mouseY: event.clientY - 4, data: person, type });
+    setContextMenu({
+      mouseX: event.clientX - 2,
+      mouseY: event.clientY - 4,
+      data: person,
+      type,
+    });
   }, []);
 
   const handleToggleCheckIn = useCallback(async (attendee, presentEntry) => {
@@ -934,17 +1180,23 @@ const sortedFilteredAttendees = useMemo(() => {
     if (!gridId) { toast.error("Missing person ID"); return; }
     if (checkInLoading.has(gridId)) return;
 
-    const isCurrentlyPresent = presentIds.has(gridId);
+      const isCurrentlyPresent = presentIds.has(gridId);
 
-    // When uncapturing, prefer the exact id the server stored on the present
-    // entry. The grid row id comes from the local people cache and can differ
-    // from the stored record (e.g. duplicate rows for the same person), which
-    // makes the server's $pull miss -> 404 -> the row bounces back to checked.
-    const storedPresentEntry = presentEntry || findPresentEntry(realTimeData?.present_attendees || [], gridId);
-    const presentId = isCurrentlyPresent && storedPresentEntry ? (getEntryId(storedPresentEntry) || gridId) : gridId;
+      // When uncapturing, prefer the exact id the server stored on the present
+      // entry. The grid row id comes from the local people cache and can differ
+      // from the stored record (e.g. duplicate rows for the same person), which
+      // makes the server's $pull miss -> 404 -> the row bounces back to checked.
+      const storedPresentEntry =
+        presentEntry ||
+        findPresentEntry(realTimeData?.present_attendees || [], gridId);
+      const presentId =
+        isCurrentlyPresent && storedPresentEntry
+          ? getEntryId(storedPresentEntry) || gridId
+          : gridId;
 
-    setCheckInLoading(prev => new Set(prev).add(gridId));
-    const fullName = `${attendee?.name || ""} ${attendee?.surname || ""}`.trim();
+      setCheckInLoading((prev) => new Set(prev).add(gridId));
+      const fullName =
+        `${attendee?.name || ""} ${attendee?.surname || ""}`.trim();
 
     const optimisticEntry = {
       person_id: gridId, _id: gridId,
@@ -976,71 +1228,105 @@ const sortedFilteredAttendees = useMemo(() => {
       return { ...base, present_attendees: newPresent, present_count: newPresent.length };
     };
 
-    setRealTimeData(prev => (isCurrentlyPresent ? removeFromPresent(prev) : addToPresent(prev)));
+      setRealTimeData((prev) =>
+        isCurrentlyPresent ? removeFromPresent(prev) : addToPresent(prev),
+      );
 
-    const readServerBody = async (res) => {
-      try { return await res.json(); } catch { return {}; }
-    };
-    const serverMsg = (body) => String(body?.detail || body?.message || body?.error || "server error");
+      const readServerBody = async (res) => {
+        try {
+          return await res.json();
+        } catch {
+          return {};
+        }
+      };
+      const serverMsg = (body) =>
+        String(body?.detail || body?.message || body?.error || "server error");
 
-    try {
-      if (!isCurrentlyPresent) {
-        const response = await authFetch(`${BASE_URL}/service-checkin/checkin`, {
-          method: "POST",
-          body: JSON.stringify({
-            session_id: cleanEventId(currentSessionId),
-            event_id: events.find(ev => ev.session_id === currentSessionId)?.event_id,
-            person_data: {
-              id: gridId, person_id: attendee?.person_id, name: attendee?.name, fullName,
-              email: attendee?.email, phone: attendee?.phone, number: attendee?.number,
-              leader12: attendee?.leader12, 
+      try {
+        if (!isCurrentlyPresent) {
+          const response = await authFetch(
+            `${BASE_URL}/service-checkin/checkin`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                event_id: cleanEventId(currentSessionId),
+                person_data: {
+                  id: gridId,
+                  name: attendee?.name,
+                  fullName,
+                  email: attendee?.email,
+                  phone: attendee?.phone,
+                  number: attendee?.number,
+                  leader12: attendee?.leader12,
+                },
+                type: "attendee",
+              }),
             },
-            type: "attendee",
-          }),
-        });
-        const body = await readServerBody(response);
-        const status = classifyToggleAdd(response.status, body);
-        if (status === "failure") {
-          setRealTimeData(removeFromPresent);
-          toast.error(`${fullName} could not be checked in: ${serverMsg(body)}`);
-        } else {
-          sessionCaptured.current.set(gridId, optimisticEntry);
-          if (status === "alreadyPresent") {
-            toast.info(`${fullName} was already captured`);
+          );
+          const body = await readServerBody(response);
+          const status = classifyToggleAdd(response.status, body);
+          if (status === "failure") {
+            setRealTimeData(removeFromPresent);
+            toast.error(
+              `${fullName} could not be checked in: ${serverMsg(body)}`,
+            );
           } else {
-            toast.success(`${fullName} checked in`);
+            sessionCaptured.current.set(gridId, optimisticEntry);
+            if (status === "alreadyPresent") {
+              toast.info(`${fullName} was already captured`);
+            } else {
+              toast.success(`${fullName} checked in`);
+            }
+          }
+        } else {
+          const response = await authFetch(
+            `${BASE_URL}/service-checkin/remove`,
+            {
+              method: "DELETE",
+              body: JSON.stringify({
+                event_id: cleanEventId(currentSessionId),
+                person_id: presentId,
+                type: "attendees",
+              }),
+            },
+          );
+          const body = await readServerBody(response);
+          const status = classifyToggleRemove(response.status, body);
+          if (status === "failure") {
+            setRealTimeData(addToPresent);
+            toast.error(
+              `${fullName} could not be removed from check-in: ${serverMsg(body)}`,
+            );
+          } else {
+            sessionCaptured.current.delete(gridId);
+            toast.info(`${fullName} removed from check-in`);
           }
         }
-      } else {
-        const response = await authFetch(`${BASE_URL}/service-checkin/remove`, {
-          method: "DELETE",
-          body: JSON.stringify({ 
-            event_id: events.find(ev => ev.session_id === currentSessionId)?.event_id,
-            session_id: cleanEventId(currentSessionId), 
-            person_id: presentId, type: "attendee" }),
-        });
-        const body = await readServerBody(response);
-        const status = classifyToggleRemove(response.status, body);
-        if (status === "failure") {
-          setRealTimeData(addToPresent);
-          toast.error(`${fullName} could not be removed from check-in: ${serverMsg(body)}`);
-        } else {
-          sessionCaptured.current.delete(gridId);
-          toast.info(`${fullName} removed from check-in`);
-        }
-      }
 
-      // Don't immediately refetch - the "attendanceUpdated" event listener
-      // will trigger a refetch once the server has processed the change.
-      // Immediate refetch causes a race condition where stale server data
-      // overwrites the optimistic update, making the check-in flicker.
-    } catch (err) {
-      setRealTimeData(prev => (isCurrentlyPresent ? addToPresent(prev) : removeFromPresent(prev)));
-      toast.error(err.message || "Failed to toggle check-in");
-    } finally {
-      setCheckInLoading(prev => { const s = new Set(prev); s.delete(gridId); return s; });
-    }
-  }, [currentSessionId, checkInLoading, presentIds, realTimeData, authFetch, fetchRealTimeEventData, commitRealTimeData]);
+        commitRealTimeData(await fetchRealTimeEventData(currentSessionId));
+      } catch (err) {
+        setRealTimeData((prev) =>
+          isCurrentlyPresent ? addToPresent(prev) : removeFromPresent(prev),
+        );
+        toast.error(err.message || "Failed to toggle check-in");
+      } finally {
+        setCheckInLoading((prev) => {
+          const s = new Set(prev);
+          s.delete(gridId);
+          return s;
+        });
+      }
+    },
+    [
+      currentSessionId,
+      checkInLoading,
+      presentIds,
+      realTimeData,
+      authFetch,
+      fetchRealTimeEventData,
+      commitRealTimeData,
+    ],
+  );
 
   const setPersonNewFlag = useCallback(async (person) => {
     if (!currentSessionId) { toast.error("Please select an event first"); return; }
@@ -1087,10 +1373,12 @@ const sortedFilteredAttendees = useMemo(() => {
   }, []);
 
   // Helper function to get highest available leader
-  const getHighestAvailableLeader = useCallback((person) => {
-    if (!person) return { leader: "No Leader Assigned", level: 0, hasLeader: false };
+  const getHighestAvailableLeader = useCallback(
+    (person) => {
+      if (!person)
+        return { leader: "No Leader Assigned", level: 0, hasLeader: false };
 
-    const leaderEntries = [];
+      const leaderEntries = [];
 
     if (Array.isArray(person.leaders) && person.leaders.length > 0) {
       person.leaders.forEach((leader) => {
@@ -1294,7 +1582,6 @@ const sortedFilteredAttendees = useMemo(() => {
       }
       fetchRealTimeEventData(currentSessionId).then(fd => { if (fd) commitRealTimeData(fd); });
 
-      // Create task for leader when new person is added
       try {
         const leaderInfo = getHighestAvailableLeader(newPersonForGrid);
         if (leaderInfo.hasLeader) {
@@ -1315,39 +1602,39 @@ const sortedFilteredAttendees = useMemo(() => {
   }, [currentSessionId, editingPerson, formData, authFetch, fetchRealTimeEventData, createNewPersonTaskForLeader, getHighestAvailableLeader, resolveLeaderEmail, commitRealTimeData]);
 
   const handleFinishConsolidation = useCallback(async (task) => {
-  if (!currentSessionId) return;
-  const fullName = task.recipientName || `${task.person_name || ""} ${task.person_surname || ""}`.trim() || "Unknown Person";
-  setConsolidationOpen(false);
-  toast.success(`${fullName} consolidated successfully`);
+    if (!currentSessionId) return;
+    const fullName =
+      task.recipientName ||
+      `${task.person_name || ""} ${task.person_surname || ""}`.trim() ||
+      "Unknown Person";
+    setConsolidationOpen(false);
+    toast.success(`${fullName} consolidated successfully`);
 
-  const newCons = {
-    id: task.consolidation?.id || task.consolidation_id || `opt_${Date.now()}`,
-    person_name: task.person_name || "",
-    person_surname: task.person_surname || "",
-    person_email: task.person_email || "",
-    person_phone: task.person_phone || "",
-    decision_type: task.decision_type || "Commitment",
-    assigned_to: task.assigned_to || "",
-    status: "active",
-    created_at: new Date().toISOString(),
-  };
+    const newCons = {
+      id: task.consolidation?.id || task.consolidation_id || `opt_${Date.now()}`,
+      person_name: task.person_name || "",
+      person_surname: task.person_surname || "",
+      person_email: task.person_email || "",
+      person_phone: task.person_phone || "",
+      decision_type: task.decision_type || "Commitment",
+      assigned_to: task.assigned_to || "",
+      status: "active",
+      created_at: new Date().toISOString(),
+    };
 
-  setRealTimeData(prev => {
-    const base = prev || { present_attendees: [], new_people: [], consolidations: [] };
-    const consArr = [...(base.consolidations || []), newCons];
-    return { ...base, consolidations: consArr, consolidation_count: consArr.length };
-  });
+    setRealTimeData((prev) => {
+      const base = prev || { present_attendees: [], new_people: [], consolidations: [] };
+      const consArr = [...(base.consolidations || []), newCons];
+      return { ...base, consolidations: consArr, consolidation_count: consArr.length };
+    });
 
-  // Refetch shortly after so the UI converges with the server. commitRealTimeData
-  // keeps this optimistic consolidation (matched by id / created_at) until the
-  // server write is visible, so it never disappears mid-flight.
-  setTimeout(async () => {
-    commitRealTimeData(await fetchRealTimeEventData(currentSessionId));
-  }, 1500);
+    setTimeout(async () => {
+      commitRealTimeData(await fetchRealTimeEventData(currentSessionId));
+    }, 1500);
 
-  notifyTaskUpdate?.();
-  window.dispatchEvent(new CustomEvent("taskUpdated", { detail: { action: "consolidationCreated", task } }));
-}, [currentSessionId, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
+    notifyTaskUpdate?.();
+    window.dispatchEvent(new CustomEvent("taskUpdated", { detail: { action: "consolidationCreated", task } }));
+  }, [currentSessionId, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
 
   const handleSaveAndCloseEvent = useCallback(async () => {
     if (!currentSessionId) { toast.error("Please select an event first"); return; }
@@ -1360,8 +1647,13 @@ const sortedFilteredAttendees = useMemo(() => {
       const response = await authFetch(`${BASE_URL}/events/${currentSessionId}/${currentEvent.event_id}/toggle-status`, { method: "PATCH" });
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
-      if (result.already_closed) toast.info(result.message || "Event was already closed");
-      else toast.success(result.message || `Event "${currentEvent.eventName}" closed successfully!`);
+      if (result.already_closed)
+        toast.info(result.message || "Event was already closed");
+      else
+        toast.success(
+          result.message ||
+            `Event "${currentEvent.eventName}" closed successfully!`,
+        );
 
       setEvents(prev => {
         const updated = prev.map(e =>
@@ -1376,7 +1668,10 @@ const sortedFilteredAttendees = useMemo(() => {
           const typeName = (e.eventType || "").toLowerCase();
           if (["cells", "all cells", "cell"].includes(typeName)) return false;
           const status = (e.status || "").toLowerCase();
-          if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
+          if (
+            ["complete", "closed", "cancelled", "did_not_meet"].includes(status)
+          )
+            return false;
           if (!e.rawDate) return false;
           return saDateKey(e.rawDate) === todayStr;
         });
@@ -1393,15 +1688,34 @@ const sortedFilteredAttendees = useMemo(() => {
           eventType: currentEvent.eventType || currentEvent.type || "",
           status: "complete",
           // include attendance/new people/consolidations if available
-          attendees: realTimeData?.present_attendees || realTimeData?.attendanceData || attendees || [],
-          attendanceData: realTimeData?.present_attendees || realTimeData?.attendanceData || attendees || [],
+          attendees:
+            realTimeData?.present_attendees ||
+            realTimeData?.attendanceData ||
+            attendees ||
+            [],
+          attendanceData:
+            realTimeData?.present_attendees ||
+            realTimeData?.attendanceData ||
+            attendees ||
+            [],
           new_people: realTimeData?.new_people || realTimeData?.newPeople || [],
-          newPeopleData: realTimeData?.new_people || realTimeData?.newPeople || [],
+          newPeopleData:
+            realTimeData?.new_people || realTimeData?.newPeople || [],
           consolidations: realTimeData?.consolidations || [],
           consolidatedData: realTimeData?.consolidations || [],
-          total_attendance: realTimeData?.present_count ?? (realTimeData?.present_attendees?.length ?? attendees?.length ?? 0),
-          new_people_count: realTimeData?.new_people_count ?? (realTimeData?.new_people?.length ?? 0),
-          consolidation_count: realTimeData?.consolidation_count ?? (realTimeData?.consolidations?.length ?? 0),
+          total_attendance:
+            realTimeData?.present_count ??
+            realTimeData?.present_attendees?.length ??
+            attendees?.length ??
+            0,
+          new_people_count:
+            realTimeData?.new_people_count ??
+            realTimeData?.new_people?.length ??
+            0,
+          consolidation_count:
+            realTimeData?.consolidation_count ??
+            realTimeData?.consolidations?.length ??
+            0,
           date: currentEvent.date || new Date().toISOString(),
           eventName: currentEvent.eventName || currentEvent.name || "",
           closed_by: result?.closed_by,
@@ -1467,48 +1781,103 @@ const sortedFilteredAttendees = useMemo(() => {
     setOpenDialog(true);
   }, []);
 
-  const handleDelete = useCallback(async (personId, personName) => {
-    setIsDeleting(true);
-    try {
-      const res = await authFetch(`${BASE_URL}/people/${personId}`, { method: "DELETE" });
-      if (!res.ok) { const e = await res.json(); toast.error(`Delete failed: ${e.detail}`); return; }
-      setAttendees(prev => prev.filter(p => p._id !== personId && p.id !== personId));
-      setRealTimeData(prev => {
-        if (!prev) return prev;
-        const filterFn = a => a.id !== personId && a._id !== personId;
-        const newPresent = (prev.present_attendees || []).filter(filterFn);
-        const newPeople = (prev.new_people || []).filter(filterFn);
-        return { ...prev, present_attendees: newPresent, new_people: newPeople, present_count: newPresent.length, new_people_count: newPeople.length };
-      });
-      authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => {});
-      toast.success(`"${personName}" deleted successfully`);
-    } catch { toast.error("An error occurred while deleting the person"); }
-    finally { setIsDeleting(false); setDeleteConfirmation({ open: false, personId: null, personName: "" }); }
-  }, [authFetch]);
+  const handleDelete = useCallback(
+    async (personId, personName) => {
+      setIsDeleting(true);
+      try {
+        const res = await authFetch(`${BASE_URL}/people/${personId}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const e = await res.json();
+          toast.error(`Delete failed: ${e.detail}`);
+          return;
+        }
+        setAttendees((prev) =>
+          prev.filter((p) => p._id !== personId && p.id !== personId),
+        );
+        setRealTimeData((prev) => {
+          if (!prev) return prev;
+          const filterFn = (a) => a.id !== personId && a._id !== personId;
+          const newPresent = (prev.present_attendees || []).filter(filterFn);
+          const newPeople = (prev.new_people || []).filter(filterFn);
+          return {
+            ...prev,
+            present_attendees: newPresent,
+            new_people: newPeople,
+            present_count: newPresent.length,
+            new_people_count: newPeople.length,
+          };
+        });
+        authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(
+          () => {},
+        );
+        toast.success(`"${personName}" deleted successfully`);
+      } catch {
+        toast.error("An error occurred while deleting the person");
+      } finally {
+        setIsDeleting(false);
+        setDeleteConfirmation({ open: false, personId: null, personName: "" });
+      }
+    },
+    [authFetch],
+  );
 
   const exportToExcel = useCallback((data, filename = "export") => {
-    if (!data?.length) { toast.error("No data to export"); return; }
-    const headers = ["Name", "Surname", "Email", "Phone", "Leader @1", "Leader @12", "Leader @144", "CheckIn_Time", "Status"];
-    const worksheetData = data.map(row => { const o = {}; headers.forEach(h => (o[h] = row[h] ?? "")); return o; });
+    if (!data?.length) {
+      toast.error("No data to export");
+      return;
+    }
+    const headers = [
+      "Name",
+      "Surname",
+      "Email",
+      "Phone",
+      "Leader @1",
+      "Leader @12",
+      "Leader @144",
+      "CheckIn_Time",
+      "Status",
+    ];
+    const worksheetData = data.map((row) => {
+      const o = {};
+      headers.forEach((h) => (o[h] = row[h] ?? ""));
+      return o;
+    });
     const ws = XLSX.utils.json_to_sheet(worksheetData, { header: headers });
-    ws["!cols"] = headers.map(h => {
+    ws["!cols"] = headers.map((h) => {
       let maxw = h.length;
-      worksheetData.forEach(row => { const v = String(row[h] || ""); if (v.length > maxw) maxw = v.length; });
+      worksheetData.forEach((row) => {
+        const v = String(row[h] || "");
+        if (v.length > maxw) maxw = v.length;
+      });
       return { wch: maxw + 3 };
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Present Attendees");
     const today = new Date().toISOString().split("T")[0];
     try {
-      const wbout = XLSX.write(wb, { bookType: "xlsx", type: "binary", compression: true });
-      const blob = new Blob([s2ab(wbout)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const wbout = XLSX.write(wb, {
+        bookType: "xlsx",
+        type: "binary",
+        compression: true,
+      });
+      const blob = new Blob([s2ab(wbout)], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = url; link.download = `${filename}_${today}.xlsx`; link.style.display = "none";
-      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      link.href = url;
+      link.download = `${filename}_${today}.xlsx`;
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
       URL.revokeObjectURL(url);
       toast.success(`Exported ${data.length} records`);
-    } catch { toast.error("Failed to create Excel file"); }
+    } catch {
+      toast.error("Failed to create Excel file");
+    }
   }, []);
 
   const handleAddPersonClick = useCallback(() => {
@@ -1553,133 +1922,226 @@ const sortedFilteredAttendees = useMemo(() => {
     }
   }, [authFetch]);
 
-  const mainColumns = useMemo(() => {
-    const base = [
-      {
-        field: "name", headerName: "Name", flex: 1, minWidth: isSm ? 110 : 140, sortable: true,
-        renderCell: (params) => {
-          const isFirstTime = params.row.isNew === true;
-          return (
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.3, width: "100%", overflow: "hidden" }}>
-              <Chip label={isFirstTime ? "New" : "+ New"} size="small"
-                color={isFirstTime ? "success" : "default"}
-                variant={isFirstTime ? "filled" : "outlined"}
-                onClick={() => setPersonNewFlag(params.row)}
-                title={isFirstTime ? "Remove new mark" : "Mark as new this service"}
-                sx={{ fontSize: "0.5rem", height: 13, flexShrink: 0, px: "2px", cursor: "pointer", "& .MuiChip-label": { px: "3px" } }} />
-              <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.72rem" : "0.88rem", lineHeight: 1.2 }}>
-                {params.row.name} {params.row.surname}
-              </Typography>
-            </Box>
-          );
-        },
+const mainColumns = useMemo(() => {
+  const textSx = { fontSize: isSm ? "0.72rem" : "0.85rem", color: ink, fontFamily: BODY };
+  return [
+    {
+      field: "name", headerName: "Name", flex: 1.2, minWidth: isSm ? 130 : 180, sortable: true,
+      renderCell: (params) => (
+        <Box sx={{ minWidth: 0, lineHeight: 1.25 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+            <Typography noWrap sx={{ ...textSx, fontWeight: 600 }}>
+              {params.row.name} {params.row.surname}
+            </Typography>
+            {params.row.isNew === true && (
+              <Box component="span" sx={{
+                flexShrink: 0, fontSize: "0.68rem", fontWeight: 600, color: mute,
+                border: `1px solid ${line}`, borderRadius: 99, px: 0.9, lineHeight: "16px",
+              }}>
+                New
+              </Box>
+            )}
+          </Box>
+          {!isSm && (
+            <Typography noWrap sx={{ fontSize: "0.75rem", color: mute, fontFamily: BODY }}>
+              {params.row.email || "—"}
+            </Typography>
+          )}
+        </Box>
+      ),
+    },
+    ...(!isSm ? [{
+      field: "phone", headerName: "Phone", flex: 0.7, minWidth: 110, sortable: true,
+      renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.number || "—"}</Typography>,
+    }] : []),
+    {
+      field: "leader1", headerName: isSm ? "L@1" : "Leader @1", flex: 0.6, minWidth: isSm ? 48 : 100, sortable: true,
+      renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.leader1 || "—"}</Typography>,
+    },
+    {
+      field: "leader12", headerName: isSm ? "L@12" : "Leader @12", flex: 0.6, minWidth: isSm ? 52 : 100, sortable: true,
+      renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.leader12 || "—"}</Typography>,
+    },
+    ...(!isXs ? [{
+      field: "leader144", headerName: isSm ? "L@144" : "Leader @144", flex: 0.6, minWidth: isSm ? 56 : 104, sortable: true,
+      renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.leader144 || "—"}</Typography>,
+    }] : []),
+    {
+      field: "actions", headerName: "", width: isSm ? 104 : 136, sortable: false, filterable: false,
+      renderCell: (params) => {
+        const fullName = `${params.row.name || ""} ${params.row.surname || ""}`.trim();
+        const noEvent = !currentSessionId;
+        const busy = checkInLoading.has(params.row._id);
+        const disabled = noEvent || busy;
+        const iconSz = isSm ? "18px" : "20px";
+        return (
+          <Stack direction="row" spacing={0} sx={{ alignItems: "center" }}>
+            <Tooltip title={noEvent ? "Select event first" : "Delete"}>
+              <span>
+                <IconButton size="small" aria-label={`Delete ${fullName}`} disabled={disabled}
+                  onClick={() => setDeleteConfirmation({ open: true, personId: params.row._id, personName: fullName })}
+                  sx={iconBtnSx(disabled)}>
+                  <DeleteIcon sx={{ fontSize: iconSz }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={noEvent ? "Select event first" : "Edit"}>
+              <span>
+                <IconButton size="small" aria-label={`Edit ${fullName}`} disabled={disabled}
+                  onClick={() => handleEditClick(params.row)} sx={iconBtnSx(disabled)}>
+                  <EditIcon sx={{ fontSize: iconSz }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={noEvent ? "Select event first" : busy ? "Processing…" : params.row.present ? "Remove check-in" : "Check in"}>
+              <span>
+                <IconButton size="small" disabled={disabled}
+                  aria-label={`${params.row.present ? "Remove check-in for" : "Check in"} ${fullName}`}
+                  aria-pressed={!!params.row.present}
+                  onClick={() => handleToggleCheckIn(params.row)}
+                  sx={{ ...iconBtnSx(disabled), color: params.row.present ? accent : mute }}>
+                  {params.row.present
+                    ? <CheckCircleIcon sx={{ fontSize: iconSz }} />
+                    : <CheckCircleOutlineIcon sx={{ fontSize: iconSz }} />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+        );
       },
-      ...(!isSm ? [{
-        field: "phone", headerName: "Phone", flex: 0.7, minWidth: 100, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: "0.85rem" }}>{p.row.number || "—"}</Typography>
-      }] : []),
-      ...(!isMd ? [{
-        field: "email", headerName: "Email", flex: 1, minWidth: 130, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: "0.85rem" }}>{p.row.email || "—"}</Typography>
-      }] : []),
-      {
-        field: "leader1", headerName: isSm ? "L@1" : "Leader @1", flex: 0.55, minWidth: isSm ? 38 : 80, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.65rem" : "0.85rem" }}>{p.row.leader1 || "—"}</Typography>
-      },
-      {
-        field: "leader12", headerName: isSm ? "L@12" : "Leader @12", flex: 0.55, minWidth: isSm ? 44 : 88, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.65rem" : "0.85rem" }}>{p.row.leader12 || "—"}</Typography>
-      },
-      ...(!isXs ? [{
-        field: "leader144", headerName: isSm ? "L@144" : "Leader @144", flex: 0.55, minWidth: isSm ? 50 : 96, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.65rem" : "0.85rem" }}>{p.row.leader144 || "—"}</Typography>
-      }] : []),
-      {
-        field: "actions", headerName: "", width: isSm ? 96 : 120, sortable: false, filterable: false,
-        renderCell: (params) => {
-          const fullName = `${params.row.name || ""} ${params.row.surname || ""}`.trim();
-          const isDisabled = !currentSessionId;
-          const isCheckInLoading = checkInLoading.has(params.row._id);
-    
-          const btnSz = isSm ? "small" : "medium";
-          const iconSz = isSm ? "16px" : "22px";
-          const pad = isSm ? "3px" : "6px";
-          return (
-            <Stack direction="row" spacing={0} sx={{ alignItems: "center" }}>
-              <Tooltip title={isDisabled ? "Select event first" : "Delete"}>
-                <span>
-                  <IconButton size={btnSz} color={isDisabled ? "default" : "error"}
-                    onClick={() => !isDisabled && setDeleteConfirmation({ open: true, personId: params.row._id, personName: fullName })}
-                    disabled={isDisabled || isCheckInLoading} sx={{ p: pad, opacity: isDisabled || isCheckInLoading ? 0.4 : 1 }}>
-                    <DeleteIcon sx={{ fontSize: iconSz }} />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <Tooltip title={isDisabled ? "Select event first" : "Edit"}>
-                <span>
-                  <IconButton size={btnSz} color={isDisabled ? "default" : "primary"}
-                    onClick={() => !isDisabled && handleEditClick(params.row)}
-                    disabled={isDisabled || isCheckInLoading} sx={{ p: pad, opacity: isDisabled || isCheckInLoading ? 0.4 : 1 }}>
-                    <EditIcon sx={{ fontSize: iconSz }} />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <Tooltip title={isDisabled ? "Select event first" : isCheckInLoading ? "Processing…" : params.row.present ? "Checked in" : "Check in"}>
-                <span>
-                  <IconButton size={btnSz} color={isDisabled ? "default" : "success"}
-                    disabled={isDisabled || isCheckInLoading }
-                    onClick={() => !isDisabled && !isCheckInLoading && handleToggleCheckIn(params.row)}
-                    sx={{ p: pad, opacity: isDisabled || isCheckInLoading ? 0.4 : 1 }}>
-                    {params.row.present ? <CheckCircleIcon sx={{ fontSize: iconSz }} /> : <CheckCircleOutlineIcon sx={{ fontSize: iconSz }} />}
-                  </IconButton>
-                </span>
-              </Tooltip>
-            </Stack>
-          );
-        },
-      },
-    ];
-    return base;
-  }, [isXs, isSm, isMd, currentSessionId, checkInLoading, handleEditClick, handleToggleCheckIn, setPersonNewFlag]);
+    },
+  ];
+}, [isXs, isSm, currentSessionId, checkInLoading, handleEditClick, handleToggleCheckIn,
+    ink, mute, line, accent, fieldBg]);
 
 
-  const StatsCard = useCallback(({ title, count, icon, color = "primary", onClick, disabled = false }) => (
-    <Paper variant="outlined" onClick={onClick} sx={{
-      p: rv(1, 1.2, 1.8, 2, 2), textAlign: "center", cursor: disabled ? "default" : "pointer",
-      boxShadow: 2, minHeight: rv(64, 72, 80, 88, 88),
-      display: "flex", flexDirection: "column", justifyContent: "center",
-      "&:hover": disabled ? {} : { boxShadow: 4, transform: "translateY(-2px)" },
-      transition: "all 0.2s", opacity: disabled ? 0.6 : 1, backgroundColor: "background.paper",
-    }}>
-      <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.8} mb={0.3}>
-        {React.cloneElement(icon, { color: disabled ? "disabled" : color, sx: { fontSize: rv(18, 20, 24, 26, 26) } })}
-        <Typography fontWeight={700} color={disabled ? "text.disabled" : `${color}.main`}
-          sx={{ fontSize: rv("1rem", "1.1rem", "1.25rem", "1.4rem", "1.4rem"), lineHeight: 1 }}>
-          {count}
-        </Typography>
-      </Stack>
-      <Typography color={disabled ? "text.disabled" : `${color}.main`}
-        sx={{ fontSize: rv("0.65rem", "0.72rem", "0.82rem", "0.9rem", "0.9rem") }}>
-        {title}
-        {disabled && <Typography component="span" display="block" sx={{ fontSize: "0.58rem", color: "text.disabled" }}>Select event</Typography>}
-      </Typography>
-    </Paper>
-  ), [rv]);
 
-  const gridHeight = isSm ? "calc(100vh - 340px)" : isMd ? "calc(100vh - 300px)" : 620;
+  const StatsCard = useCallback(({ title, count, onClick, disabled = false }) => (
+  <Paper
+    variant="outlined"
+    component="button"
+    type="button"
+    onClick={onClick}
+    disabled={disabled}
+    sx={{
+      width: "100%", textAlign: "left", font: "inherit", color: "inherit",
+      p: rv(1.25, 1.5, 2, 2, 2), bgcolor: cardBg, border: `1px solid ${line}`, borderRadius: "18px",
+      cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
+      transition: "border-color .15s",
+      "&:hover": disabled ? {} : { borderColor: accent },
+      "&:focus-visible": { outline: `3px solid ${accent}55`, outlineOffset: 1 },
+    }}
+  >
+    <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: ink, lineHeight: 1, fontSize: rv("1.5rem", "1.7rem", "2rem", "2.1rem", "2.1rem") }}>
+      {count}
+    </Typography>
+    <Typography sx={{ mt: 0.5, color: mute, fontWeight: 600, fontFamily: BODY, fontSize: rv("0.7rem", "0.75rem", "0.8rem", "0.85rem", "0.85rem") }}>
+      {title}
+    </Typography>
+  </Paper>
+), [rv, cardBg, line, accent, ink, mute]);
+
+
+  const gridHeight = isSm
+    ? "calc(100vh - 340px)"
+    : isMd
+      ? "calc(100vh - 300px)"
+      : 620;
   const gridMinHeight = isSm ? 380 : isMd ? 450 : 550;
 
   return (
-    <Box p={containerPadding} sx={{ width: "100%", margin: "0 auto", mt: 6, minHeight: "100vh", maxWidth: "100vw", overflowX: "hidden" }}>
-      <ToastContainer position={isSm ? "top-center" : "top-right"} autoClose={3000}
-        hideProgressBar={isSm} style={{ marginTop: isSm ? "0px" : "20px", zIndex: 9999 }} />
+    <Box
+      p={containerPadding}
+      sx={{
+        width: "100%",
+        maxWidth: 1000,
+        mx: "auto",
+        mt: 6,
+        minHeight: "100vh",
+        overflowX: "hidden",
+      }}
+    >
+      <ToastContainer
+        position={isSm ? "top-center" : "top-right"}
+        autoClose={3000}
+        hideProgressBar={isSm}
+        style={{ marginTop: isSm ? "0px" : "20px", zIndex: 9999 }}
+      />
 
       <DeleteConfirmationModal
         open={deleteConfirmation.open}
-        onClose={() => setDeleteConfirmation({ open: false, personId: null, personName: "" })}
-        onConfirm={() => handleDelete(deleteConfirmation.personId, deleteConfirmation.personName)}
-        personName={deleteConfirmation.personName} isLoading={isDeleting}
+        onClose={() =>
+          setDeleteConfirmation({ open: false, personId: null, personName: "" })
+        }
+        onConfirm={() =>
+          handleDelete(
+            deleteConfirmation.personId,
+            deleteConfirmation.personName,
+          )
+        }
+        personName={deleteConfirmation.personName}
+        isLoading={isDeleting}
       />
+
+      {/* Header */}
+      <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 1, mb: 2 }}>
+        <Box sx={{ width: { xs: "100%", sm: "auto" } }}>
+          <Typography component="h1" sx={{ mb: 0.75, fontFamily: DISPLAY, fontWeight: 800, color: ink, letterSpacing: "-0.01em", fontSize: rv("1.4rem", "1.5rem", "1.75rem", "1.9rem", "1.9rem") }}>
+            Service check-in
+          </Typography>
+          <Typography component="label" htmlFor="service-event-select" sx={{ display: "block", mb: 0.5, color: mute, fontSize: "0.75rem", fontWeight: 600, fontFamily: BODY }}>
+            Global event
+          </Typography>
+          <Select
+            id="service-event-select"
+            size="small"
+            value={currentSessionId}
+            onChange={(e) => setCurrentSessionId(e.target.value)}
+            displayEmpty
+            inputProps={{ "aria-label": "Global event" }}
+            sx={{
+              width: { xs: "100%", sm: 293 },
+              ...inputSx["& .MuiOutlinedInput-root"],
+              height: 40,
+              fontFamily: BODY,
+              fontSize: "0.9rem",
+              "& fieldset": { borderColor: line, borderWidth: 1.5 },
+              "&:hover fieldset": { borderColor: accent },
+              "&.Mui-focused fieldset": { borderColor: accent, borderWidth: 1.5 },
+            }}
+          >
+            <MenuItem value="">
+              <Typography color="text.secondary" sx={{ fontSize: "inherit" }}>
+                {isLoadingEvents ? "Loading events…" : "Select global event"}
+              </Typography>
+            </MenuItem>
+            {menuEvents.map((ev) => (
+              <MenuItem key={ev.id} value={ev.id}>
+                <Typography variant="body2" fontWeight="medium" noWrap>
+                  {ev.eventName}
+                </Typography>
+              </MenuItem>
+            ))}
+            {menuEvents.length === 0 && events.length > 0 && (
+              <MenuItem disabled>
+                <Typography variant="body2" color="text.secondary" fontStyle="italic">
+                  No open global events
+                </Typography>
+              </MenuItem>
+            )}
+            {events.length === 0 && !isLoadingEvents && (
+              <MenuItem disabled>
+                <Typography variant="body2" color="text.secondary" fontStyle="italic">
+                  No events available
+                </Typography>
+              </MenuItem>
+            )}
+          </Select>
+        </Box>
+        <Typography sx={{ pb: { xs: 0, sm: 0.5 }, color: mute, fontSize: "0.8125rem", fontWeight: 600, fontFamily: BODY }}>
+          {currentSessionId ? "Service open" : "Select an event to start"}
+        </Typography>
+      </Box>
 
       {/* Stats Cards */}
       <Grid container spacing={cardSpacing} mb={cardSpacing}>
@@ -1755,23 +2217,39 @@ const sortedFilteredAttendees = useMemo(() => {
               handleAddPersonClick={handleAddPersonClick}
               handleConsolidationClick={handleConsolidationClick}
               handleSaveAndCloseEvent={handleSaveAndCloseEvent}
-              handleFullRefresh={handleFullRefresh} theme={theme}
+              handleFullRefresh={handleFullRefresh}
+              accent={accent}
+              outlinedBtnSx={outlinedBtnSx}
             />
           </Stack>
         )}
-      </Box>
+        </Box>
+      
 
       {/* Tabs + Content */}
       <Box sx={{ width: "100%" }}>
-        <Paper variant="outlined" sx={{ mb: 1.5, boxShadow: 2 }}>
-          <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} sx={{
-            borderBottom: 1, borderColor: "divider", minHeight: "38px",
-            "& .MuiTab-root": { py: 0.5, minHeight: "38px", fontSize: rv("0.7rem", "0.78rem", "0.85rem", "0.9rem", "0.9rem") },
-          }}>
-            <Tab label="All Attendees" />
-            <Tab label="Event History" />
-          </Tabs>
-        </Paper>
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          sx={{
+            borderBottom: `1px solid ${line}`,
+            mb: 1.5,
+            minHeight: 42,
+            "& .MuiTabs-indicator": { bgcolor: accent, height: 3 },
+            "& .MuiTab-root": {
+              textTransform: "none",
+              fontWeight: 600,
+              fontFamily: BODY,
+              color: mute,
+              minHeight: 42,
+              fontSize: rv("0.8rem", "0.85rem", "0.9rem", "0.9rem", "0.9rem"),
+            },
+            "& .Mui-selected": { color: `${ink} !important` },
+          }}
+        >
+          <Tab label="All attendees" />
+          <Tab label="Event history" />
+        </Tabs>
 
         {activeTab === 0 && (
           <Paper variant="outlined" sx={{ boxShadow: 3, overflow: "hidden", width: "100%", height: gridHeight, minHeight: gridMinHeight }}>
@@ -1781,23 +2259,64 @@ const sortedFilteredAttendees = useMemo(() => {
               getRowId={(row) => row._id || row.id || row.email || `temp-${row._id || row.email || 'unknown'}`}
               loading={isLoadingPeople} pagination
               paginationModel={{ page, pageSize: rowsPerPage }}
-              onPaginationModelChange={model => { setPage(model.page); setRowsPerPage(model.pageSize); }}
-              rowCount={filteredAttendees.length} pageSizeOptions={[25, 50, 100]}
-              slots={{ toolbar: GridToolbar }}
-              slotProps={{ toolbar: { showQuickFilter: !isSm, quickFilterProps: { debounceMs: 500 } } }}
+              onPaginationModelChange={(model) => {
+                setPage(model.page);
+                setRowsPerPage(model.pageSize);
+              }}
+              rowCount={filteredAttendees.length}
+              pageSizeOptions={[25, 50, 100]}
               disableRowSelectionOnClick
-              sortModel={sortModel} onSortModelChange={model => { setPage(0); setSortModel(model); }}
-              // getRowId={row => row._id} rowHeight={isSm ? 44 : 52} columnHeaderHeight={isSm ? 40 : 48}
+              disableColumnMenu={isSm}
+              sortModel={sortModel}
+              onSortModelChange={(model) => {
+                setPage(0);
+                setSortModel(model);
+              }}
+              rowHeight={isSm ? 56 : 60}
+              columnHeaderHeight={isSm ? 40 : 46}
               sx={{
-                width: "100%", height: "100%",
-                "& .MuiDataGrid-cell": { display: "flex", alignItems: "center", px: isSm ? "4px" : "8px", fontSize: isSm ? "0.72rem" : "0.85rem", py: "2px" },
-                "& .MuiDataGrid-columnHeaders": { backgroundColor: theme.palette.action.hover, borderBottom: `1px solid ${theme.palette.divider}` },
-                "& .MuiDataGrid-columnHeader": { fontWeight: 700, fontSize: isSm ? "0.7rem" : "0.82rem", px: isSm ? "4px" : "8px" },
-                "& .MuiDataGrid-row:hover": { backgroundColor: theme.palette.action.hover },
-                "& .MuiDataGrid-toolbarContainer": { px: isSm ? "4px" : "12px", py: "6px", borderBottom: `1px solid ${theme.palette.divider}`, flexWrap: "wrap", gap: "4px" },
-                "& .MuiDataGrid-footerContainer": { borderTop: `1px solid ${theme.palette.divider}`, backgroundColor: theme.palette.background.paper, minHeight: "48px" },
-                "& .MuiTablePagination-root": { fontSize: "0.72rem", flexWrap: "wrap" },
-                ...(isSm && { "& .MuiDataGrid-columnSeparator": { display: "none" }, "& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows": { fontSize: "0.68rem" } }),
+                border: 0,
+                width: "100%",
+                height: "100%",
+                fontFamily: BODY,
+                "& .MuiDataGrid-cell": {
+                  display: "flex",
+                  alignItems: "center",
+                  px: isSm ? "6px" : "14px",
+                  borderColor: line,
+                  outline: "none !important",
+                },
+                "& .MuiDataGrid-columnHeaders": {
+                  bgcolor: fieldBg,
+                  borderBottom: `1px solid ${line}`,
+                },
+                "& .MuiDataGrid-columnHeader": {
+                  px: isSm ? "6px" : "14px",
+                  outline: "none !important",
+                },
+                "& .MuiDataGrid-columnHeaderTitle": {
+                  fontWeight: 600,
+                  fontSize: isSm ? "0.72rem" : "0.8rem",
+                  color: mute,
+                },
+                "& .MuiDataGrid-row": {
+                  bgcolor: cardBg,
+                  color: ink,
+                },
+                "& .MuiDataGrid-row:hover": {
+                  bgcolor: fieldBg,
+                },
+                "& .MuiDataGrid-footerContainer": {
+                  borderTop: `1px solid ${line}`,
+                  minHeight: 48,
+                },
+                "& .MuiTablePagination-root": {
+                  fontSize: "0.75rem",
+                  color: mute,
+                },
+                ...(isSm && {
+                  "& .MuiDataGrid-columnSeparator": { display: "none" },
+                }),
               }}
             />
           </Paper>
@@ -1895,15 +2414,70 @@ const sortedFilteredAttendees = useMemo(() => {
             disabled={modalFilteredAttendees.length === 0}>
             {isSm ? "Export" : "Download XLSX"}
           </Button>
-          <Button onClick={() => setModalOpen(false)} variant="outlined" size="small">Close</Button>
         </DialogActions>
       </Dialog>
 
       {/* New People Modal */}
-      <Dialog open={newPeopleModalOpen} onClose={() => setNewPeopleModalOpen(false)} fullWidth maxWidth="md"
-        fullScreen={isXs} PaperProps={{ sx: { boxShadow: 6, ...(isSm && !isXs && { mx: 1.5, maxHeight: "88vh" }) } }}>
-        <DialogTitle sx={{ pb: 1, fontWeight: 600, fontSize: isSm ? "1rem" : "1.25rem" }}>
-          New People: {newPeopleCount}
+      <Dialog
+        open={newPeopleModalOpen}
+        onClose={() => setNewPeopleModalOpen(false)}
+        fullWidth
+        maxWidth={isSm ? "sm" : "lg"}
+        fullScreen={isXs}
+        PaperProps={{
+          sx: {
+            borderRadius: "18px",
+            bgcolor: modalTokens.cardBg,
+            border: `1px solid ${modalTokens.line}`,
+            backgroundImage: "none",
+            m: 2,
+            maxHeight: "90vh",
+            ...(isSm && !isXs && { mx: 1.5 }),
+          },
+        }}
+      >
+        <DialogTitle
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            px: 2.5,
+            py: 2,
+            borderBottom: `1px solid ${modalTokens.line}`,
+          }}
+        >
+          <Box>
+            <Typography
+              sx={{
+                fontFamily: DISPLAY,
+                fontWeight: 800,
+                color: modalTokens.ink,
+                fontSize: isSm ? "1.05rem" : "1.25rem",
+                lineHeight: 1.25,
+              }}
+            >
+              New people: {newPeopleCount}
+            </Typography>
+            <Typography
+              sx={{
+                mt: 0.5,
+                color: modalTokens.mute,
+                fontSize: "0.8125rem",
+                fontWeight: 600,
+                fontFamily: BODY,
+              }}
+            >
+              First-time visitors at this service
+            </Typography>
+          </Box>
+          <Button
+            variant="outlined"
+            onClick={() => setNewPeopleModalOpen(false)}
+            size="small"
+            sx={{ ...sharedOutlinedBtnSx(modalTokens), height: 38, px: 1.5 }}
+          >
+            Close
+          </Button>
         </DialogTitle>
         <DialogContent dividers sx={{ p: isSm ? 1 : 2, overflowY: "auto" }}>
           <TextField size="small" placeholder="Search…" value={newPeopleSearch}
@@ -1960,8 +2534,10 @@ const sortedFilteredAttendees = useMemo(() => {
               )
           }
         </DialogContent>
-        <DialogActions sx={{ p: isSm ? 1 : 1.5 }}>
-          <Button onClick={() => setNewPeopleModalOpen(false)} variant="outlined" size="small">Close</Button>
+        <DialogActions sx={{ borderTop: `1px solid ${modalTokens.line}`, px: 2.5, py: 1.5, gap: 1 }}>
+          <Typography sx={{ mr: "auto", color: modalTokens.mute, fontSize: "0.8125rem", fontWeight: 600, fontFamily: BODY }}>
+            {newPeopleFilteredList.length} people
+          </Typography>
         </DialogActions>
       </Dialog>
 
@@ -2040,14 +2616,22 @@ const sortedFilteredAttendees = useMemo(() => {
             disabled={!currentSessionId}>
             {isSm ? "Add" : "Add Consolidation"}
           </Button>
-          <Button onClick={() => setConsolidatedModalOpen(false)} variant="outlined" size="small">Close</Button>
         </DialogActions>
       </Dialog>
 
       <EventHistoryModal
         open={eventHistoryModal.open}
-        onClose={() => setEventHistoryModal({ open: false, event: null, type: null, data: [] })}
-        event={eventHistoryModal.event} type={eventHistoryModal.type} data={eventHistoryModal.data}
+        onClose={() =>
+          setEventHistoryModal({
+            open: false,
+            event: null,
+            type: null,
+            data: [],
+          })
+        }
+        event={eventHistoryModal.event}
+        type={eventHistoryModal.type}
+        data={eventHistoryModal.data}
       />
 
       <ConsolidationModal

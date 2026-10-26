@@ -9,8 +9,6 @@ import {
   Button,
   Typography,
   IconButton,
-  useTheme,
-  useMediaQuery,
   Autocomplete,
   CircularProgress,
   Alert,
@@ -20,9 +18,7 @@ import {
 import InputAdornment from "@mui/material/InputAdornment";
 import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
-import Brightness4Icon from "@mui/icons-material/Brightness4";
-import Brightness7Icon from "@mui/icons-material/Brightness7";
-import darkLogo from "../assets/active-teams.png";
+import { useTheme } from "@mui/material/styles";
 import { UserContext } from "../contexts/UserContext";
 import { AuthContext, supabase } from "../contexts/AuthContext";
 import { ToastContainer, toast } from "react-toastify";
@@ -43,16 +39,8 @@ const WelcomeOverlay = ({ name, mode }) => {
     const dur = 2 + Math.random() * 1.5;
     const delay = Math.random() * 0.6;
     const colors = [
-      "#f94144",
-      "#f3722c",
-      "#f8961e",
-      "#f9844a",
-      "#f9c74f",
-      "#90be6d",
-      "#43aa8b",
-      "#577590",
-      "#9b5de5",
-      "#00bbf9",
+      "#f94144", "#f3722c", "#f8961e", "#f9844a", "#f9c74f",
+      "#90be6d", "#43aa8b", "#577590", "#9b5de5", "#00bbf9",
     ];
     const bg = colors[Math.floor(Math.random() * colors.length)];
     const br = Math.random() > 0.6 ? `${size / 2}px` : "2px";
@@ -85,8 +73,7 @@ const WelcomeOverlay = ({ name, mode }) => {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background:
-          mode === "dark" ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.65)",
+        background: mode === "dark" ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.65)",
         backdropFilter: "blur(2px)",
         overflow: "hidden",
         "@keyframes fall": {
@@ -147,40 +134,40 @@ const initialForm = {
   organization: "",
 };
 
-// ─── Component ────────────────────────────────────────────────────────────────
-const Signup = ({ onSignup, mode, setMode }) => {
+// Rendered inside AuthPage's <Outlet/>. mode/setMode still come from
+// App.jsx via the route element, same as before.
+const Signup = ({ onSignup, mode }) => {
   const theme = useTheme();
-  const isSmallScreen = useMediaQuery(theme.breakpoints.down("sm"));
   const navigate = useNavigate();
   const { setUserProfile } = useContext(UserContext);
   const { login } = useContext(AuthContext);
   const isDark = mode === "dark";
 
-  const [form, setForm] = useState(initialForm);
-  const [errors, setErrors] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [showWelcome, setShowWelcome] = useState(false);
-  const [welcomeName, setWelcomeName] = useState("");
+  // const [form, setForm] = useState(initialForm);
+  // const [errors, setErrors] = useState({});
+  // const [loading, setLoading] = useState(false);
+  // const [showPassword, setShowPassword] = useState(false);
+  // const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  // const [showWelcome, setShowWelcome] = useState(false);
+  // const [welcomeName, setWelcomeName] = useState("");
 
-  // Organizations (fetched from Supabase)
-  const [organizations, setOrganizations] = useState([]);
-  const [orgsLoading, setOrgsLoading] = useState(false);
-  const [orgsError, setOrgsError] = useState("");
+  // // Organizations (fetched from Supabase)
+  // const [organizations, setOrganizations] = useState([]);
+  // const [orgsLoading, setOrgsLoading] = useState(false);
+  // const [orgsError, setOrgsError] = useState("");
 
-  // Invited-by users (filtered by org)
-  const [orgUsers, setOrgUsers] = useState([]);
-  const [orgUsersLoading, setOrgUsersLoading] = useState(false);
-  const [orgUsersError, setOrgUsersError] = useState("");
-  const [selectedInvitedBy, setSelectedInvitedBy] = useState(null);
+  // // Invited-by users (filtered by org)
+  // const [orgUsers, setOrgUsers] = useState([]);
+  // const [orgUsersLoading, setOrgUsersLoading] = useState(false);
+  // const [orgUsersError, setOrgUsersError] = useState("");
+  // const [selectedInvitedBy, setSelectedInvitedBy] = useState(null);
 
-  // Address autocomplete
-  const [addressOptions, setAddressOptions] = useState([]);
-  const [addressLoading, setAddressLoading] = useState(false);
-  const [addressError, setAddressError] = useState("");
-  const [selectedAddress, setSelectedAddress] = useState(null);
-  const [biasLonLat, setBiasLonLat] = useState(null);
+  // // Address autocomplete
+  // const [addressOptions, setAddressOptions] = useState([]);
+  // const [addressLoading, setAddressLoading] = useState(false);
+  // const [addressError, setAddressError] = useState("");
+  // const [selectedAddress, setSelectedAddress] = useState(null);
+  // const [biasLonLat, setBiasLonLat] = useState(null);
 
   const toastOptions = {
     position: "top-center",
@@ -192,7 +179,28 @@ const Signup = ({ onSignup, mode, setMode }) => {
     theme: isDark ? "dark" : "light",
   };
 
-  // ── Fetch organizations from Supabase ──────────────────────────────────────
+  const [form, setForm] = useState(initialForm);
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const [organizations, setOrganizations] = useState([]);
+  const [orgsLoading, setOrgsLoading] = useState(false);
+  const [orgsError, setOrgsError] = useState("");
+
+  const [orgUsers, setOrgUsers] = useState([]);
+  const [orgUsersLoading, setOrgUsersLoading] = useState(false);
+  const [orgUsersError, setOrgUsersError] = useState("");
+  const [selectedInvitedBy, setSelectedInvitedBy] = useState(null);
+
+  const [addressOptions, setAddressOptions] = useState([]);
+  const [addressLoading, setAddressLoading] = useState(false);
+  const [addressError, setAddressError] = useState("");
+  const [selectedAddress, setSelectedAddress] = useState(null);
+
+  const [biasLonLat, setBiasLonLat] = useState(null);
+
   useEffect(() => {
     const fetchOrgs = async () => {
       setOrgsLoading(true);
@@ -381,9 +389,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
     const invitedByValue =
       newValue && typeof newValue === "object" ? (newValue.label || "") : (newValue || "");
     const invitedById =
-      newValue && typeof newValue === "object"
-        ? (newValue._id || newValue.key || "")
-        : "";
+      newValue && typeof newValue === "object" ? (newValue._id || newValue.key || "") : "";
 
     setSelectedInvitedBy(typeof newValue === "object" ? newValue : null);
     setForm((prev) => ({ ...prev, invited_by: label, invited_by_id: id }));
@@ -392,10 +398,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
 
   const handleGenderChange = (e) => {
     const genderVal = e.target.value;
-    setForm((prev) => ({
-      ...prev,
-      gender: genderVal,
-    }));
+    setForm((prev) => ({ ...prev, gender: genderVal }));
     if (errors.gender) setErrors((prev) => ({ ...prev, gender: "" }));
   };
 
@@ -466,7 +469,6 @@ const Signup = ({ onSignup, mode, setMode }) => {
   //   }
   // };
 
-  // Build the label shown for each user in the Invited By dropdown
   const getUserLabel = (user) => {
     if (typeof user === "string") return user;
     const full = [user.name, user.surname].filter(Boolean).join(" ");
@@ -652,18 +654,7 @@ const Signup = ({ onSignup, mode, setMode }) => {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <Box
-      sx={{
-        position: "relative",
-        minHeight: "100vh",
-        background: theme.palette.background.default,
-        color: theme.palette.text.primary,
-        p: 2,
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-      }}
-    >
+    <>
       <ToastContainer limit={1} containerStyle={{ zIndex: 99999 }} />
       {showWelcome && <WelcomeOverlay name={welcomeName} mode={mode} />}
 
@@ -710,12 +701,202 @@ const Signup = ({ onSignup, mode, setMode }) => {
               filter: isDark ? "invert(1)" : "none",
               transition: "filter 0.3s",
             }}
+            onChange={(event, newValue) => {
+              const formatted = typeof newValue === "string" ? newValue : newValue?.formatted || newValue?.label || "";
+              setSelectedAddress(typeof newValue === "string" ? null : newValue);
+              setForm((prev) => ({ ...prev, home_address: formatted }));
+              if (errors.home_address) setErrors((prev) => ({ ...prev, home_address: "" }));
+            }}
+            getOptionLabel={(option) => (typeof option === "string" ? option : option.label || "")}
+            filterOptions={(x) => x}
+            loading={addressLoading}
+            {...dropdownSx}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Home Address"
+                name="home_address"
+                error={!!errors.home_address}
+                helperText={
+                  errors.home_address || addressError ||
+                  (GEOAPIFY_API_KEY ? "Start typing your address..." : "Missing Geoapify API key.")
+                }
+                fullWidth
+                InputProps={{
+                  ...params.InputProps,
+                  endAdornment: (
+                    <>
+                      {addressLoading ? <CircularProgress color="inherit" size={20} /> : null}
+                      {params.InputProps.endAdornment}
+                    </>
+                  ),
+                }}
+                sx={{ ...inputFieldSx, "& .MuiOutlinedInput-root": { ...inputFieldSx["& .MuiOutlinedInput-root"], "& fieldset": { borderColor: errors.home_address ? theme.palette.error.main : isDark ? "#333333" : "#e0e0e0" } } }}
+              />
+            )}
+            renderOption={(props, option) => (
+              <li {...props} key={`${option.lon ?? ""}-${option.lat ?? ""}-${option.label}`}>
+                <Box>
+                  <Typography variant="body1">{option.label}</Typography>
+                  {(option.suburb || option.city || option.state || option.postcode) && (
+                    <Typography variant="caption" color="text.secondary">
+                      {[option.suburb, option.city, option.state, option.postcode].filter(Boolean).join(" • ")}
+                    </Typography>
+                  )}
+                </Box>
+              </li>
+            )}
+          />
+
+          <TextField
+            label="Phone Number" name="phone_number" value={form.phone_number} onChange={handleChange}
+            error={!!errors.phone_number} helperText={errors.phone_number} fullWidth
+            sx={{ ...inputFieldSx, "& .MuiOutlinedInput-root": { ...inputFieldSx["& .MuiOutlinedInput-root"], "& fieldset": { borderColor: errors.phone_number ? theme.palette.error.main : isDark ? "#333333" : "#e0e0e0" } } }}
+          />
+
+          <FormControl fullWidth error={!!errors.gender}>
+            <InputLabel sx={{ color: isDark ? "#999999" : "#666666", "&.Mui-focused": { color: "#42a5f5" } }}>Gender</InputLabel>
+            <Select
+              name="gender" value={form.gender} onChange={handleGenderChange} label="Gender"
+              sx={{
+                bgcolor: isDark ? "#1a1a1a" : "#f8f9fa", borderRadius: 3, color: isDark ? "#ffffff" : "#000000",
+                "& .MuiOutlinedInput-notchedOutline": { borderColor: isDark ? "#333333" : "#e0e0e0" },
+                "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: isDark ? "#555555" : "#b0b0b0" },
+                "&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: "#42a5f5" },
+              }}
+              MenuProps={{
+                PaperProps: { sx: { bgcolor: isDark ? "#1a1a1a" : "#ffffff", "& .MuiMenuItem-root": { color: isDark ? "#ffffff" : "#000000", "&:hover": { bgcolor: isDark ? "#2a2a2a" : "#f5f5f5" }, "&.Mui-selected": { bgcolor: isDark ? "#333333" : "#e0e0e0", "&:hover": { bgcolor: isDark ? "#3a3a3a" : "#d5d5d5" } } } } },
+              }}
+            >
+              <MenuItem value=""><em>Select Gender</em></MenuItem>
+              <MenuItem value="male">Male</MenuItem>
+              <MenuItem value="female">Female</MenuItem>
+            </Select>
+            {errors.gender && <Typography variant="caption" color="error">{errors.gender}</Typography>}
+          </FormControl>
+
+          <FormControl fullWidth error={!!errors.organization}>
+            <Autocomplete
+              freeSolo
+              options={organizations}
+              value={organizations.find((org) => org.name === form.organization) || null}
+              inputValue={form.organization}
+              onInputChange={(event, newInputValue) => {
+                setForm((prev) => ({ ...prev, organization: newInputValue }));
+                if (errors.organization) setErrors((prev) => ({ ...prev, organization: "" }));
+              }}
+              onChange={(event, newValue) => {
+                const orgName = newValue?.name || newValue || "";
+                setForm((prev) => ({ ...prev, organization: orgName }));
+                if (errors.organization) setErrors((prev) => ({ ...prev, organization: "" }));
+              }}
+              getOptionLabel={(option) => (typeof option === "string" ? option : option.name || "")}
+              loading={orgsLoading}
+              {...dropdownSx}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Organization / Church"
+                  error={!!errors.organization}
+                  helperText={errors.organization || orgsError || (orgsLoading ? "Loading organizations..." : "Select or type your organization")}
+                  fullWidth
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {orgsLoading ? <CircularProgress color="inherit" size={20} /> : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                  sx={{ ...inputFieldSx, "& .MuiOutlinedInput-root": { ...inputFieldSx["& .MuiOutlinedInput-root"], "& fieldset": { borderColor: errors.organization ? theme.palette.error.main : isDark ? "#333333" : "#e0e0e0" } } }}
+                />
+              )}
+            />
+          </FormControl>
+
+          <FormControl fullWidth>
+            <Autocomplete
+              freeSolo
+              options={orgUsers}
+              value={selectedInvitedBy}
+              inputValue={form.invited_by}
+              disabled={!form.organization?.trim()}
+              onInputChange={(event, newInputValue) => {
+                setForm((prev) => ({ ...prev, invited_by: newInputValue, invited_by_id: "" }));
+                setSelectedInvitedBy(null);
+                if (errors.invited_by) setErrors((prev) => ({ ...prev, invited_by: "" }));
+              }}
+              onChange={handleInvitedByChange}
+              getOptionLabel={getUserLabel}
+              isOptionEqualToValue={(option, value) => option._id === value?._id || getUserLabel(option) === getUserLabel(value)}
+              loading={orgUsersLoading}
+              noOptionsText={!form.organization?.trim() ? "Select an organization first" : orgUsersLoading ? "Loading members…" : "No members found"}
+              {...dropdownSx}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Invited By"
+                  error={!!errors.invited_by}
+                  helperText={errors.invited_by || orgUsersError || (!form.organization?.trim() ? "Select an organization to see its members" : orgUsersLoading ? "Loading members…" : "Please select who invited you")}
+                  fullWidth
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {orgUsersLoading ? <CircularProgress color="inherit" size={20} /> : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                  sx={{ ...inputFieldSx, "& .MuiOutlinedInput-root": { ...inputFieldSx["& .MuiOutlinedInput-root"], "& fieldset": { borderColor: errors.invited_by ? theme.palette.error.main : isDark ? "#333333" : "#e0e0e0" } } }}
+                />
+              )}
+              renderOption={(props, option) => (
+                <li {...props} key={option._id || getUserLabel(option)}>
+                  <Box>
+                    <Typography variant="body1">{getUserLabel(option)}</Typography>
+                    {option.email && <Typography variant="caption" color="text.secondary">{option.email}</Typography>}
+                  </Box>
+                </li>
+              )}
+            />
+          </FormControl>
+
+          <TextField
+            label="Password" name="password" type={showPassword ? "text" : "password"} value={form.password} onChange={handleChange}
+            error={!!errors.password} helperText={errors.password} fullWidth
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton onClick={() => setShowPassword(!showPassword)} edge="end" tabIndex={-1} sx={{ color: isDark ? "#cccccc" : "#666666" }}>
+                    {showPassword ? <VisibilityOff /> : <Visibility />}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+            sx={{ ...inputFieldSx, "& .MuiOutlinedInput-root": { ...inputFieldSx["& .MuiOutlinedInput-root"], "& fieldset": { borderColor: errors.password ? theme.palette.error.main : isDark ? "#333333" : "#e0e0e0" } } }}
+          />
+
+          <TextField
+            label="Confirm Password" name="confirm_password" type={showConfirmPassword ? "text" : "password"} value={form.confirm_password} onChange={handleChange}
+            error={!!errors.confirm_password} helperText={errors.confirm_password} fullWidth
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton onClick={() => setShowConfirmPassword(!showConfirmPassword)} edge="end" tabIndex={-1} sx={{ color: isDark ? "#cccccc" : "#666666" }}>
+                    {showConfirmPassword ? <VisibilityOff /> : <Visibility />}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+            sx={{ ...inputFieldSx, "& .MuiOutlinedInput-root": { ...inputFieldSx["& .MuiOutlinedInput-root"], "& fieldset": { borderColor: errors.confirm_password ? theme.palette.error.main : isDark ? "#333333" : "#e0e0e0" } } }}
           />
         </Box>
 
-        <Typography variant="h5" align="center" fontWeight="bold">
-          FILL IN YOUR DETAILS
-        </Typography>
+        {Object.keys(errors).length > 0 && (
+          <Alert severity="error" sx={{ borderRadius: 2 }}>Please fix the highlighted errors above.</Alert>
+        )}
 
         <Box
           component="form"
@@ -1145,9 +1326,10 @@ const Signup = ({ onSignup, mode, setMode }) => {
               </Typography>
             </Typography>
           </Box>
+
         </Box>
       </Box>
-    </Box>
+    </>
   );
 };
 

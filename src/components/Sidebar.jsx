@@ -6,8 +6,11 @@ import {
   ListItemIcon,
   IconButton,
   Box,
+  Switch,
   useMediaQuery,
+  useTheme,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { Link, useLocation } from 'react-router-dom';
 import MenuIcon from '@mui/icons-material/Menu';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
@@ -32,6 +35,8 @@ import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
 import { normalizeRole, SYSTEM_ROLES, ROLE_HIERARCHY } from '../utils/roleNormalizer';
 import logo from "../assets/active-teams.png"
+
+const BODY = "'Figtree', system-ui, sans-serif";
 
 const allMenuItems = [
   { 
@@ -135,6 +140,7 @@ const allMenuItems = [
 ];
 
 export default function Sidebar({ mode, setMode }) {
+  const theme = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const isMobile = useMediaQuery('(max-width:900px)');
   const location = useLocation();
@@ -142,11 +148,16 @@ export default function Sidebar({ mode, setMode }) {
   const [, setUserHasCell] = useState(true);
   const [menuItems, setMenuItems] = useState([]);
 
+  const accent = theme.palette.primary.main;
+  const isDark = mode === 'dark';
+  const line = isDark ? '#2a2a38' : '#e3e1ec';
+
   useEffect(() => {
     const savedMode = localStorage.getItem('themeMode');
     if (savedMode) setMode(savedMode);
   }, [setMode]);
 
+  // Access logic unchanged (only the debug console.log lines were removed)
   useEffect(() => {
     const checkUserAccess = async () => {
       if (!user) {
@@ -158,11 +169,6 @@ export default function Sidebar({ mode, setMode }) {
       // user?.role?.toLowerCase() || '';
       const isSupremeAdmin = user?.is_supreme_admin || user?.email === "tkgenia1234@gmail.com";
       const isCustomRole = !SYSTEM_ROLES.includes(normalizeRole(userRole));
-      
-      // Normalize user role for consistency
-      const normalizedUserRole = normalizeRole(userRole);
-      
-      console.log(` Sidebar - User role: ${userRole}, Normalized: ${normalizedUserRole}, Custom: ${isCustomRole}, Supreme: ${isSupremeAdmin}`);
 
       if (isSupremeAdmin) {
         setMenuItems(allMenuItems);
@@ -173,14 +179,11 @@ export default function Sidebar({ mode, setMode }) {
         try {
           const token = localStorage.getItem('token');
           const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/check-leader-status`, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
+            headers: { 'Authorization': `Bearer ${token}` }
           });
           const data = await response.json();
           hasCell = data.hasCell || false;
           setUserHasCell(hasCell);
-          console.log(' User cell check:', data);
         } catch (error) {
           console.error('Error checking user cell:', error);
           hasCell = false;
@@ -199,22 +202,10 @@ export default function Sidebar({ mode, setMode }) {
 
         if (isCustomRole) {
           const userLevel = ROLE_HIERARCHY['user'] || 2;
-                    if (item.level > userLevel) {
-            console.log(` ${item.label}: Custom role ${userRole} level ${userLevel} < required ${item.level}`);
-            return false;
-          }
-          
-          if (item.path === '/events' && userRole === 'user' && !hasCell) {
-            console.log(` ${item.label}: User has no cell`);
-            return false;
-          }
-          
-          console.log(`${item.label}: Custom role ${userRole} granted access (level ${userLevel})`);
+          if (item.level > userLevel) return false;
+          if (item.path === '/events' && userRole === 'user' && !hasCell) return false;
           return true;
-        } 
-        
-        else {
-          // Normalize both user role and item roles for comparison
+        } else {
           const normalizedUserRole = normalizeRole(userRole);
           const normalizedItemRoles = item.roles.map(normalizeRole);
           
@@ -234,8 +225,6 @@ export default function Sidebar({ mode, setMode }) {
           return true;
         }
       });
-
-      console.log(' Final menu items:', filteredItems.map(item => item.label));
       setMenuItems(filteredItems);
     };
 
@@ -272,7 +261,9 @@ export default function Sidebar({ mode, setMode }) {
         flexDirection: 'column',
         height: '100%',
         overflowY: 'auto',
-        backgroundColor: bgColor,
+        backgroundColor: theme.palette.background.paper,
+        borderRight: `1px solid ${line}`,
+        fontFamily: BODY,
       }}
     >
       <Box sx={{ padding: 2, display: 'flex', justifyContent: 'center', mt: "15px" }}>
@@ -284,7 +275,7 @@ export default function Sidebar({ mode, setMode }) {
             maxHeight: '100px',
             height: 'auto',
             borderRadius: 8,
-            filter: mode === 'dark' ? 'invert(1) brightness(2)' : 'none',
+            filter: isDark ? 'invert(1) brightness(2)' : 'none',
           }}
         />
       </Box>
@@ -321,6 +312,7 @@ export default function Sidebar({ mode, setMode }) {
               target={external ? '_blank' : undefined}
               rel={external ? 'noopener noreferrer' : undefined}
               selected={isActive}
+              aria-current={isActive ? 'page' : undefined}
               onClick={() => isMobile && setMobileOpen(false)}
               sx={{
                 mb: 0.5,
@@ -357,12 +349,12 @@ export default function Sidebar({ mode, setMode }) {
               <ListItemIcon sx={{ minWidth: 40, color: 'inherit' }}>
                 <Icon fontSize="small" />
               </ListItemIcon>
-
               <ListItemText
                 primary={label}
                 primaryTypographyProps={{
                   fontSize: '0.9rem',
                   fontWeight: isActive ? 600 : 400,
+                  fontFamily: BODY,
                 }}
               />
             </ListItemButton>
@@ -388,7 +380,6 @@ export default function Sidebar({ mode, setMode }) {
           <SettingsIcon fontSize="small" />
         </IconButton>
       </Box>
-
     </Box>
   );
 
@@ -397,8 +388,13 @@ export default function Sidebar({ mode, setMode }) {
       {isMobile && (
         <IconButton
           color="inherit"
+          aria-label="Open navigation menu"
           onClick={handleDrawerToggle}
-          sx={{ position: 'absolute', top: 10, left: 10, zIndex: 1300 }}
+          sx={{
+            position: 'fixed', top: 12, left: 12, zIndex: 1300,
+            bgcolor: theme.palette.background.paper, border: `1px solid ${line}`, borderRadius: '12px',
+            '&:hover': { bgcolor: theme.palette.background.paper },
+          }}
         >
           <MenuIcon />
         </IconButton>
@@ -415,7 +411,8 @@ export default function Sidebar({ mode, setMode }) {
             width: 240,
             boxSizing: 'border-box',
             height: '100vh',
-            backgroundColor: bgColor,
+            backgroundColor: theme.palette.background.paper,
+            borderRight: `1px solid ${line}`,
           },
         }}
       >

@@ -1,6 +1,7 @@
 import React, { useContext, useState, useEffect } from "react";
 import {
   Avatar,
+  Box,
   IconButton,
   Tooltip,
   Menu,
@@ -94,14 +95,23 @@ export default function TopbarProfile() {
   const showInitials = isDefaultAvatar();
 
   return (
-    <>
+    <Box
+      component="header"
+      sx={{
+        minHeight: 64,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 1,
+        px: 2,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        backgroundColor: "background.paper",
+      }}
+    >
       <Tooltip title={`Go to Profile (${displayName})`}>
         <IconButton
-          sx={{ 
-            position: "absolute", 
-            top: 16, 
-            right: 48, 
-            zIndex: 1200, 
+          sx={{
             p: 0,
             transition: 'transform 0.2s',
             '&:hover': {
@@ -129,12 +139,9 @@ export default function TopbarProfile() {
       </Tooltip>
 
       <IconButton
+        aria-label="Open account menu"
         onClick={handleMenuToggle}
-        sx={{ 
-          position: "absolute", 
-          top: 16, 
-          right: 8, 
-          zIndex: 1200,
+        sx={{
           transition: 'transform 0.2s',
           '&:hover': {
             transform: 'scale(1.1)'
@@ -195,6 +202,6 @@ export default function TopbarProfile() {
           Logout
         </MenuItem>
       </Menu>
-    </>
+    </Box>
   );
 }
