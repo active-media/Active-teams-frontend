@@ -10,6 +10,7 @@ import {
   useTheme,
   IconButton,
   Alert,
+  Tooltip,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import CategoryIcon from "@mui/icons-material/Category";
@@ -70,7 +71,7 @@ const EventTypesModal = ({
     setErrors({});
   };
   const handleCheckboxChange = (name) => (event) => {
-    setFormData((prev) => ({ ...prev, [name]: event.target.checked }));
+    setFormData((prev) => ({ ...prev, "event_category": name }));
   };
 const handleInputChange = (e) => {
   const { name, value } = e.target;
@@ -117,7 +118,7 @@ const handleSubmit = async () => {
       isTicketed: formData.isTicketed,
       isTraining: formData.isTraining,
       isGlobal: formData.isGlobal,
-      isEventType: true,
+      event_category: formData.event_category,
     };
 
     let result;
@@ -205,66 +206,101 @@ const handleSubmit = async () => {
 
               isGlobal Event            </Typography>
             <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.isGlobal === true}
-                    onChange={() =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        isGlobal: true,
-                      }))
-                    }
-                  />
-                }
-                label="True"
-              />
+              <Tooltip title="Make this event type available globally across teams.">
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={formData.isGlobal === true}
+                      onChange={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          isGlobal: true,
+                        }))
+                      }
+                    />
+                  }
+                  label="True"
+                />
+              </Tooltip>
 
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.isGlobal === false}
-                    onChange={() =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        isGlobal: false,
-                      }))
-                    }
-                  />
-                }
-                label="False"
-              />
+              <Tooltip title="Keep this event type limited to this team.">
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={formData.isGlobal === false}
+                      onChange={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          isGlobal: false,
+                        }))
+                      }
+                    />
+                  }
+                  label="False"
+                />
+              </Tooltip>
             </Box>
           </Box>
 
           {/* Form Type Settings */}
-          <Box sx={{ mb: 3, p: 2, bgcolor: "rgba(0,123,255,0.05)", borderRadius: 1 }}>
-            <Typography fontWeight={600} sx={{ mb: 2 }}>
+          <Box sx={{ mb: 3, p: 2, bgcolor: "rgba(0,123,255,0.05)", borderRadius: 1,display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+            <Typography fontWeight={600} sx={{ mb: 2, gridColumn: '1 / -1' }}>
               Type Settings:
             </Typography>
 
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={formData.isTicketed}
-                  onChange={handleCheckboxChange("isTicketed")}
-                />
-              }
-              label="Ticketed Event"
-              sx={{ mb: 2, display: 'block' }}
-            />
+            <Tooltip title="Mark this event type for events that require tickets.">
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={formData.event_category === "ticketed"   }
+                    onChange={handleCheckboxChange("ticketed")}
+                  />
+                }
+                label="Ticketed Event"
+                sx={{ mb: 2, display: 'block' }}
+              />
+            </Tooltip>
+            <Tooltip title="Mark this event type for training sessions.">
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={formData.event_category === "training"}
+                    onChange={handleCheckboxChange("training")}
+                  />
+                }
+                label="Training Event"
+                sx={{ display: 'block' }}
+              />
+            </Tooltip>
+
+            <Tooltip title="Mark this event type for small gatherings.">
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={formData.event_category === "small_gatherings"}
+                    onChange={handleCheckboxChange("small_gatherings")}
+                  />
+                }
+                label="Small Gathering"
+                sx={{ mb: 2, display: 'block' }}
+              />
+            </Tooltip>
+
+            <Tooltip title="Mark this event type for services.">
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={formData.event_category === "service"}
+                    onChange={handleCheckboxChange("service")}
+                  />
+                }
+                label="Service"
+                sx={{ mb: 2, display: 'block' }}
+              />
+            </Tooltip>
 
             {/* ADDED TRAINING CHECKBOX */}
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={formData.isTraining}
-                  onChange={handleCheckboxChange("isTraining")}
-                />
-              }
-              label="Training Event"
-              sx={{ display: 'block' }}
-            />
+
           </Box>
 
           {errors.submit && (

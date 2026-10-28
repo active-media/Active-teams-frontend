@@ -1513,7 +1513,7 @@ const allEventTypes = useMemo(() => {
 }, [eventTypes]);
 const getEventTypeName = (eventType) => {
   console.log("normal",eventTypes)
-  return eventTypes.find(et => et.display_name === eventType)?.name || 'cells';
+  return eventTypes.find(et => et.name === eventType)?.name || 'cells';
 };
 
 
@@ -1670,12 +1670,13 @@ const fetchEventTypes = useCallback(async () => {
   try {
     const token = localStorage.getItem("access_token");
     const org_id = userOrgId || currentUser?.org_id || "";
+    console.log("Fetching event types for org_id:", org_id);
     const {data:eventTypesData, error} = await supabase.from('event_types').select('*').eq("org_id",org_id)
     if (error){
-      console.log("supabase error: ",error.message);
+      console.error("supabase error: ",error.message);
       throw new Error("supabase error: ",error.message);
     }
-
+    console.log("Fetched event types:", eventTypesData);
 
    
     
@@ -3464,6 +3465,8 @@ const getFilteredEventTypes = (allEventTypes) => {
   const handleSaveEventType = useCallback(
     async (eventTypeData, eventTypeId = null) => {
       try {
+        console.log('DATA',eventTypeData, eventTypeId)
+      
         const token = localStorage.getItem("access_token");
         if (!token) {
           throw new Error("No authentication token found");
@@ -4106,6 +4109,7 @@ const filteredEventTypes = useMemo(() => {
 
       if (setSearchQuery) setSearchQuery("");
       if (setShowingEvents) setShowingEvents(true);
+   
     };
 
     const eventTypeStyles = externalStyles || {
@@ -4559,6 +4563,7 @@ const getTypeValue = (type) => {
               </Box>
             )}
           </Box>
+          
         </Box>
         {/* WHEN SHOWING EVENTS - Show back button */}
         {showingEvents && (
@@ -5508,7 +5513,7 @@ const getTypeValue = (type) => {
         .map((type) => {
           //HEREEEEEEEEEEEEEEEEEEE
           const typeName = typeof type === "string" ? type : type.name || type;
-          const name = eventTypes.find((t) => t.name === typeName)?.display_name || typeName;
+          const name = eventTypes.find((t) => t.name === typeName)?.name;
           const isAllCells = typeName === "all";
           const eventTypeObj = isAllCells 
             ? { name: "all", description: "Gatherings for discipleship, community and spiritual growth" }
@@ -5560,6 +5565,7 @@ const getTypeValue = (type) => {
                 },
               }}
             >
+              
               <Box
                 onClick={() => {
                   setSelectedEventTypeFilter(name);
@@ -5572,7 +5578,7 @@ const getTypeValue = (type) => {
                     start_date: DEFAULT_API_START_DATE,
                     event_type: typeName === "all" ? "CELLS" : typeName,
                   };
-                  console.log('FETCH PARAMS', fetchParams);
+                  console.log('FETCH PARAMS', fetchParams,name,typeName);
                   // fetchEvents(fetchParams, true);
                 }}
                 sx={{

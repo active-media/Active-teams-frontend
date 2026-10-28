@@ -21,6 +21,9 @@ import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import { useTheme } from "@mui/material/styles";
 import { UserContext } from "../contexts/UserContext";
 import { AuthContext, supabase } from "../contexts/AuthContext";
+import Brightness4Icon from "@mui/icons-material/Brightness4";
+import Brightness7Icon from "@mui/icons-material/Brightness7";
+import darkLogo from "../assets/active-teams.png";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { v4 as uuidv4 } from "uuid"; // npm i uuid  (add to your project)
@@ -148,8 +151,8 @@ const Signup = ({ onSignup, mode }) => {
   // const [loading, setLoading] = useState(false);
   // const [showPassword, setShowPassword] = useState(false);
   // const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  // const [showWelcome, setShowWelcome] = useState(false);
-  // const [welcomeName, setWelcomeName] = useState("");
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [welcomeName, setWelcomeName] = useState("");
 
   // // Organizations (fetched from Supabase)
   // const [organizations, setOrganizations] = useState([]);
@@ -200,6 +203,7 @@ const Signup = ({ onSignup, mode }) => {
   const [selectedAddress, setSelectedAddress] = useState(null);
 
   const [biasLonLat, setBiasLonLat] = useState(null);
+  const isSmallScreen = window.innerWidth < 600;
 
   useEffect(() => {
     const fetchOrgs = async () => {
@@ -659,7 +663,7 @@ const Signup = ({ onSignup, mode }) => {
       {showWelcome && <WelcomeOverlay name={welcomeName} mode={mode} />}
 
       {/* Theme toggle */}
-      <Box sx={{ position: "absolute", top: 16, right: 16 }}>
+      {/* <Box sx={{ position: "absolute", top: 16, right: 16 }}>
         <IconButton
           onClick={() => {
             const next = mode === "light" ? "dark" : "light";
@@ -674,7 +678,7 @@ const Signup = ({ onSignup, mode }) => {
         >
           {isDark ? <Brightness7Icon /> : <Brightness4Icon />}
         </IconButton>
-      </Box>
+      </Box> */}
 
       <Box
         sx={{
@@ -688,9 +692,11 @@ const Signup = ({ onSignup, mode }) => {
           boxShadow: 3,
           background: theme.palette.background.paper,
         }}
+       
       >
-        {/* Logo */}
-        <Box display="flex" justifyContent="center" alignItems="center" mb={1}>
+       
+        
+        {/* <Box display="flex" justifyContent="center" alignItems="center" mb={1}>
           <img
             src={darkLogo}
             alt="Active Teams Logo"
@@ -775,7 +781,7 @@ const Signup = ({ onSignup, mode }) => {
             {errors.gender && <Typography variant="caption" color="error">{errors.gender}</Typography>}
           </FormControl>
 
-          <FormControl fullWidth error={!!errors.organization}>
+          {/* <FormControl fullWidth error={!!errors.organization}>
             <Autocomplete
               freeSolo
               options={organizations}
@@ -798,7 +804,7 @@ const Signup = ({ onSignup, mode }) => {
                   {...params}
                   label="Organization / Church"
                   error={!!errors.organization}
-                  helperText={errors.organization || orgsError || (orgsLoading ? "Loading organizations..." : "Select or type your organization")}
+                  // helperText={errors.organization || orgsError || (orgsLoading ? "Loading organizations..." : "Select or type your organization")}
                   fullWidth
                   InputProps={{
                     ...params.InputProps,
@@ -813,8 +819,7 @@ const Signup = ({ onSignup, mode }) => {
                 />
               )}
             />
-          </FormControl>
-
+          </FormControl> 
           <FormControl fullWidth>
             <Autocomplete
               freeSolo
@@ -892,11 +897,11 @@ const Signup = ({ onSignup, mode }) => {
             }}
             sx={{ ...inputFieldSx, "& .MuiOutlinedInput-root": { ...inputFieldSx["& .MuiOutlinedInput-root"], "& fieldset": { borderColor: errors.confirm_password ? theme.palette.error.main : isDark ? "#333333" : "#e0e0e0" } } }}
           />
-        </Box>
+        </Box> */} 
 
-        {Object.keys(errors).length > 0 && (
+        {/* {Object.keys(errors).length > 0 && (
           <Alert severity="error" sx={{ borderRadius: 2 }}>Please fix the highlighted errors above.</Alert>
-        )}
+        )} */}
 
         <Box
           component="form"
@@ -904,11 +909,13 @@ const Signup = ({ onSignup, mode }) => {
           display="flex"
           flexDirection="column"
           gap={3}
+          
         >
           <Box
             display="grid"
             gridTemplateColumns={{ xs: "1fr", sm: "1fr 1fr" }}
             gap={2.5}
+           
           >
             {/* Name */}
             <TextField

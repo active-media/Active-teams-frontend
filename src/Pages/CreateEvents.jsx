@@ -266,7 +266,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   ];
 
   useEffect(() => {
-    console.log("CreateEvents - Props received:",eventTypes.find((et) => et.display_name === formData.eventType), {
+    console.log("CreateEvents - Props received:",eventTypes.find((et) => et.name === formData.eventType), {
       selectedEventTypeObj,
       selectedEventType,
       eventTypes: eventTypes.map((et) => ({
@@ -276,15 +276,15 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
         hasPersonSteps: et.has_person_steps,
       })),
     });
-    setIsTicketedEvent(eventTypes.find((et) => et.display_name === formData.eventType)?.is_ticketed || false);
+    setIsTicketedEvent(eventTypes.find((et) => et.name === formData.eventType)?.is_ticketed || false);
     const determineEventType = () => {
       if (selectedEventTypeObj) {
-        const objName = selectedEventTypeObj.name || selectedEventTypeObj.displayName || "";
+        const objName = selectedEventTypeObj.name ;
         const matchedFromList = eventTypes.find((et) => {
-          const etName = et.name || et.displayName || "";
+          const etName = et.name;
           return (
-            etName.toLowerCase() === objName.toLowerCase() ||
-            et._id === selectedEventTypeObj._id
+            // etName.toLowerCase() === objName.toLowerCase() ||
+            et.event_type_id === selectedEventTypeObj.event_type_id
           );
         });
         const source = matchedFromList || selectedEventTypeObj;
@@ -483,11 +483,11 @@ const fetchPeople = async (q) => {
         if (data.isTicketed !== undefined) {
           setEventTypeFlags((prev) => ({
             ...prev,
-            isTicketed: !!data.isTicketed,
+            isTicketed: !!data.is_ticketed,
           }));
         }
 
-        if (data.isTicketed) {
+        if (data.is_ticketed) {
           if (
             data.priceTiers &&
             Array.isArray(data.priceTiers) &&
@@ -723,7 +723,7 @@ const fetchPeople = async (q) => {
         dayValue = "Recurring";
       }
       
-      const eventTypeName = eventTypes.find((t) => t.display_name === formData.eventType)?.name || 'cells'
+      const eventTypeName = eventTypes.find((t) => t.name === formData.eventType)?.name || 'cells'
       console.log("event types here",eventTypes,formData.eventType)
       const payload = {
         UUID: generateUUID(),
@@ -1034,6 +1034,7 @@ const fetchPeople = async (q) => {
 
   return (
     <Box sx={containerStyle}>
+      
       <Card
         sx={{
           ...cardStyle,
@@ -1100,7 +1101,7 @@ const fetchPeople = async (q) => {
                   if (selectedObj) {
                     setEventTypeFlags({
                       isGlobal: !!selectedObj.isGlobal,
-                      isTicketed: !!selectedObj.isTicketed,
+                      isTicketed: !!selectedObj.is_ticketed,
                       hasPersonSteps: !!selectedObj.hasPersonSteps,
                     });
                   }
