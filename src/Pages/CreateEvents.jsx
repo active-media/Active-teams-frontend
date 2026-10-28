@@ -89,6 +89,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   };
   
   const [eventId, setEventId] = useState(getInitialEventId());
+  const [sessionId, setSessionId] = useState(null);
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
   const [isSearchingPeople, setIsSearchingPeople] = useState(false);
@@ -431,14 +432,18 @@ const fetchPeople = async (q) => {
   // Update eventId from query param or passed event object
   const queryParams = new URLSearchParams(window.location.search);
   const queryEventId = queryParams.get("eventId");
+  const querySessionId = queryParams.get("sessionId");
   
   // If selectedEventTypeObj has full event data (eventName), use its ID
   const hasFullEventData = selectedEventTypeObj && selectedEventTypeObj.eventName;
   const propEventId = hasFullEventData ? (selectedEventTypeObj._id || selectedEventTypeObj.id) : null;
-  
+  console.log("Event obj",selectedEventTypeObj, "query param eventId", queryEventId, "propEventId", propEventId, "current eventId", eventId);
   const newEventId = queryEventId || propEventId;
   if (newEventId && newEventId !== eventId) {
     setEventId(newEventId);
+  }
+  if (querySessionId) {
+    setSessionId(querySessionId);
   }
 }, [selectedEventTypeObj])
   useEffect(() => {
@@ -494,11 +499,12 @@ const fetchPeople = async (q) => {
             data.priceTiers.length > 0
           ) {
             const formattedPriceTiers = data.priceTiers.map((tier) => ({
-              name: tier.name || "",
+              tier_id: tier.tier_id || tier.id || "",
+              name: tier.name || tier.tier_name,
               price: tier.price || "",
-              ageGroup: tier.ageGroup || "",
-              memberType: tier.memberType || "",
-              paymentMethod: tier.paymentMethod || "",
+              ageGroup: tier.age_group || "",
+              memberType: tier.member_type || "",
+              paymentMethod: tier.payment_method || "",
             }));
             setPriceTiers(formattedPriceTiers);
           } else {
@@ -727,6 +733,7 @@ const fetchPeople = async (q) => {
       console.log("event types here",eventTypes,formData.eventType)
       const payload = {
         UUID: generateUUID(),
+        session_id: sessionId || null,
         eventTypeName: eventTypeName,
         eventName: formData.eventName,
         isTicketed: !!isTicketedEvent,
@@ -783,7 +790,7 @@ const fetchPeople = async (q) => {
         payload.leader1 = formData.leader1 || "";
         payload.leader12 = formData.leader12 || "";
       }
-      
+      formData.session_id = sessionId;
       const response = await authFetch(
         eventId
           ? `${BACKEND_URL}/events/${eventId}`
@@ -1237,6 +1244,7 @@ const fetchPeople = async (q) => {
                     <TextField
                       label="Age Group *"
                       value={tier.ageGroup}
+                      // select
                       onChange={(e) =>
                         handlePriceTierChange(index, "ageGroup", e.target.value)
                       }
@@ -1246,6 +1254,9 @@ const fetchPeople = async (q) => {
                       error={!!errors[`tier_${index}_ageGroup`]}
                       helperText={errors[`tier_${index}_ageGroup`]}
                     />
+                      {/* <MenuItem value="under12">under12</MenuItem>
+                      <MenuItem value="over12">over12</MenuItem>
+                    </TextField> */}
 
                     <TextField
                       label="Member Type *"

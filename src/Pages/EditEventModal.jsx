@@ -1468,7 +1468,7 @@ const handleSubmit = async (e, isDeactivating = false) => {
               <MenuItem value={4}>4 Weeks</MenuItem>
               <MenuItem value={8}>2 Months</MenuItem>
               <MenuItem value={12}>3 Months</MenuItem>
-              <MenuItem value={-1}>Never</MenuItem>
+              <MenuItem value={-1}>Forever</MenuItem>
             </Select>
           </FormControl>
 

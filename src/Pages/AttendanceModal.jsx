@@ -1537,7 +1537,7 @@ const AttendanceModal = ({
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
   console.log('full event:', event);
-  const isTicketedEvent =  event.eventType === 'ticketed_events'
+  const isTicketedEvent =  event.isTicketed;
   // Only sync to Service Check-In for events that actually appear there:
   // ticketed events and global events (services). Never cells, training, etc.
   const syncsServiceCheckIn = shouldSyncServiceCheckIn(event);
@@ -3937,8 +3937,11 @@ const AttendanceModal = ({
             style={{
               ...styles.radioButton,
               ...(isCheckedIn ? styles.radioButtonChecked : {}),
+              cursor: isFutureSession ? "not-allowed" : "pointer",
             }}
             onClick={() => handleCheckIn(person.id)}
+            disabled={isFutureSession}
+            title={isFutureSession ? "Can't check in until the session happens" : undefined}
           >
             {isCheckedIn && <span style={styles.radioButtonInner}>✓</span>}
           </button>
@@ -4984,8 +4987,11 @@ const AttendanceModal = ({
                                     ...(checkedIn[person.id]
                                       ? styles.radioButtonChecked
                                       : {}),
+                                      cursor: isFutureSession ? "not-allowed" : "pointer",
                                   }}
+                                  disabled={isFutureSession}
                                   onClick={() => handleCheckIn(person.id)}
+                                  title={isFutureSession ? "Can't check in until the session happens" : undefined}
                                 >
                                   {checkedIn[person.id] && (
                                     <span style={styles.radioButtonInner}>
@@ -5566,9 +5572,14 @@ const AttendanceModal = ({
               }}
             >
               <button
-                style={styles.didNotMeetBtn}
+                style={{
+                  ...styles.didNotMeetBtn,
+                  opacity: isSaving ? 0.7 : 1,
+                  cursor: isSaving || isFutureSession ? "not-allowed" : "pointer",
+                }}
                 onClick={handleDidNotMeet}
-                disabled={isSaving}
+                disabled={isSaving || isFutureSession}
+                title={isFutureSession ? "Can't save until the session happens" : undefined}
               >
                 {isSaving ? "Saving..." : "Mark as did not meet"}
               </button>

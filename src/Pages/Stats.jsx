@@ -67,6 +67,12 @@ import { toast } from "react-toastify";
 import * as XLSX from "xlsx";
 import { AuthContext } from "../contexts/AuthContext";
 import CreateEvents from "./CreateEvents";
+import {
+  getCellStatus,
+  isCellOverdue,
+  filterCells,
+  computeCellFilterCounts,
+} from "../utils/cellFilterLogic";
 
 const toSATime = (d) => {
   if (!d) return null;
@@ -134,16 +140,6 @@ const getCellPeriodRange = (periodType) => {
   };
 };
 
-const getCellStatus = (cell) => {
-  const status = (cell.status || cell.Status || "incomplete")
-    .trim()
-    .toLowerCase()
-    .replace(/[ -]+/g, "_");
-
-  if (["complete", "completed", "closed"].includes(status)) return "completed";
-  if (["did_not_meet", "didnotmeet"].includes(status)) return "did_not_meet";
-  return "incomplete";
-};
 
 const isTaskCompleted = (task) => {
   const status = task?.status?.toLowerCase?.() || "";
@@ -713,33 +709,7 @@ const StatsDashboard = () => {
     [authFetch, period, customRange, buildHierarchyParams],
   );
   const isOverdue = useCallback((cell) => {
-    if (!cell) return false;
-    if ("is_overdue" in cell) {
-      return !!cell.is_overdue;
-    }
-    if ("isOverdue" in cell) {
-      return !!cell.isOverdue;
-    }
-    const status = (cell.status || cell.Status || "").trim().toLowerCase();
-    const isIncomplete =
-      status === "incomplete" ||
-      status.includes("incomplete") ||
-      status === "incomp" ||
-      status === "not completed";
-
-    // Compare calendar dates in the org's operating timezone
-    // (Africa/Johannesburg) instead of the browser's local midnight, so
-    // borderline cells don't flip depending on where the viewer is.
-    const cellDay = cell.date
-      ? new Date(cell.date).toLocaleDateString("en-CA", {
-          timeZone: "Africa/Johannesburg",
-        })
-      : null;
-    const todayStr = new Date().toLocaleDateString("en-CA", {
-      timeZone: "Africa/Johannesburg",
-    });
-
-    return isIncomplete && !!cellDay && cellDay < todayStr;
+    return isCellOverdue(cell);
   }, []);
 
   const fetchStats = useCallback(
@@ -873,27 +843,11 @@ const StatsDashboard = () => {
   );
 
   const filteredCells = useMemo(() => {
-    return cells
-      .filter((cell) => {
-        const status = getCellStatus(cell);
-        const matchesStatus =
-          cellFilter === "all" ||
-          (cellFilter === "overdue" && isOverdue(cell)) ||
-          (cellFilter !== "overdue" && cellFilter === status);
-        const matchesPerson =
-          selectedCellPerson === "all" ||
-          cell.eventLeaderName?.trim() === selectedCellPerson;
-        return matchesStatus && matchesPerson;
-      })
-      .sort((a, b) => {
-      const dateA = a.date
-        ? new Date(a.date).getTime()
-        : Number.MAX_SAFE_INTEGER;
-      const dateB = b.date
-        ? new Date(b.date).getTime()
-        : Number.MAX_SAFE_INTEGER;
-      return dateB - dateA;
-      });
+    return filterCells(cells, {
+      cellFilter,
+      selectedCellPerson,
+      isOverdueFn: isOverdue,
+    });
   }, [cells, cellFilter, selectedCellPerson, isOverdue]);
 
   const overdueCellCount = useMemo(
@@ -902,25 +856,10 @@ const StatsDashboard = () => {
   );
 
   const cellFilterCounts = useMemo(() => {
-    const peopleFiltered = cells.filter(
-      (cell) =>
-        selectedCellPerson === "all" ||
-        cell.eventLeaderName?.trim() === selectedCellPerson,
-    );
-    const count = (filter) =>
-      filter === "all"
-        ? peopleFiltered.length
-        : filter === "overdue"
-          ? peopleFiltered.filter((cell) => isOverdue(cell)).length
-        : peopleFiltered.filter((cell) => getCellStatus(cell) === filter).length;
-
-    return {
-      all: count("all"),
-      overdue: count("overdue"),
-      incomplete: count("incomplete"),
-      completed: count("completed"),
-      didNotMeet: count("did_not_meet"),
-    };
+    return computeCellFilterCounts(cells, {
+      selectedCellPerson,
+      isOverdueFn: isOverdue,
+    });
   }, [cells, selectedCellPerson, isOverdue]);
 
   const taskPeople = useMemo(

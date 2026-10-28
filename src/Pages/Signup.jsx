@@ -391,12 +391,12 @@ const Signup = ({ onSignup, mode }) => {
   const handleInvitedByChange = (event, newValue) => {
     console.log("INVITEE", newValue);
     const invitedByValue =
-      newValue && typeof newValue === "object" ? (newValue.label || "") : (newValue || "");
+      newValue && typeof newValue === "object" ? (`${newValue.name} ${newValue.surname}` || "") : (newValue || "");
     const invitedById =
       newValue && typeof newValue === "object" ? (newValue._id || newValue.key || "") : "";
 
     setSelectedInvitedBy(typeof newValue === "object" ? newValue : null);
-    setForm((prev) => ({ ...prev, invited_by: label, invited_by_id: id }));
+    setForm((prev) => ({ ...prev, invited_by: invitedByValue, invited_by_id: invitedById }));
     if (errors.invited_by) setErrors((prev) => ({ ...prev, invited_by: "" }));
   };
 

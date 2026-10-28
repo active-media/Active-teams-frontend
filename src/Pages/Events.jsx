@@ -818,7 +818,7 @@ ${xmlCols}
   const fetchEventFull = async (event) => {
 
     try {
-      let eventId = event._id || event.id;
+      let eventId = event.event_id || event.id;
       if (!eventId) return event;
       if (eventId.includes("_")) eventId = eventId.split("_")[0];
       const token = localStorage.getItem("access_token");
@@ -1333,7 +1333,7 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
 
   const fetchEventFull = async (event) => {
     try {
-      let eventId = event._id || event.id;
+      let eventId = event.event_id || event.id;
       if (!eventId) return event;
       if (eventId.includes("_")) eventId = eventId.split("_")[0];
       const token = localStorage.getItem("access_token");
@@ -2853,7 +2853,8 @@ const getFilteredEventTypes = (allEventTypes) => {
   const handleEditEvent = useCallback((event) => {
     console.log("THE EVENT",event)
     
-    let eventId = event._id;
+    let eventId = event.event_id;
+    let sessionId = event.session_id || event.sessionId || null;
     let eventDate = event.date;
     if (eventId && eventId.includes("_")) {
       const parts = eventId.split("_");
@@ -2865,6 +2866,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     if (event.isTicketed === true){
       let url = new URL(window.location.href);
       url.searchParams.set("eventId", eventId);
+      url.searchParams.set("sessionId", sessionId);
       window.history.pushState({}, "", url);
       setSelectedEventTypeObj(event)
       setCreateEventModalOpen(true);
