@@ -72,6 +72,8 @@ import {
   isCellOverdue,
   filterCells,
   computeCellFilterCounts,
+  extractCellPeople,
+  getCellLeader12,
 } from "../utils/cellFilterLogic";
 
 const toSATime = (d) => {
@@ -836,9 +838,7 @@ const StatsDashboard = () => {
   }, [period, fetchOverdueCells, fetchStats]);
 
   const cellPeople = useMemo(
-    () =>
-      [...new Set(cells.map((cell) => cell.eventLeaderName?.trim()).filter(Boolean))]
-        .sort((a, b) => a.localeCompare(b)),
+    () => extractCellPeople(cells),
     [cells],
   );
 
@@ -1094,6 +1094,7 @@ const StatsDashboard = () => {
       Date: cell.date ? formatDateForExcel(cell.date) : "",
       Day: cell.day || "",
       Leader: cell.eventLeaderName || "",
+      "Leader @12": getCellLeader12(cell),
       Location: cell.location || "",
       Status: cell.status || cell.Status || "incomplete",
       "Did Not Meet": cell.did_not_meet ? "Yes" : "No",
@@ -2054,6 +2055,14 @@ const StatsDashboard = () => {
                                     sx={{ verticalAlign: "middle", mr: 0.5 }}
                                   />
                                   Leader: {cell.eventLeaderName}
+                                </Typography>
+                              )}
+                              {getCellLeader12(cell) && (
+                                <Typography
+                                  variant="body2"
+                                  color="text.secondary"
+                                >
+                                  Leader @12: {getCellLeader12(cell)}
                                 </Typography>
                               )}
                             </Stack>

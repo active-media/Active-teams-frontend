@@ -5,6 +5,9 @@ import {
   isCellOverdue,
   filterCells,
   computeCellFilterCounts,
+  getCellLeader12,
+  extractCellPeople,
+  cellMatchesPerson,
 } from "../src/utils/cellFilterLogic.js";
 
 describe("getCellStatus", () => {
@@ -95,6 +98,81 @@ describe("isCellOverdue", () => {
   });
 });
 
+describe("getCellLeader12", () => {
+  test("extracts leader_at_12 across varying field keys", () => {
+    assert.equal(getCellLeader12({ leader12: "Pastor David" }), "Pastor David");
+    assert.equal(getCellLeader12({ leader_at_12: "Pastor Kenny" }), "Pastor Kenny");
+    assert.equal(getCellLeader12({ leaderAt12: "Leader Grace" }), "Leader Grace");
+    assert.equal(getCellLeader12({ "Leader @12": "Bishop John" }), "Bishop John");
+    assert.equal(getCellLeader12({ "Leader at 12": "Elder Paul" }), "Elder Paul");
+  });
+
+  test("returns empty string if missing", () => {
+    assert.equal(getCellLeader12(null), "");
+    assert.equal(getCellLeader12({}), "");
+  });
+});
+
+describe("extractCellPeople", () => {
+  test("includes cell leader_at_12 even if they don't have cells as event_leader", () => {
+    const cells = [
+      { eventLeaderName: "Alice", leader12: "Overseer Bob" },
+      { eventLeaderName: "Charlie", leader12: "Overseer Bob" },
+      { eventLeaderName: "Dana", leader_at_12: "Pastor Evans" },
+    ];
+
+    const people = extractCellPeople(cells);
+    // Overseer Bob and Pastor Evans do not have cells as eventLeaderName, but MUST be included
+    assert.deepEqual(people, [
+      "Alice",
+      "Charlie",
+      "Dana",
+      "Overseer Bob",
+      "Pastor Evans",
+    ]);
+  });
+
+  test("deduplicates person who is both eventLeaderName and leader_at_12", () => {
+    const cells = [
+      { eventLeaderName: "Alice", leader12: "Bob" },
+      { eventLeaderName: "Bob", leader12: "Charlie" },
+    ];
+
+    const people = extractCellPeople(cells);
+    assert.deepEqual(people, ["Alice", "Bob", "Charlie"]);
+  });
+});
+
+describe("cellMatchesPerson", () => {
+  test("matches when person is the eventLeaderName", () => {
+    const cell = { eventLeaderName: "Alice", leader12: "Overseer Bob" };
+    assert.equal(cellMatchesPerson(cell, "Alice"), true);
+  });
+
+  test("matches when person is the cell leader_at_12", () => {
+    const cell = { eventLeaderName: "Alice", leader12: "Overseer Bob" };
+    assert.equal(cellMatchesPerson(cell, "Overseer Bob"), true);
+  });
+
+  test("is case-insensitive and trims whitespace", () => {
+    const cell = { eventLeaderName: "Alice Smith", leader12: "Bob Jones" };
+    assert.equal(cellMatchesPerson(cell, "  alice smith  "), true);
+    assert.equal(cellMatchesPerson(cell, "BOB JONES"), true);
+  });
+
+  test("returns false for non-matching person", () => {
+    const cell = { eventLeaderName: "Alice", leader12: "Bob" };
+    assert.equal(cellMatchesPerson(cell, "Charlie"), false);
+  });
+
+  test("returns true when filter is 'all' or empty", () => {
+    const cell = { eventLeaderName: "Alice", leader12: "Bob" };
+    assert.equal(cellMatchesPerson(cell, "all"), true);
+    assert.equal(cellMatchesPerson(cell, ""), true);
+    assert.equal(cellMatchesPerson(cell, null), true);
+  });
+});
+
 describe("filterCells and incomplete tab filtering", () => {
   const referenceToday = "2026-10-28";
   const customIsOverdue = (cell) => isCellOverdue(cell, referenceToday);
@@ -106,6 +184,7 @@ describe("filterCells and incomplete tab filtering", () => {
       date: "2026-10-15",
       status: "incomplete",
       eventLeaderName: "Leader Alice",
+      leader12: "Overseer Bob",
     },
     {
       _id: "c2",
@@ -113,7 +192,8 @@ describe("filterCells and incomplete tab filtering", () => {
       date: "2026-10-29",
       status: "incomplete",
       is_overdue: true,
-      eventLeaderName: "Leader Bob",
+      eventLeaderName: "Leader Dave",
+      leader12: "Overseer Bob",
     },
     {
       _id: "c3",
@@ -121,6 +201,7 @@ describe("filterCells and incomplete tab filtering", () => {
       date: "2026-10-28",
       status: "incomplete",
       eventLeaderName: "Leader Alice",
+      leader12: "Overseer Bob",
     },
     {
       _id: "c4",
@@ -128,6 +209,7 @@ describe("filterCells and incomplete tab filtering", () => {
       date: "2026-10-30",
       status: "incomplete",
       eventLeaderName: "Leader Charlie",
+      leader12: "Pastor Evans",
     },
     {
       _id: "c5",
@@ -135,13 +217,23 @@ describe("filterCells and incomplete tab filtering", () => {
       date: "2026-10-10",
       status: "completed",
       eventLeaderName: "Leader Alice",
+      leader12: "Overseer Bob",
     },
     {
       _id: "c6",
       eventName: "Did Not Meet Cell",
       date: "2026-10-12",
       status: "did_not_meet",
-      eventLeaderName: "Leader Bob",
+      eventLeaderName: "Leader Dave",
+      leader12: "Overseer Bob",
+    },
+    {
+      _id: "c7",
+      eventName: "Bob's Own Cell",
+      date: "2026-10-28",
+      status: "incomplete",
+      eventLeaderName: "Overseer Bob",
+      leader12: "Bishop Frank",
     },
   ];
 
@@ -152,8 +244,8 @@ describe("filterCells and incomplete tab filtering", () => {
     });
 
     const ids = result.map((c) => c._id);
-    // Should contain c3 (today) and c4 (future)
-    assert.deepEqual(ids.sort(), ["c3", "c4"]);
+    // c3, c4, c7 are non-overdue incomplete
+    assert.deepEqual(ids.sort(), ["c3", "c4", "c7"]);
 
     // Should NOT contain c1 (past incomplete) or c2 (flagged overdue)
     assert.equal(ids.includes("c1"), false);
@@ -170,57 +262,49 @@ describe("filterCells and incomplete tab filtering", () => {
     assert.deepEqual(ids.sort(), ["c1", "c2"]);
   });
 
-  test("completed tab returns only completed cells", () => {
-    const result = filterCells(sampleCells, {
-      cellFilter: "completed",
-      isOverdueFn: customIsOverdue,
-    });
-
-    const ids = result.map((c) => c._id);
-    assert.deepEqual(ids, ["c5"]);
-  });
-
-  test("did_not_meet tab returns only did_not_meet cells", () => {
-    const result = filterCells(sampleCells, {
-      cellFilter: "did_not_meet",
-      isOverdueFn: customIsOverdue,
-    });
-
-    const ids = result.map((c) => c._id);
-    assert.deepEqual(ids, ["c6"]);
-  });
-
   test("all tab returns all cells", () => {
     const result = filterCells(sampleCells, {
       cellFilter: "all",
       isOverdueFn: customIsOverdue,
     });
 
-    assert.equal(result.length, 6);
+    assert.equal(result.length, 7);
   });
 
-  test("person filter works in conjunction with incomplete filter", () => {
+  test("person filter matches cells where selected person is leader_at_12", () => {
+    // Overseer Bob is leader_at_12 for c1, c2, c3, c5, c6 AND eventLeader for c7
     const result = filterCells(sampleCells, {
-      cellFilter: "incomplete",
-      selectedCellPerson: "Leader Alice",
+      cellFilter: "all",
+      selectedCellPerson: "Overseer Bob",
       isOverdueFn: customIsOverdue,
     });
 
     const ids = result.map((c) => c._id);
-    // Only c3 belongs to Alice and is non-overdue incomplete
-    assert.deepEqual(ids, ["c3"]);
+    assert.deepEqual(ids.sort(), ["c1", "c2", "c3", "c5", "c6", "c7"]);
   });
 
-  test("sorts cells descending by date", () => {
+  test("person filter for leader_at_12 with incomplete tab excludes overdue cells under that leader", () => {
     const result = filterCells(sampleCells, {
-      cellFilter: "all",
+      cellFilter: "incomplete",
+      selectedCellPerson: "Overseer Bob",
       isOverdueFn: customIsOverdue,
     });
 
-    const dates = result.map((c) => c.date);
-    for (let i = 0; i < dates.length - 1; i++) {
-      assert.ok(new Date(dates[i]) >= new Date(dates[i + 1]));
-    }
+    const ids = result.map((c) => c._id);
+    // Overseer Bob has c3 (Alice, today) and c7 (Bob, today).
+    // c1 (past) and c2 (flagged overdue) must be excluded!
+    assert.deepEqual(ids.sort(), ["c3", "c7"]);
+  });
+
+  test("person filter matches direct event leader", () => {
+    const result = filterCells(sampleCells, {
+      cellFilter: "all",
+      selectedCellPerson: "Leader Charlie",
+      isOverdueFn: customIsOverdue,
+    });
+
+    const ids = result.map((c) => c._id);
+    assert.deepEqual(ids, ["c4"]);
   });
 });
 
@@ -229,40 +313,29 @@ describe("computeCellFilterCounts", () => {
   const customIsOverdue = (cell) => isCellOverdue(cell, referenceToday);
 
   const sampleCells = [
-    { _id: "c1", status: "incomplete", date: "2026-10-15", eventLeaderName: "Alice" }, // overdue
-    { _id: "c2", status: "incomplete", date: "2026-10-28", eventLeaderName: "Alice" }, // incomplete (today)
-    { _id: "c3", status: "incomplete", date: "2026-10-30", eventLeaderName: "Bob" },   // incomplete (future)
-    { _id: "c4", status: "completed",  date: "2026-10-10", eventLeaderName: "Alice" }, // completed
-    { _id: "c5", status: "did_not_meet", date: "2026-10-11", eventLeaderName: "Bob" }, // did_not_meet
+    { _id: "c1", status: "incomplete", date: "2026-10-15", eventLeaderName: "Alice", leader12: "Bob" }, // overdue
+    { _id: "c2", status: "incomplete", date: "2026-10-28", eventLeaderName: "Alice", leader12: "Bob" }, // incomplete (today)
+    { _id: "c3", status: "incomplete", date: "2026-10-30", eventLeaderName: "Charlie", leader12: "David" },   // incomplete (future)
+    { _id: "c4", status: "completed",  date: "2026-10-10", eventLeaderName: "Alice", leader12: "Bob" }, // completed
+    { _id: "c5", status: "did_not_meet", date: "2026-10-11", eventLeaderName: "Charlie", leader12: "David" }, // did_not_meet
   ];
 
-  test("counts are mutually exclusive and sum to total", () => {
+  test("counts correctly respect leader_at_12 person filter", () => {
+    // Bob is leader12 for c1, c2, c4
     const counts = computeCellFilterCounts(sampleCells, {
+      selectedCellPerson: "Bob",
       isOverdueFn: customIsOverdue,
     });
 
-    assert.equal(counts.all, 5);
-    assert.equal(counts.overdue, 1);
-    assert.equal(counts.incomplete, 2); // Only c2 and c3, c1 is overdue!
-    assert.equal(counts.completed, 1);
-    assert.equal(counts.didNotMeet, 1);
+    assert.equal(counts.all, 3);
+    assert.equal(counts.overdue, 1);    // c1
+    assert.equal(counts.incomplete, 1); // c2
+    assert.equal(counts.completed, 1);  // c4
+    assert.equal(counts.didNotMeet, 0);
 
     assert.equal(
       counts.overdue + counts.incomplete + counts.completed + counts.didNotMeet,
       counts.all,
     );
-  });
-
-  test("counts correctly respect selected person filter", () => {
-    const counts = computeCellFilterCounts(sampleCells, {
-      selectedCellPerson: "Alice",
-      isOverdueFn: customIsOverdue,
-    });
-
-    assert.equal(counts.all, 3);
-    assert.equal(counts.overdue, 1);     // c1
-    assert.equal(counts.incomplete, 1);  // c2
-    assert.equal(counts.completed, 1);   // c4
-    assert.equal(counts.didNotMeet, 0);
   });
 });

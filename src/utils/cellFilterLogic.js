@@ -44,6 +44,37 @@ export const isCellOverdue = (cell, todayStr = null) => {
   return isIncomplete && !!cellDay && cellDay < currentTodayStr;
 };
 
+export const getCellLeader12 = (cell) => {
+  if (!cell) return "";
+  return String(
+    cell.leader12 ||
+    cell.leader_at_12 ||
+    cell.leaderAt12 ||
+    cell["Leader @12"] ||
+    cell["Leader at 12"] ||
+    ""
+  ).trim();
+};
+
+export const extractCellPeople = (cells) => {
+  const peopleSet = new Set();
+  (cells || []).forEach((cell) => {
+    const leaderName = cell.eventLeaderName?.trim();
+    if (leaderName) peopleSet.add(leaderName);
+    const leader12 = getCellLeader12(cell);
+    if (leader12) peopleSet.add(leader12);
+  });
+  return [...peopleSet].sort((a, b) => a.localeCompare(b));
+};
+
+export const cellMatchesPerson = (cell, selectedPerson) => {
+  if (!cell || !selectedPerson || selectedPerson === "all") return true;
+  const target = selectedPerson.trim().toLowerCase();
+  const leaderName = (cell.eventLeaderName || "").trim().toLowerCase();
+  const leader12 = getCellLeader12(cell).toLowerCase();
+  return leaderName === target || leader12 === target;
+};
+
 export const filterCells = (
   cells,
   { cellFilter = "all", selectedCellPerson = "all", isOverdueFn = isCellOverdue } = {},
@@ -57,9 +88,7 @@ export const filterCells = (
         (cellFilter === "overdue" && cellIsOverdue) ||
         (cellFilter === "incomplete" && status === "incomplete" && !cellIsOverdue) ||
         (cellFilter !== "overdue" && cellFilter !== "incomplete" && cellFilter === status);
-      const matchesPerson =
-        selectedCellPerson === "all" ||
-        cell.eventLeaderName?.trim() === selectedCellPerson;
+      const matchesPerson = cellMatchesPerson(cell, selectedCellPerson);
       return matchesStatus && matchesPerson;
     })
     .sort((a, b) => {
@@ -77,10 +106,8 @@ export const computeCellFilterCounts = (
   cells,
   { selectedCellPerson = "all", isOverdueFn = isCellOverdue } = {},
 ) => {
-  const peopleFiltered = (cells || []).filter(
-    (cell) =>
-      selectedCellPerson === "all" ||
-      cell.eventLeaderName?.trim() === selectedCellPerson,
+  const peopleFiltered = (cells || []).filter((cell) =>
+    cellMatchesPerson(cell, selectedCellPerson),
   );
   const count = (filter) => {
     if (filter === "all") return peopleFiltered.length;
