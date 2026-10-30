@@ -143,20 +143,20 @@ export default function DailyTasks() {
   const PEOPLE_TOAST_ID = "loading-people";
   const parseDate = (dateStr) => {
     if (!dateStr) return null;
-    const date = new Date(dateStr);
+    let value = dateStr;
+    // Some backend write paths store dates as naive ISO strings produced by
+    // datetime.utcnow() (no "Z" / offset). JS reads those as local time while
+    // the Stats backend reads them as UTC — parse them as UTC so both pages
+    // bucket the task into the same day/week.
+    if (
+      typeof value === "string" &&
+      /^\d{4}-\d{2}-\d{2}T/.test(value) &&
+      !/(Z|[+-]\d{2}:?\d{2})$/.test(value)
+    ) {
+      value += "Z";
+    }
+    const date = new Date(value);
     return isNaN(date.getTime()) ? null : date;
-  };
-
-  const isSameDay = (date1, date2) => {
-    return (
-      date1.getFullYear() === date2.getFullYear() &&
-      date1.getMonth() === date2.getMonth() &&
-      date1.getDate() === date2.getDate()
-    );
-  };
-
-  const isDateInRange = (date, startDate, endDate) => {
-    return date >= startDate && date <= endDate;
   };
 
   const getStartOfWeek = (date) => {
@@ -371,25 +371,34 @@ export default function DailyTasks() {
       setLoading(true);
       const normalizedEmail = (user.email || "").trim().toLowerCase();
 
-      // Fetch regular tasks and special tasks in parallel
-      const [regularRes, specialRes] = await Promise.all([
-        authFetch(
+      // Fetch regular and special tasks in parallel — paging through every
+      // page. Both endpoints default to 100 tasks per page, and a truncated
+      // list made the Daily Tasks totals disagree with the Stats page.
+      const fetchAllPages = async (url) => {
+        const all = [];
+        let page = 1;
+        const MAX_PAGES = 100;
+        while (page <= MAX_PAGES) {
+          const res = await authFetch(
+            `${url}${url.includes("?") ? "&" : "?"}page=${page}&limit=100`,
+            { signal },
+          );
+          if (!res.ok) break;
+          const data = await res.json();
+          const batch = Array.isArray(data) ? data : data.tasks || [];
+          all.push(...batch);
+          if (data.has_more !== true || batch.length === 0) break;
+          page += 1;
+        }
+        return all;
+      };
+
+      const [regularTasks, specialTasks] = await Promise.all([
+        fetchAllPages(
           `${API_URL}/tasks?email=${encodeURIComponent(normalizedEmail)}`,
-          { signal },
         ),
-        authFetch(`${API_URL}/tasks/my-special-tasks`, { signal }),
+        fetchAllPages(`${API_URL}/tasks/my-special-tasks`),
       ]);
-
-      const regularData = regularRes.ok ? await regularRes.json() : {};
-      const specialData = specialRes.ok ? await specialRes.json() : {};
-
-      const regularTasks = Array.isArray(regularData)
-        ? regularData
-        : regularData.tasks || [];
-
-      const specialTasks = Array.isArray(specialData)
-        ? specialData
-        : specialData.tasks || [];
 
       // Merge and deduplicate by _id / id
       const tasksMap = new Map();
@@ -459,6 +468,9 @@ export default function DailyTasks() {
           followup_date: task.followup_date || resolvedDate,
           status: (task.status || "open").toLowerCase(),
           taskType: normalizedTaskType,
+          // Original casing — the backend excludes "no answer" / "Awaiting Call"
+          // from completed counts with an exact (case-sensitive) match.
+          taskTypeRaw: task.taskType || "",
           taskName: task.name || task.taskName || "",
           type: resolvedType,
           leader_name: task.leader_name || task.leader_assigned || "",
@@ -471,19 +483,27 @@ export default function DailyTasks() {
 
       const normalizedTasks = Array.from(tasksMap.values()).map(normalizeTask);
 
-      // Filter: regular tasks by assignedfor/assigned_to_email
-      // Special tasks already scoped by backend — just ensure they belong to user
-      const myTasks = normalizedTasks.filter((task) => {
+      // Filter: keep only tasks this user owns. The owner rule is identical to
+      // how the Stats page groups its "All Tasks by Person" rows — the first
+      // email-like value among assignedfor / assigned_to_email / leader_assigned
+      // — so a person's Daily Tasks total equals their Stats row total.
+      const resolveOwner = (task) => {
         const assignedFor = (task.assignedfor || "").trim().toLowerCase();
         const assignedTo = (task.assigned_to_email || "").trim().toLowerCase();
         const leaderEmail = (task.leader_assigned || "").trim().toLowerCase();
-
+        const isEmail = (value) => value.includes("@");
         return (
-          assignedFor === normalizedEmail ||
-          assignedTo === normalizedEmail ||
-          leaderEmail === normalizedEmail
+          [assignedFor, assignedTo, leaderEmail].find(isEmail) ||
+          assignedFor ||
+          assignedTo ||
+          leaderEmail ||
+          ""
         );
-      });
+      };
+
+      const myTasks = normalizedTasks.filter(
+        (task) => resolveOwner(task) === normalizedEmail,
+      );
 
       setTasks(myTasks);
     } catch (err) {
@@ -1230,96 +1250,118 @@ export default function DailyTasks() {
     };
   };
 
+  // ── Counting rules (mirrors the Stats backend dashboard-comprehensive) ────
+  // captured  = any of followup_date / completedAt / createdAt inside the period
+  // completed = a completed status AND a task type the backend doesn't exclude
+  // remaining = captured - completed (so "awaiting task" sits in remaining)
+  // overdue   = captured, not completed, due date in the past
+  // Keeping these identical to the backend is what makes the Daily Tasks
+  // total and the person's "All Tasks by Person" row in Stats agree.
+  const COMPLETED_STATUSES = ["completed", "done", "closed", "finished"];
+  const EXCLUDED_FROM_COMPLETED = ["no answer", "Awaiting Call"];
+
+  const isCompletedStatus = (status) =>
+    COMPLETED_STATUSES.includes((status || "").toLowerCase());
+
+  const isExcludedFromCompleted = (task) =>
+    EXCLUDED_FROM_COMPLETED.includes(task.taskTypeRaw ?? task.taskType ?? "");
+
+  const getPeriodBounds = (range) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    switch (range) {
+      case "today": {
+        const end = new Date(today);
+        end.setHours(23, 59, 59, 999);
+        return { start: today, end };
+      }
+      case "thisWeek":
+        return { start: getStartOfWeek(today), end: getEndOfWeek(today) };
+      case "thisMonth":
+        return { start: getStartOfMonth(today), end: getEndOfMonth(today) };
+      case "previousWeek": {
+        const lastWeekDate = new Date(today);
+        lastWeekDate.setDate(today.getDate() - 7);
+        return {
+          start: getStartOfWeek(lastWeekDate),
+          end: getEndOfWeek(lastWeekDate),
+        };
+      }
+      case "previousMonth": {
+        // Anchor on day 1 first: setDate(31) + setMonth can spill into the
+        // wrong month (e.g. 31 March → previousMonth became 1 March).
+        const lastMonthDate = new Date(today);
+        lastMonthDate.setDate(1);
+        lastMonthDate.setMonth(today.getMonth() - 1);
+        return {
+          start: getStartOfMonth(lastMonthDate),
+          end: getEndOfMonth(lastMonthDate),
+        };
+      }
+      default:
+        return { start: null, end: null };
+    }
+  };
+
+  const period = getPeriodBounds(dateRange);
+  const inPeriod = (date) =>
+    !!date && !!period.start && date >= period.start && date <= period.end;
+
+  const getTaskDates = (task) => ({
+    followup: parseDate(task.followup_date || task.date),
+    completed: parseDate(task.completedAt || task.completed_at),
+    created: parseDate(task.createdAt || task.created_at),
+  });
+
+  const isCapturedInPeriod = (task) => {
+    const { followup, completed, created } = getTaskDates(task);
+    return inPeriod(followup) || inPeriod(completed) || inPeriod(created);
+  };
+
+  // Open tasks that were already overdue BEFORE this period started stay
+  // visible in the list (old work never disappears) but are not part of the
+  // period total — Stats counts only tasks inside the period.
+  const isCarriedOverdue = (task) => {
+    if (isCompletedStatus(task.status)) return false;
+    const { followup } = getTaskDates(task);
+    return !!followup && !!period.start && followup < period.start;
+  };
+
   const filteredTasks = tasks.filter((task) => {
-  const isCompleted = (task.status || "").toLowerCase() === "completed";
-  const isConsolidationOrFollowUp =
-    task.is_consolidation_task === true || task.is_new_person_task === true;
+    const isConsolidationOrFollowUp =
+      task.is_consolidation_task === true || task.is_new_person_task === true;
 
-  const matchesType =
-    filterType === "all" ||
-    task.type === filterType ||
-    (filterType === "consolidation" && isConsolidationOrFollowUp);
+    const matchesType =
+      filterType === "all" ||
+      task.type === filterType ||
+      (filterType === "consolidation" && isConsolidationOrFollowUp);
 
-  if (!matchesType) return false;
+    if (!matchesType) return false;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+    return isCapturedInPeriod(task) || isCarriedOverdue(task);
+  });
 
-  // OPEN tasks: overdue ones always show, future/today ones show normally
-  if (!isCompleted) {
-    const followupDate = parseDate(task.followup_date || task.date);
-    // No date at all — show open consolidation/followup, hide others
-    if (!followupDate) return isConsolidationOrFollowUp;
-    // Overdue open tasks always show regardless of date filter
-    if (followupDate < today) return true;
-    // Not overdue — apply normal date filter below
-  }
+  // What the hero number reports: the same set the Stats page counts.
+  const countedTasks = filteredTasks.filter(isCapturedInPeriod);
+  const overdueCount = countedTasks.filter((task) => {
+    if (isCompletedStatus(task.status)) return false;
+    const { followup } = getTaskDates(task);
+    return !!followup && followup < new Date();
+  }).length;
+  const outsidePeriodCount = filteredTasks.length - countedTasks.length;
 
-  // COMPLETED tasks and non-overdue open tasks: apply date filter
-  // Completed tasks use completedAt date; open non-overdue use followup_date
-  const completedDate = parseDate(task.completedAt || task.completed_at);
-  const followupDate = parseDate(task.followup_date || task.date);
-  const fallbackDate = parseDate(task.createdAt || task.created_at);
+  const completedCount = countedTasks.filter(
+    (task) => isCompletedStatus(task.status) && !isExcludedFromCompleted(task),
+  ).length;
 
-  const dateToCheck = isCompleted
-    ? (completedDate || followupDate || fallbackDate)
-    : (followupDate || fallbackDate);
-
-  if (!dateToCheck) return false;
-
-  switch (dateRange) {
-    case "today":
-      // Completed: show if completed today OR (no completedAt) followup was today
-      if (isCompleted) {
-        return (
-          (completedDate && isSameDay(completedDate, today)) ||
-          (!completedDate && followupDate && isSameDay(followupDate, today))
-        );
-      }
-      return isSameDay(dateToCheck, today);
-
-    case "thisWeek": {
-      const start = getStartOfWeek(today);
-      const end = getEndOfWeek(today);
-      if (isCompleted) {
-        return (
-          (completedDate && isDateInRange(completedDate, start, end)) ||
-          (!completedDate && followupDate && isDateInRange(followupDate, start, end))
-        );
-      }
-      return isDateInRange(dateToCheck, start, end);
-    }
-
-    case "thisMonth": {
-      const start = getStartOfMonth(today);
-      const end = getEndOfMonth(today);
-      return isDateInRange(dateToCheck, start, end);
-    }
-
-    case "previousWeek": {
-      const lastWeekDate = new Date(today);
-      lastWeekDate.setDate(today.getDate() - 7);
-      return isDateInRange(
-        dateToCheck,
-        getStartOfWeek(lastWeekDate),
-        getEndOfWeek(lastWeekDate)
-      );
-    }
-
-    case "previousMonth": {
-      const lastMonthDate = new Date(today);
-      lastMonthDate.setMonth(today.getMonth() - 1);
-      return isDateInRange(
-        dateToCheck,
-        getStartOfMonth(lastMonthDate),
-        getEndOfMonth(lastMonthDate)
-      );
-    }
-
-    default:
-      return true;
-  }
-});
+  const taskCounts = {
+    captured: countedTasks.length,
+    completed: completedCount,
+    remaining: countedTasks.length - completedCount,
+    overdue: overdueCount,
+    outsidePeriod: outsidePeriodCount,
+  };
 
   const downloadFilteredTasks = () => {
     try {
@@ -1457,18 +1499,6 @@ export default function DailyTasks() {
     }
   };
 
-  const [totalCount, setTotalCount] = useState(0);
-
-  useEffect(() => {
-    const count = filteredTasks.filter(
-      (t) =>
-        (t.status || "").toLowerCase() === "completed" ||
-        (t.status || "").toLowerCase() === "awaiting task",
-    ).length;
-
-    setTotalCount(count);
-  }, [filteredTasks]);
-
   useEffect(() => {
     if (!user) return;
 
@@ -1547,7 +1577,7 @@ export default function DailyTasks() {
               lineHeight: "1.2",
             }}
           >
-            {totalCount}
+            {taskCounts.captured}
           </h1>
           <p
             style={{
@@ -1559,7 +1589,21 @@ export default function DailyTasks() {
               fontWeight: "600",
             }}
           >
-            Tasks Complete
+            Tasks Captured
+          </p>
+          <p
+            style={{
+              marginTop: "6px",
+              fontSize: "13px",
+              letterSpacing: "0.2px",
+              color: isDarkMode ? "#999" : "#6b7280",
+              fontWeight: "500",
+            }}
+          >
+            {taskCounts.completed} completed • {taskCounts.remaining} remaining
+            {taskCounts.overdue > 0 && ` • ${taskCounts.overdue} overdue`}
+            {taskCounts.outsidePeriod > 0 &&
+              ` • +${taskCounts.outsidePeriod} overdue earlier`}
           </p>
 
           <div

@@ -84,6 +84,18 @@ const TaskGroupRow = React.memo(
     const { user, tasks, totalCount, completedCount, incompleteCount } = group;
     const key = user.email || user.fullName;
 
+    // Mirrors the backend's is_overdue: not in a completed status and past due.
+    // Prefer the flag computed server-side (it uses the same normalised dates
+    // as the totals); fall back to a client-side check.
+    const COMPLETED_STATUSES = ["completed", "done", "closed", "finished"];
+    const overdueCount = tasks.filter((task) => {
+      if (typeof task.is_overdue === "boolean") return task.is_overdue;
+      if (COMPLETED_STATUSES.includes((task.status || "").toLowerCase()))
+        return false;
+      const due = task.followup_date ? new Date(task.followup_date) : null;
+      return due && !isNaN(due.getTime()) && due < new Date();
+    }).length;
+
     return (
       <Box
         sx={{
@@ -129,6 +141,7 @@ const TaskGroupRow = React.memo(
                 <Typography variant="caption" color="text.secondary">
                   {totalCount} task{totalCount !== 1 ? "s" : ""} captured •{" "}
                   {completedCount} completed • {incompleteCount} remaining
+                  {overdueCount > 0 && ` • ${overdueCount} overdue`}
                   {incompleteCount === 0 && totalCount > 0 && " — ALL DONE! ✓"}
                 </Typography>
               </Box>
@@ -322,6 +335,14 @@ const StatsDashboard = () => {
   const { authFetch } = useContext(AuthContext);
   const statsLockRef = useRef(false);
   const cellsLockRef = useRef(false);
+  // A period change that arrives mid-fetch is skipped by the lock above —
+  // remember it and re-run with the LATEST period once the in-flight request
+  // finishes, otherwise the dashboard keeps showing the previous period's
+  // totals under the new label (the "sometimes wrong" numbers).
+  const pendingStatsRef = useRef(false);
+  const pendingCellsRef = useRef(false);
+  const fetchStatsRef = useRef(null);
+  const fetchCellsRef = useRef(null);
 
   const canStartFetch = (lockRef, forceRefresh) => {
     if (lockRef.current && !forceRefresh) return false;
@@ -399,6 +420,7 @@ const StatsDashboard = () => {
        */
       if (!canStartFetch(cellsLockRef, forceRefresh)) {
         console.log("   Already fetching CELLS — skipping duplicate call");
+        pendingCellsRef.current = true;
         return;
       }
 
@@ -522,6 +544,10 @@ const StatsDashboard = () => {
         setCellsLoading(false);
         cellsLockRef.current = false;
         console.log("fetchOverdueCells finished / released lock");
+        if (pendingCellsRef.current) {
+          pendingCellsRef.current = false;
+          fetchCellsRef.current?.(false);
+        }
       }
     },
     [authFetch],
@@ -557,6 +583,7 @@ const StatsDashboard = () => {
        */
       if (!canStartFetch(statsLockRef, forceRefresh)) {
         console.log("   Already fetching STATS — skipping duplicate call");
+        pendingStatsRef.current = true;
         return;
       }
 
@@ -602,6 +629,13 @@ const StatsDashboard = () => {
          * Always release only the stats lock here.
          */
         releaseFetchLock(statsLockRef);
+        if (pendingStatsRef.current) {
+          // A fetch was skipped while this one was in flight (e.g. the period
+          // changed) — run it now with the latest period so the dashboard
+          // never keeps showing the previous period's totals.
+          pendingStatsRef.current = false;
+          fetchStatsRef.current?.(false);
+        }
       }
     },
     [period, authFetch],
@@ -615,6 +649,13 @@ const StatsDashboard = () => {
 
     setPeriod(e.target.value);
   };
+
+  // Always hold the newest fetchers, so a lock-skipped fetch can retry with the
+  // current period instead of the stale closure that was in flight.
+  useEffect(() => {
+    fetchStatsRef.current = fetchStats;
+    fetchCellsRef.current = fetchOverdueCells;
+  });
 
   /**
    * CHANGE:
@@ -1542,10 +1583,12 @@ const StatsDashboard = () => {
         </Grid>
         <Grid item xs={12} sm={6} md={4}>
           <StatCard
-            title="Tasks Due"
+            title="Total Tasks"
             subtitle={getPeriodDisplayText(period)}
             color="secondary"
-            value={stats.overview?.tasks_due_in_period || 0}
+            /* Same source as the "All Tasks by Person (X people • Y total)"
+               header below, so the card and the list always agree. */
+            value={filteredTasks.length}
             icon={<Task />}
           />
         </Grid>
