@@ -17,6 +17,22 @@ import {
   renderWithProviders,
 } from "./helpers";
 
+// Event types are loaded straight from Supabase. jsdom has no network, and the
+// real client fails while parsing the response, which left every type card
+// missing and took the whole suite down. Serve the same fixtures as the route
+// table.
+vi.mock("../../src/services/supabase-client", () => {
+  const rows = [
+    { _id: "type-1", name: "Service", isBuiltIn: true },
+    { _id: "type-2", name: "Cells", isBuiltIn: true },
+  ];
+  const query = {
+    select: () => query,
+    eq: () => Promise.resolve({ data: rows, error: null }),
+  };
+  return { supabase: { from: () => query } };
+});
+
 // ── Module mocks for events-only dependencies ────────────────────────────────
 
 vi.mock("../../src/contexts/OrgConfigContext", async () => {
@@ -278,7 +294,7 @@ const eventsDataCalls = (routes, match = () => true) =>
 /** Render, wait for the type selector, click the Service card, wait for rows. */
 const openEventsView = async (routes) => {
   renderEvents(routes);
-  await screen.findByText("Select Event Type");
+  await screen.findByText(/^Select Event Types?$/);
   fireEvent.click(typeCard("Service"));
   await screen.findByText("Sunday Celebration");
 };
@@ -322,9 +338,8 @@ describe("Events page actions", () => {
       const routes = eventsRoutes();
       renderEvents(routes);
 
-      expect(await screen.findByText("Select Event Type")).toBeInTheDocument();
+      expect(await screen.findByText(/^Select Event Types?$/)).toBeInTheDocument();
       await waitFor(() => expect(eventsDataCalls(routes).length).toBe(0));
-      expect(routes.mock.calls.some(([u]) => String(u).includes("/event-types"))).toBe(true);
       expect(screen.getByText("Service")).toBeInTheDocument();
       expect(screen.getByText("Cells")).toBeInTheDocument();
       // Types view is the landing view — no event rows yet.
@@ -333,7 +348,7 @@ describe("Events page actions", () => {
 
     test("the type search box filters the visible cards", async () => {
       renderEvents(eventsRoutes());
-      await screen.findByText("Select Event Type");
+      await screen.findByText(/^Select Event Types?$/);
 
       const search = screen.getByPlaceholderText("Search event types...");
       fireEvent.change(search, { target: { value: "serv" } });
@@ -355,7 +370,7 @@ describe("Events page actions", () => {
       // Entering a type used to force status=incomplete, hiding every completed
       // and did-not-meet event. It must now leave the status unfiltered.
       expect(urls.some((u) => u.includes("status="))).toBe(false);
-      expect(screen.queryByText("Select Event Type")).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Select Event Types?$/)).not.toBeInTheDocument();
     });
 
     test("the Back button returns to the type selector", async () => {
@@ -364,7 +379,7 @@ describe("Events page actions", () => {
 
       fireEvent.click(screen.getByRole("button", { name: /^Back$/ }));
 
-      expect(await screen.findByText("Select Event Type")).toBeInTheDocument();
+      expect(await screen.findByText(/^Select Event Types?$/)).toBeInTheDocument();
       expect(screen.queryByTestId("datagrid")).not.toBeInTheDocument();
     });
   });
@@ -379,10 +394,8 @@ describe("Events page actions", () => {
       expect(screen.getByText("Midweek Connect")).toBeInTheDocument();
 
       const searchBox = screen.getByPlaceholderText("Search by Event Name, Leader, or Email...");
-      // Focusing the box loads the full unfiltered set the search filters over.
+      // Searching must only filter what is already loaded — no extra fetch.
       const before = eventsDataCalls(routes).length;
-      fireEvent.click(searchBox);
-      await waitFor(() => expect(eventsDataCalls(routes).length).toBeGreaterThan(before));
       fireEvent.change(searchBox, { target: { value: "celebration" } });
 
       await waitFor(
@@ -392,6 +405,7 @@ describe("Events page actions", () => {
         },
         { timeout: 3000 },
       );
+      expect(eventsDataCalls(routes).length).toBe(before);
     });
 
     test("pressing Enter applies the search immediately", async () => {
@@ -403,9 +417,9 @@ describe("Events page actions", () => {
 
       const searchBox = screen.getByPlaceholderText("Search by Event Name, Leader, or Email...");
       const before = eventsDataCalls(routes).length;
-      // A real click focuses the field and loads the searchable set.
+      // Focusing the field must not load anything from the server.
       await userEvent.click(searchBox);
-      expect(eventsDataCalls(routes).length).toBeGreaterThan(before);
+      expect(eventsDataCalls(routes).length).toBe(before);
 
       fireEvent.change(searchBox, { target: { value: "celebration" } });
       // Enter must apply on the spot. The rows are already filtered before the
@@ -425,15 +439,12 @@ describe("Events page actions", () => {
       expect(screen.getByText("1-2 of 2")).toBeInTheDocument();
 
       const searchBox = screen.getByPlaceholderText("Search by Event Name, Leader, or Email...");
-      const before = eventsDataCalls(routes).length;
-      fireEvent.click(searchBox);
-      await waitFor(() => expect(eventsDataCalls(routes).length).toBeGreaterThan(before));
       fireEvent.change(searchBox, { target: { value: "celebration" } });
 
       expect(await screen.findByText("1-1 of 1")).toBeInTheDocument();
     });
 
-    test("the counter still settles correctly when typing beats the search fetch", async () => {
+    test("searching filters the loaded rows without refetching", async () => {
       const routes = eventsRoutes({
         events: [makeEvt(), makeEvt({ _id: "evt-2", eventName: "Midweek Connect" })],
         total_events: 2,
@@ -441,15 +452,13 @@ describe("Events page actions", () => {
       await openEventsView(routes);
 
       const searchBox = screen.getByPlaceholderText("Search by Event Name, Leader, or Email...");
-      // Type in the same tick as the click, so the searchable set is still
-      // empty when the debounce fires. The count must still self-correct once
-      // the click's fetch lands.
+      const before = eventsDataCalls(routes).length;
       fireEvent.click(searchBox);
-      fireEvent.change(searchBox, { target: { value: "celebration" } });
+      fireEvent.change(searchBox, { target: { value: "midweek" } });
 
-      expect(await screen.findByText("1-1 of 1")).toBeInTheDocument();
-      expect(screen.getByText("Sunday Celebration")).toBeInTheDocument();
-      expect(screen.queryByText("Midweek Connect")).not.toBeInTheDocument();
+      expect(await screen.findByText("Midweek Connect")).toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByText("Sunday Celebration")).not.toBeInTheDocument());
+      expect(eventsDataCalls(routes).length).toBe(before);
     });
 
     test("CLEAR ALL restores the unfiltered list", async () => {
@@ -460,7 +469,6 @@ describe("Events page actions", () => {
       await openEventsView(routes);
 
       const searchBox = screen.getByPlaceholderText("Search by Event Name, Leader, or Email...");
-      fireEvent.click(searchBox);
       fireEvent.change(searchBox, { target: { value: "celebration" } });
       await waitFor(() => expect(screen.queryByText("Midweek Connect")).not.toBeInTheDocument());
 
@@ -468,6 +476,34 @@ describe("Events page actions", () => {
 
       expect(await screen.findByText("Midweek Connect")).toBeInTheDocument();
       expect(searchBox).toHaveValue("");
+    });
+
+    test("changing the date range refetches with start_date and end_date", async () => {
+      const routes = eventsRoutes();
+      await openEventsView(routes);
+      routes.mockClear();
+
+      fireEvent.change(screen.getByLabelText("Filter events by date range"), {
+        target: { value: "this-week" },
+      });
+
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+      await waitFor(() => {
+        const ranged = eventsDataCalls(
+          routes,
+          (u) => u.includes("start_date=") && u.includes("end_date="),
+        );
+        expect(ranged.length).toBeGreaterThan(0);
+
+        const startDate = /[?&]start_date=([^&]+)/.exec(ranged[0])?.[1];
+        const endDate = /[?&]end_date=([^&]+)/.exec(ranged[0])?.[1];
+        // "This week" starts on Monday and must never run past today.
+        expect(new Date(`${startDate}T00:00:00`).getDay()).toBe(1);
+        expect(startDate <= endDate).toBe(true);
+        expect(endDate <= today).toBe(true);
+      });
     });
 
     test.each([
@@ -591,7 +627,7 @@ describe("Events page actions", () => {
   describe("event type management", () => {
     test("FAB opens the create event type modal in the types view", async () => {
       renderEvents(eventsRoutes());
-      await screen.findByText("Select Event Type");
+      await screen.findByText(/^Select Event Types?$/);
 
       fireEvent.click(screen.getByRole("button", { name: /Open menu/i }));
       fireEvent.click(screen.getByRole("button", { name: /Create Event Type/i }));
@@ -603,7 +639,7 @@ describe("Events page actions", () => {
     test("saving a new event type POSTs /event-types and toasts", async () => {
       const routes = eventsRoutes();
       renderEvents(routes);
-      await screen.findByText("Select Event Type");
+      await screen.findByText(/^Select Event Types?$/);
 
       fireEvent.click(screen.getByRole("button", { name: /Open menu/i }));
       fireEvent.click(screen.getByRole("button", { name: /Create Event Type/i }));
@@ -624,7 +660,7 @@ describe("Events page actions", () => {
     test("the type card ⋮ menu edits an event type via PUT", async () => {
       const routes = eventsRoutes();
       renderEvents(routes);
-      await screen.findByText("Select Event Type");
+      await screen.findByText(/^Select Event Types?$/);
 
       fireEvent.click(within(typeCardWithMenu("Service")).getByRole("button"));
       fireEvent.click(await screen.findByRole("menuitem", { name: /Edit/ }));
@@ -650,7 +686,7 @@ describe("Events page actions", () => {
     test("the type card ⋮ menu confirms then DELETEs an event type", async () => {
       const routes = eventsRoutes();
       renderEvents(routes);
-      await screen.findByText("Select Event Type");
+      await screen.findByText(/^Select Event Types?$/);
 
       fireEvent.click(within(typeCardWithMenu("Service")).getByRole("button"));
       fireEvent.click(await screen.findByRole("menuitem", { name: /Delete/ }));
@@ -671,7 +707,7 @@ describe("Events page actions", () => {
     test("cancelling the delete dialog does not call the API", async () => {
       const routes = eventsRoutes();
       renderEvents(routes);
-      await screen.findByText("Select Event Type");
+      await screen.findByText(/^Select Event Types?$/);
       routes.mockClear();
 
       fireEvent.click(within(typeCardWithMenu("Service")).getByRole("button"));

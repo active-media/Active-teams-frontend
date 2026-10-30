@@ -1249,7 +1249,8 @@ function ServiceCheckIn() {
             {
               method: "POST",
               body: JSON.stringify({
-                event_id: cleanEventId(currentSessionId),
+                session_id: cleanEventId(currentSessionId),
+                event_id: getEventId(currentSessionId),
                 person_data: {
                   id: gridId,
                   name: attendee?.name,

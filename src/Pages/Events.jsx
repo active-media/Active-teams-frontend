@@ -488,6 +488,69 @@ const formatDate = (date) => {
     .replace(/\//g, " - ");
 };
 
+// Resolve the date-range dropdown into a concrete window. Kept in one place so
+// the backend request and the local filter always describe the same range.
+const resolveDateRangeWindow = (range) => {
+  if (!range || range === "all") return null;
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const addDays = (date, days) => {
+    const next = new Date(date);
+    next.setDate(next.getDate() + days);
+    return next;
+  };
+
+  let start;
+  let endExclusive;
+
+  if (range === "this-week" || range === "last-week") {
+    const mondayOffset = (today.getDay() + 6) % 7; // days since Monday
+    start = addDays(today, -mondayOffset);
+    if (range === "last-week") start = addDays(start, -7);
+    endExclusive = addDays(start, 7);
+  } else if (range === "this-month") {
+    start = new Date(today.getFullYear(), today.getMonth(), 1);
+    // Month-to-date, matching how the local filter has always behaved.
+    endExclusive = addDays(today, 1);
+  } else if (range === "last-month") {
+    start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    endExclusive = new Date(today.getFullYear(), today.getMonth(), 1);
+  } else if (range === "last-3-months") {
+    start = new Date(today);
+    start.setMonth(start.getMonth() - 3);
+    endExclusive = addDays(today, 1);
+  } else {
+    return null;
+  }
+
+  // Never ask for dates after today: end_date is inclusive, so the exclusive
+  // bound is capped at tomorrow.
+  const tomorrow = addDays(today, 1);
+  if (endExclusive > tomorrow) endExclusive = tomorrow;
+
+  return { start, endExclusive };
+};
+
+const toDateParam = (date) => {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+};
+
+// The API takes inclusive start_date/end_date, so the exclusive local bound is
+// stepped back by one day.
+const getApiDateRange = (range) => {
+  const bounds = resolveDateRangeWindow(range);
+  if (!bounds) return {};
+  const lastDay = new Date(bounds.endExclusive);
+  lastDay.setDate(lastDay.getDate() - 1);
+  return {
+    start_date: toDateParam(bounds.start),
+    end_date: toDateParam(lastDay),
+  };
+};
+
 const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
   if (!events || events.length === 0) return [];
 
@@ -1089,6 +1152,8 @@ const Events = () => {
   // did-not-meet event until the user manually changed the filter.
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const searchDebounceRef = useRef(null);
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedDateRange, setSelectedDateRange] = useState("all");
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -1518,12 +1583,17 @@ const getEventTypeName = (eventType) => {
 
 
 const fetchEventsFilters = (filters) => {
+  // The date picker drives the backend window. "All dates" keeps the page's
+  // default earliest date; any other option sends an explicit start_date and
+  // end_date to whichever endpoint the event type resolves to.
+  const dateRange = getApiDateRange(selectedDateRange);
   const params = {
     page: filters.page || currentPage,
     limit: filters.limit || rowsPerPage,
-    start_date: "2026-10-24",
+    start_date: dateRange.start_date || filters.start_date || "2026-10-24",
     // filters.start_date || DEFAULT_API_START_DATE,
   };
+  if (dateRange.end_date) params.end_date = dateRange.end_date;
 
   // Never send status="all". The backend treats any non-empty status as an exact
   // match against the computed instance status, so "all" would match nothing and
@@ -1627,7 +1697,7 @@ const fetchEventsFilters = (filters) => {
           const filtered = allEvents;
 
           console.log("Final events to display:", filtered.length);
-          const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+          const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
           eventsCache.current[cacheKey] = filtered;
           const pageSize = filters.limit || rowsPerPage;
           const eventCount = data.total_events ?? filtered.length;
@@ -1662,6 +1732,7 @@ const fetchEventsFilters = (filters) => {
         viewFilter,
         selectedEventTypeFilter,
         selectedStatus,
+        selectedDateRange,
       ],
     );
 
@@ -2268,15 +2339,19 @@ const getFilteredEventTypes = (allEventTypes) => {
   };
 
   const clearAllFilters = useCallback(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
     setSearchQuery("");
+    setDebouncedSearchTerm("");
     setIsSearching(false);
     setSelectedDateRange("all");
     setCurrentPage(1);
 
-  }, [viewFilter, userRole, fetchEvents, rowsPerPage, DEFAULT_API_START_DATE]);
+  }, []);
 
   const [allCurrentEvents, setAllCurrentEvents] = useState([]);
-  const [isSearching, setIsSearching] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
 
   const fetchAllCurrentEvents = useCallback(async () => {
     try {
@@ -2331,60 +2406,96 @@ const getFilteredEventTypes = (allEventTypes) => {
     DEFAULT_API_START_DATE,
   ]);
 
-  // Refreshing the searchable set when the surrounding filters change *while*
-  // searching. `isSearching` is deliberately NOT a dependency: the searchable
-  // set is loaded by clicking the search bar (see the input's onClick), so
-  // merely starting to type must not trigger a load.
-  useEffect(() => {
-    if (!isSearching) return;
-    fetchAllCurrentEvents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStatus, selectedEventTypeFilter, viewFilter, userRole]);
+  // The events the user already has in the browser for the active filters.
+  // Search must run purely on this local set: the old behaviour refetched a
+  // separate "all current events" list on every click of the search box, so
+  // the rows could change under the user, the request could land after the
+  // first keystroke and wipe the matches, and the loaded page was ignored.
+  const loadedEvents = useMemo(() => {
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
+    const cached = eventsCache.current?.[cacheKey];
+    const cachedList = Array.isArray(cached) ? cached : [];
+    // The cache holds everything fetched for the filter, while `events` holds
+    // the current page and is the freshest copy. Prefer the cache only when it
+    // actually has more rows than the page on screen.
+    const source =
+      cachedList.length > (events?.length || 0) ? cachedList : events;
+    return Array.isArray(source) ? source : [];
+  }, [events, selectedEventTypeFilter, selectedStatus, viewFilter, selectedDateRange]);
 
-  // Pure filter over the set loaded by clicking the search bar. It must stay
+  // Pure filter over the events already loaded in the browser. It must stay
   // free of state writes because it runs inside a useMemo — setting state
   // during render was discarding the result count and the rendered rows
   // could disagree.
   const filterEventsBySearch = (list, searchText) => {
     const trimmedSearch = String(searchText || "").trim();
     if (!trimmedSearch) return list || [];
-    const needle = trimmedSearch.toLowerCase();
+    const terms = trimmedSearch.toLowerCase().split(/\s+/).filter(Boolean);
 
-    return (list || []).filter((event) =>
-      [
-        "Event Name",
-        "eventName",
-        "EventName",
-        "Leader",
-        "eventLeaderName",
-        "EventLeaderName",
-        "Email",
-        "eventLeaderEmail",
-        "EventLeaderEmail",
-        "Leader at 12",
-        "Leader @12",
-        "leader12",
-      ].some(
-        (field) =>
-          typeof event?.[field] === "string" &&
-          event[field].toLowerCase().includes(needle),
-      ),
-    );
+    // Keep this in sync with the columns the page can render. Different event
+    // shapes use different keys (cells use `leader12`, non-cell events use
+    // `eventLeaderName`), so all of them are checked.
+    const searchableFields = [
+      "eventName",
+      "Event Name",
+      "EventName",
+      "name",
+      "eventLeaderName",
+      "Event Leader Name",
+      "EventLeaderName",
+      "leaderName",
+      "Leader",
+      "leader",
+      "eventLeaderEmail",
+      "Event Leader Email",
+      "EventLeaderEmail",
+      "leaderEmail",
+      "Email",
+      "email",
+      "leader1",
+      "Leader @1",
+      "Leader at 1",
+      "leader12",
+      "Leader @12",
+      "Leader at 12",
+      "leader144",
+      "Leader @144",
+      "Leader at 144",
+      "eventType",
+      "Event Type",
+      "event_type",
+    ];
+
+    return (list || []).filter((event) => {
+      if (!event) return false;
+      const haystack = searchableFields
+        .map((field) => event[field])
+        .filter(
+          (value) => typeof value === "string" || typeof value === "number",
+        )
+        .join(" ")
+        .toLowerCase();
+      return terms.every((term) => haystack.includes(term));
+    });
   };
 
-  const searchDebounceRef = useRef(null);
-  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   useEffect(() => {
     setCurrentPage(1);
-    if (searchQuery.trim() === "") {
-      clearAllFilters();
-      setIsSearching(false);
-    } else if (!isSearching) setIsSearching(true);
 
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
     }
 
+    // Clearing the box should restore the list immediately instead of waiting
+    // for the debounce, and must not reset the other filters (the old handler
+    // called clearAllFilters, which also wiped the selected date range).
+    if (!searchQuery.trim()) {
+      setDebouncedSearchTerm("");
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
     searchDebounceRef.current = setTimeout(() => {
       setDebouncedSearchTerm(searchQuery);
     }, 300);
@@ -2394,51 +2505,19 @@ const getFilteredEventTypes = (allEventTypes) => {
         clearTimeout(searchDebounceRef.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
 
-  const filteredEvents = useMemo(() => {
-    if (isSearching === null) return events;
-    if (!debouncedSearchTerm.trim()) return events;
-    return filterEventsBySearch(allCurrentEvents, debouncedSearchTerm);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allCurrentEvents, debouncedSearchTerm, selectedStatus, isSearching]);
-
   const hasActiveSearch = Boolean(isSearching && debouncedSearchTerm.trim());
+
+  const filteredEvents = useMemo(() => {
+    if (!hasActiveSearch) return events;
+    return filterEventsBySearch(loadedEvents, debouncedSearchTerm);
+  }, [loadedEvents, events, debouncedSearchTerm, hasActiveSearch]);
+
   const dateFilteredEvents = useMemo(() => {
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
-    const sourceEvents = hasActiveSearch
-      ? filteredEvents
-      : eventsCache.current[cacheKey] || events;
-
-    if (selectedDateRange === "all") return sourceEvents;
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    let rangeStart;
-    let rangeEnd = new Date(today);
-    rangeEnd.setDate(rangeEnd.getDate() + 1);
-
-    if (selectedDateRange === "this-week" || selectedDateRange === "last-week") {
-      const mondayOffset = (today.getDay() + 6) % 7;
-      rangeStart = new Date(today);
-      rangeStart.setDate(today.getDate() - mondayOffset);
-      if (selectedDateRange === "last-week") {
-        rangeStart.setDate(rangeStart.getDate() - 7);
-        rangeEnd = new Date(rangeStart);
-        rangeEnd.setDate(rangeEnd.getDate() + 7);
-      } else {
-        rangeEnd.setDate(rangeStart.getDate() + 7);
-      }
-    } else if (selectedDateRange === "this-month") {
-      rangeStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    } else if (selectedDateRange === "last-month") {
-      rangeStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      rangeEnd = new Date(today.getFullYear(), today.getMonth(), 1);
-    } else {
-      rangeStart = new Date(today);
-      rangeStart.setMonth(rangeStart.getMonth() - 3);
-    }
+    const sourceEvents = hasActiveSearch ? filteredEvents : loadedEvents;
+    const bounds = resolveDateRangeWindow(selectedDateRange);
+    if (!bounds) return sourceEvents;
 
     return sourceEvents.filter((event) => {
       if (!event?.date) return false;
@@ -2448,19 +2527,15 @@ const getFilteredEventTypes = (allEventTypes) => {
         : new Date(dateText);
       return (
         !Number.isNaN(eventDate.getTime()) &&
-        eventDate >= rangeStart &&
-        eventDate < rangeEnd
+        eventDate >= bounds.start &&
+        eventDate < bounds.endExclusive
       );
     });
   }, [
-    allCurrentEvents,
-    events,
+    loadedEvents,
     filteredEvents,
     hasActiveSearch,
     selectedDateRange,
-    selectedEventTypeFilter,
-    selectedStatus,
-    viewFilter,
   ]);
   const paginatedEvents = useMemo(() => {
     if (!hasActiveSearch && selectedDateRange === "all") return events;
@@ -2477,9 +2552,8 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   // Keep the result counter in step with the rows. This has to be an effect,
   // not a write inside the memo above: writing state during render discarded
-  // the count. Keying it on filteredEvents also covers the case where the
-  // click-loaded set lands *after* the user's keystroke, which would otherwise
-  // leave the counter stuck on zero.
+  // the count. Keying it on the filtered rows also covers the case where the
+  // loaded set arrives after the user's keystroke.
   useEffect(() => {
     if (!hasActiveSearch && selectedDateRange === "all") return;
     const pages = Math.ceil(dateFilteredEvents.length / rowsPerPage) || 1;
@@ -2499,7 +2573,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     const newRowsPerPage = Number(e.target.value);
     if (!Number.isInteger(newRowsPerPage) || newRowsPerPage < 1) return;
 
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
     const cached = eventsCache.current[cacheKey];
 
     setRowsPerPage(newRowsPerPage);
@@ -3312,7 +3386,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       setCurrentPage(page);
       if (hasActiveSearch || selectedDateRange !== "all") return;
 
-      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
       const cached = eventsCache.current[cacheKey];
 
       if (cached) {
@@ -3548,7 +3622,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   useEffect(() => {
     if (!selectedEventTypeFilter || !showingEvents) return;
 
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
     const cached = eventsCache.current[cacheKey];
 
     if (cached) {
@@ -3641,6 +3715,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     showingEvents,
     selectedStatus,
     viewFilter,
+    selectedDateRange,
     isAdmin,
     isRegistrant,
     isRegularUser,
@@ -3665,14 +3740,14 @@ const getFilteredEventTypes = (allEventTypes) => {
     DEFAULT_API_START_DATE,
   }) => {
     const statuses = [
-      {
-        // Neutral option. Without it the three badges below imply a status is
-        // always selected, and the user has no way back to seeing every event
-        // once they have narrowed to one.
-        value: "all",
-        label: "ALL EVENTS",
-        style: styles.statusBadgeAll,
-      },
+      // {
+      //   // Neutral option. Without it the three badges below imply a status is
+      //   // always selected, and the user has no way back to seeing every event
+      //   // once they have narrowed to one.
+      //   value: "all",
+      //   label: "ALL EVENTS",
+      //   style: styles.statusBadgeAll,
+      // },
       {
         value: "incomplete",
         label: "INCOMPLETE",
@@ -3773,6 +3848,7 @@ const getFilteredEventTypes = (allEventTypes) => {
 
     return (
       <div style={styles.statusBadgeContainer}>
+        
         {statuses.map((status) => (
           <button
             key={status.value}
@@ -3797,7 +3873,35 @@ const getFilteredEventTypes = (allEventTypes) => {
             {status.label}
           </button>
         ))}
-
+        <select
+                aria-label="Filter events by date range"
+                value={selectedDateRange}
+                onChange={(event) => {
+                  // The fetch effect keys on selectedDateRange, so changing the
+                  // range immediately reloads from /events/cells or
+                  // /events/eventsdata with start_date + end_date.
+                  setSelectedDateRange(event.target.value);
+                  setCurrentPage(1);
+                }}
+                style={{
+                  minWidth: isMobileView ? "100%" : "160px",
+                  padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
+                  border: `1px solid ${isDarkMode ? theme.palette.divider : "#ccc"}`,
+                  borderRadius: "4px",
+                  backgroundColor: isDarkMode
+                    ? theme.palette.background.paper
+                    : "#fff",
+                  color: isDarkMode ? theme.palette.text.primary : "#000",
+                  fontSize: isMobileView ? "14px" : "0.95rem",
+                }}
+              >
+                {/* <option value="all">All dates</option> */}
+                <option value="this-week">This week</option>
+                <option value="last-week">Last week</option>
+                <option value="this-month">This month</option>
+                <option value="last-month">Last month</option>
+                <option value="last-3-months">Last 3 months</option>
+              </select>
         {/* Integrated dropdown in download button - only shown when COMPLETE or DID NOT MEET selected */}
         {canDownload && (
           <div
@@ -4614,13 +4718,12 @@ const getTypeValue = (type) => {
                 size="small"
                 placeholder="Search by Event Name, Leader, or Email..."
                 value={searchQuery}
-                onClick={fetchAllCurrentEvents}
                 disabled={loading}
                 onChange={(e) => {
                   const value = e.target.value;
                   setSearchQuery(value);
                 }}
-                onKeyPress={(e) => {
+                onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     // Apply straight away rather than waiting out the debounce.
                     // The result counter is kept in sync by the effect above.
@@ -4676,32 +4779,7 @@ const getTypeValue = (type) => {
                 }}
               />
 
-              <select
-                aria-label="Filter events by date range"
-                value={selectedDateRange}
-                onChange={(event) => {
-                  setSelectedDateRange(event.target.value);
-                  setCurrentPage(1);
-                }}
-                style={{
-                  minWidth: isMobileView ? "100%" : "160px",
-                  padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
-                  border: `1px solid ${isDarkMode ? theme.palette.divider : "#ccc"}`,
-                  borderRadius: "4px",
-                  backgroundColor: isDarkMode
-                    ? theme.palette.background.paper
-                    : "#fff",
-                  color: isDarkMode ? theme.palette.text.primary : "#000",
-                  fontSize: isMobileView ? "14px" : "0.95rem",
-                }}
-              >
-                <option value="all">All dates</option>
-                <option value="this-week">This week</option>
-                <option value="last-week">Last week</option>
-                <option value="this-month">This month</option>
-                <option value="last-month">Last month</option>
-                <option value="last-3-months">Last 3 months</option>
-              </select>
+              
 
               <Button
                 variant="outlined"
@@ -5515,6 +5593,7 @@ const getTypeValue = (type) => {
         .map((type) => {
           //HEREEEEEEEEEEEEEEEEEEE
           const typeName = typeof type === "string" ? type : type.name || type;
+          const eventTypeCategory = eventTypes.find((et) => et.name?.toLowerCase() === typeName.toLowerCase())?.event_type_category || "small_gatherings";
           const name = eventTypes.find((t) => t.name === typeName)?.name;
           const isAllCells = typeName === "all";
           const eventTypeObj = isAllCells 
@@ -5526,14 +5605,11 @@ const getTypeValue = (type) => {
 
           const getEventTypeColor = (type) => {
             const colors = {
-              "Global Events": "#007bff",
-              "Life Class": "#28a745",
-              "Testing Recurring": "#6f42c1",
-              Workshop: "#fd7e14",
-              Conference: "#dc3545",
-              Service: "#17a2b8",
-              "Testing Recurring Days": "#e83e8c",
-              "All Cells": "#6c757d",
+              "small_gatherings": "#007bff",
+              "training": "#28a745",
+              "ticketed": "#6f42c1",
+              "service": "#e83e8c",
+          
             };
             return colors[type] || "#007bff";
           };
@@ -5549,7 +5625,7 @@ const getTypeValue = (type) => {
                 padding: "12px",
                 cursor: "pointer",
                 border: `1px solid ${isDarkMode ? theme.palette.divider : "#e0e0e0"}`,
-                borderLeft: `4px solid ${getEventTypeColor(typeName)}`,
+                borderLeft: `4px solid ${getEventTypeColor(eventTypeCategory)}`,
                 transition: "all 0.2s ease",
                 display: "flex",
                 flexDirection: "column",
@@ -5563,7 +5639,7 @@ const getTypeValue = (type) => {
                   borderColor: isDarkMode
                     ? theme.palette.divider
                     : "#e0e0e0",
-                  borderLeftColor: getEventTypeColor(typeName),
+                  borderLeftColor: getEventTypeColor(eventTypeCategory),
                 },
               }}
             >
@@ -5641,7 +5717,7 @@ const getTypeValue = (type) => {
                   sx={{
                     height: "3px",
                     width: "100%",
-                    backgroundColor: getEventTypeColor(typeName),
+                    backgroundColor: getEventTypeColor(eventTypeCategory),
                     borderRadius: "2px",
                     marginTop: "6px",
                     opacity: 0.5,
@@ -5734,7 +5810,7 @@ const getTypeValue = (type) => {
                     const typeName =
                       typeof type === "string" ? type : type.name || type;
                     const isAllCells = typeName === "all";
-
+                    const eventTypeCategory = eventTypes.find((et) => et.name?.toLowerCase() === typeName.toLowerCase())?.event_type_category || "small_gatherings";
                     const eventTypeObj = eventTypes.find(
                       (et) => et.name?.toLowerCase() === typeName.toLowerCase(),
                     ) || { name: typeName };
@@ -5743,20 +5819,18 @@ const getTypeValue = (type) => {
                     const description = eventTypeObj.description || "";
                     console.log("Rendering event type:", typeName, "with description:", description);
 
-                    const getEventTypeColor = (typeName) => {
+                     const getEventTypeColor = (type) => {
                       const colors = {
-                        "Global Events": "#007bff",
-                        "Life Class": "#28a745",
-                        "Testing Recurring": "#6f42c1",
-                        Workshop: "#fd7e14",
-                        Conference: "#dc3545",
-                        Service: "#17a2b8",
-                        "All Cells": "#6c757d",
+                        "small_gatherings": "#007bff",
+                        "training": "#28a745",
+                        "ticketed": "#6f42c1",
+                        "service": "#e83e8c",
+                    
                       };
-                      return colors[typeName] || "#007bff";
+                      return colors[type] || "#007bff";
                     };
 
-                    const color = getEventTypeColor(typeName);
+                    const color = getEventTypeColor(eventTypeCategory);
 
                     return (
                       <Box
