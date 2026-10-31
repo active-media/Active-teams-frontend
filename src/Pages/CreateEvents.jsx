@@ -87,9 +87,29 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
     
     return null;
   };
+
+    // Determine sessionId from route param, query param, or passed event object
+  const getInitialSessionId = () => {
+    // 1. Check route param (/edit-event/:id)
+    if (paramEventID) return paramEventID;
+    
+    // 2. Check query param (?eventId=...)
+    const queryParams = new URLSearchParams(window.location.search);
+    const queryEventId = queryParams.get("sessionId");
+    if (queryEventId) return queryEventId;
+    
+    // 3. Check if selectedEventTypeObj contains full event data (not just event type)
+    // Event type objects have name, description, isTicketed, etc.
+    // Full event objects have eventName, date, location, etc.
+    if (selectedEventTypeObj && selectedEventTypeObj.eventName) {
+      return selectedEventTypeObj._id || selectedEventTypeObj.id;
+    }
+    
+    return null;
+  };
   
   const [eventId, setEventId] = useState(getInitialEventId());
-  const [sessionId, setSessionId] = useState(null);
+  const [sessionId, setSessionId] = useState(getInitialSessionId());
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
   const [isSearchingPeople, setIsSearchingPeople] = useState(false);
@@ -448,6 +468,7 @@ const fetchPeople = async (q) => {
 }, [selectedEventTypeObj])
   useEffect(() => {
     if (!eventId) return;
+    if (!sessionId) return;
     
     // Check if we already have the full event data in selectedEventTypeObj
     const hasFullEventData = selectedEventTypeObj && selectedEventTypeObj.eventName && 
@@ -463,7 +484,7 @@ const fetchPeople = async (q) => {
           console.log("Using passed event data:", data);
         } else {
           // Fetch from server
-          const response = await axios.get(`${BACKEND_URL}/events/${eventId}`);
+          const response = await axios.get(`${BACKEND_URL}/events/${eventId}/${sessionId}`);
           data = response.data;
           console.log("Fetched event data:", data);
         }

@@ -2216,7 +2216,7 @@ const AttendanceModal = ({
       let liveResponseOk = false;
       if (syncsServiceCheckIn) {
         const liveResponse = await authFetch(
-          `${BACKEND_URL}/service-checkin/real-time-data?event_id=${encodeURIComponent(attendanceEventId)}`,
+          `${BACKEND_URL}/service-checkin/real-time-data?event_id=${event.event_id}`,
           { headers: { Authorization: `Bearer ${token}` } },
         );
         if (liveResponse.ok) {
