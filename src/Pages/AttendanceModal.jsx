@@ -1756,8 +1756,8 @@ const AttendanceModal = ({
     const personSurname = nameParts.slice(1).join(" ") || "";
     console.log("LOOK HERE!",event)
     const payload = {
-      person_name: person.name || personName,
-      person_surname: person.surname || personSurname,
+      person_name: personName,
+      person_surname:  personSurname,
       person_email: person.email || "",
       person_phone: person.phone || "",
       decision_type: decisionType, // "first_time" or "recommitment"

@@ -1144,7 +1144,7 @@ function ServiceCheckIn() {
     try {
       setIsDeleting(true);
       const response = await authFetch(
-        `${BASE_URL}/service-checkin/remove-consolidation?event_id=${currentSessionId}&consolidation_id=${consolidation.id}&keep_person_in_attendees=true`,
+        `${BASE_URL}/service-checkin/remove-consolidation?event_id=${getEventId(currentSessionId)}&session_id=${currentSessionId}&consolidation_id=${consolidation.id}&keep_person_in_attendees=true`,
         { method: "DELETE" }
       );
       if (response.ok) {
@@ -1212,7 +1212,7 @@ function ServiceCheckIn() {
         const aId = getEntryId(a);
         return a.person_id !== gridId
       });
-      setPresentCount(filtered.length);
+      // setPresentCount((prev) => Math.max(0, prev - 1));
       return { ...prevState, present_attendees: filtered, present_count: filtered.length };
     };
 
@@ -1224,7 +1224,7 @@ function ServiceCheckIn() {
       });
       if (already) return base;
       const newPresent = [...(base.present_attendees || []), optimisticEntry];
-      setPresentCount(newPresent.length);
+      // setPresentCount((prev) => prev + 1);
       return { ...base, present_attendees: newPresent, present_count: newPresent.length };
     };
 
@@ -1285,10 +1285,11 @@ function ServiceCheckIn() {
             {
               method: "DELETE",
               body: JSON.stringify({
-                event_id: cleanEventId(currentSessionId),
+                event_id: getEventId(currentSessionId),
+                session_id: currentSessionId,
                 person_id: presentId,
-                type: "attendees",
-              }),
+                type: "attendee",
+              }), 
             },
           );
           const body = await readServerBody(response);
@@ -1353,7 +1354,7 @@ function ServiceCheckIn() {
       if (personId) {
         authFetch(`${BASE_URL}/service-checkin/remove`, {
           method: "DELETE",
-          body: JSON.stringify({ event_id: cleanEventId(currentSessionId), person_id: personId, type: "new_people" }),
+          body: JSON.stringify({event_id: getEventId(currentSessionId), session_id: cleanEventId(currentSessionId), person_id: personId, type: "new_people" }),
         }).catch(() => { });
       }
       toast.info(`${fullName} no longer marked as new`);
@@ -1526,7 +1527,7 @@ function ServiceCheckIn() {
           if (!prev) return prev;
           const patch = (list) => (list || []).map(entry =>
             entry.id === pid || entry._id === pid
-              ? { ...entry, ...normalizedUpdate, id: pid, _id: pid, person_name: normalizedUpdate.name, person_surname: normalizedUpdate.surname, person_email: normalizedUpdate.email, person_phone: normalizedUpdate.phone || normalizedUpdate.number }
+              ? { ...entry, ...normalizedUpdate, person_id: pid, id: pid, _id: pid, person_name: normalizedUpdate.name, person_surname: normalizedUpdate.surname, person_email: normalizedUpdate.email, person_phone: normalizedUpdate.phone || normalizedUpdate.number }
               : entry
           );
           return { ...prev, new_people: patch(prev.new_people), present_attendees: patch(prev.present_attendees) };
@@ -1546,13 +1547,14 @@ function ServiceCheckIn() {
 
       const newPersonForGrid = normalisePerson({
         _id: insertedId,
+        person_id: newPersonData.person_id || insertedId,
         Name: newPersonData.Name || formData.name,
         Surname: newPersonData.Surname || formData.surname,
         Email: newPersonData.Email || formData.email,
         Number: newPersonData.Number || formData.number,
         Gender: newPersonData.Gender || formData.gender,
         InvitedBy: newPersonData.InvitedBy || formData.invitedBy,
-        leaders: newPersonData.leaders || [],
+        leaders: [newPersonData["Leader @1"], newPersonData["Leader @12"], newPersonData["Leader @144"]].filter(Boolean).map((name, index) => ({ name, level: [1, 12, 144][index] })),
         Stage: "First Time",
         isNew: true,
         DateCreated: newPersonData.DateCreated || new Date().toISOString(),
@@ -1661,7 +1663,7 @@ function ServiceCheckIn() {
           cleanEventId(e.id) === cleanEventId(currentSessionId)
             ? { ...e, status: "complete", closed_by: result.closed_by, closed_at: result.closed_at }
             : e
-        );
+        )
         const todayStr = saTodayKey();
         const nextEvent = updated.find(e => {
           if (cleanEventId(e.id) === cleanEventId(currentSessionId)) return false;
