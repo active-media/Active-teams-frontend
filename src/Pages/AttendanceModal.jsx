@@ -3247,7 +3247,7 @@ const AttendanceModal = ({
       const shouldMarkAsDidNotMeet =
         didNotMeet && attendeesList.length === 0 && finalHeadcount === 0;
       const payload = {
-        event_id: eventId,
+        event_id: eventId || event?.event_id || "",
         attendees: shouldMarkAsDidNotMeet ? [] : selectedAttendees,
         persistent_attendees: persistentCommonAttendees.map((p) => {
           const ticketOverride = isTicketedEvent
@@ -3303,7 +3303,6 @@ const AttendanceModal = ({
         week: get_current_week_identifier(),
         headcount: finalHeadcount,
         session_id: event?.session_id || "",
-        event_id: event?.event_id || "",
         event_name: event?.eventName || "",
         event_type: event?.eventType || event?.event_type_name || "Cells",
       };

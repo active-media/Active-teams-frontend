@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   TextField,
@@ -13,11 +13,9 @@ import {
 import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import darkLogo from "../assets/active-teams.png";
-import { AuthContext } from "../contexts/AuthContext";
+import { AuthContext, supabase } from "../contexts/AuthContext";
 
 const ResetPassword = ({ mode }) => {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get("token");
   const navigate = useNavigate();
   const theme = useTheme();
   const isSmallScreen = useMediaQuery(theme.breakpoints.down("sm"));
@@ -29,22 +27,58 @@ const ResetPassword = ({ mode }) => {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [hasRecoverySession, setHasRecoverySession] = useState(false);
+  const [checkingRecoverySession, setCheckingRecoverySession] = useState(true);
 
   const { resetPassword } = useContext(AuthContext);
 
   useEffect(() => {
-    if (!token) {
-      setError("Invalid or expired reset token.");
-    }
-  }, [token]);
+    let active = true;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (!active) return;
+        if (event === "PASSWORD_RECOVERY" && session) {
+          setHasRecoverySession(true);
+          setError("");
+        } else if (event === "SIGNED_OUT") {
+          setHasRecoverySession(false);
+          setError("Invalid or expired reset link.");
+        }
+      },
+    );
+
+    const checkRecoverySession = async () => {
+      try {
+        const { data: { session }, error: sessionError } =
+          await supabase.auth.getSession();
+        if (!active) return;
+        if (sessionError || !session) {
+          setError("Invalid or expired reset link.");
+        } else {
+          setHasRecoverySession(true);
+          setError("");
+        }
+      } catch {
+        if (active) setError("Invalid or expired reset link.");
+      } finally {
+        if (active) setCheckingRecoverySession(false);
+      }
+    };
+
+    checkRecoverySession();
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setMessage("");
 
-    if (!token) {
-      setError("Invalid or expired reset token.");
+    if (!hasRecoverySession) {
+      setError("Invalid or expired reset link.");
       return;
     }
     if (password.length < 6) {
@@ -59,7 +93,7 @@ const ResetPassword = ({ mode }) => {
     setLoading(true);
 
     try {
-      await resetPassword(token, password);
+      await resetPassword(password);
       setMessage("Password reset successful. Redirecting to login...");
       setTimeout(() => navigate("/login"), 2000);
     } catch (err) {
@@ -202,7 +236,7 @@ const ResetPassword = ({ mode }) => {
           type="submit"
           variant="contained"
           fullWidth
-          disabled={loading || !token}
+          disabled={loading || checkingRecoverySession || !hasRecoverySession}
           sx={{
             backgroundColor: mode === "dark" ? "#fff" : "#000",
             color: mode === "dark" ? "#000" : "#fff",

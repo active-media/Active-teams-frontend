@@ -324,12 +324,8 @@ export const AuthProvider = ({ children }) => {
     return { message: 'Reset email sent' };
   };
 
-  /**
-   * Called after the user arrives via the reset-password email link.
-   * Supabase sets the session automatically from the URL; we just update the password.
-   * The `_token` param is accepted for API compatibility but is not needed.
-   */
-  const resetPassword = async (_token, newPassword) => {
+  // Supabase establishes the recovery session when the user opens the email link.
+  const resetPassword = async (newPassword) => {
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     if (error) throw new Error(error.message || 'Failed to reset password');
     return { message: 'Password updated' };
