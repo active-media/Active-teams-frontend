@@ -196,7 +196,7 @@ function ChartFrame({ points, height = 260, render }) {
   );
 }
 
-function LineChart({ points }) {
+export function LineChart({ points }) {
   const theme = useTheme();
   const color = theme.palette.primary.main;
   return (
@@ -279,7 +279,7 @@ function BarChart({ points: allPoints, limit = MAX_BARS }) {
 /* Presentational pieces                                               */
 /* ------------------------------------------------------------------ */
 
-const cardSx = {
+export const cardSx = {
   p: 2.5,
   borderRadius: 2,
   border: 1,

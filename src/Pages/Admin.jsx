@@ -7,7 +7,7 @@ import {
   DialogContent, DialogActions, Grid, Card, CardContent, Tabs, Tab,
   InputAdornment, CircularProgress, Tooltip, Stack, Divider, List,
   ListItem, ListItemText, useTheme, Fab, useMediaQuery,
-  Skeleton, Alert, AlertTitle, Menu, Badge
+  Skeleton, Alert, AlertTitle, Menu, Badge, Autocomplete
 } from '@mui/material';
 import {
   Search, Delete, Shield, Refresh, People,
@@ -28,20 +28,29 @@ import {
 } from '@mui/icons-material';
 import NewUserModal from '../components/NewUserModal';
 
-// ─── module-level cache ───────────────────────────────────────────────────────
+// ISO week id like "2026-W44" (matches the format the targets API uses)
+const getISOWeekId = (d = new Date()) => {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((date - yearStart) / 86400000 + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+};
+const weekOffset = (n) => getISOWeekId(new Date(Date.now() + n * 7 * 86400000));
+
+// Module-level cache shared across mounts
 let globalUsersData = null;
 let globalDataLoaded = false;
 let globalDataTimestamp = null;
 let globalOrgFilter = null;
-let globalRolesCache = {};
-
-const CACHE_DURATION = 5 * 60 * 1000;
-const SUPREME_ADMIN_EMAIL = "plaatjiessamuel98@gmail.com";
+const globalRolesCache = {};
 
 export default function AdminDashboard() {
   const theme = useTheme();
   const { authFetch, user: currentUser } = useContext(AuthContext);
   const isSupremeAdmin = currentUser?.is_supreme_admin === true;
+  const isAdmin = currentUser?.role === "admin";
 
   const isXsDown = useMediaQuery(theme.breakpoints.down("xs"));
   const isSmDown = useMediaQuery(theme.breakpoints.down("sm"));
@@ -52,14 +61,13 @@ export default function AdminDashboard() {
     if (isXsDown) return xs;
     if (isSmDown) return sm;
     if (isMdDown) return md;
-    if (isLgDown) return lg;
+    if (isLgDown) return xl;
     return xl;
   };
 
   const containerPadding = getResponsiveValue(1, 2, 3, 4, 4);
   const cardSpacing = getResponsiveValue(1, 2, 2, 3, 3);
 
-  // ─── state ──────────────────────────────────────────────────────────────────
   const [selectedRole, setSelectedRole] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState(0);
@@ -162,14 +170,13 @@ export default function AdminDashboard() {
     }, ...prev].slice(0, 50));
   }, [currentUser]);
 
-  // ─── fetch helpers ──────────────────────────────────────────────────────────
+  // ─── fetch helpers ────────────────
   const fetchUsers = useCallback(async (org) => {
     const url = `${API_BASE_URL}/admin/users?skip=0&limit=500&organization=${encodeURIComponent(org)}`;
     const res = await authFetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
     if (!res.ok) throw new Error(`Users fetch failed: ${res.status}`);
     const data = await res.json();
     const arr = data?.users ?? [];
-
     const transformed = arr.map(u => ({
       id: u.id || u._id,
       name: u.name && u.surname ? `${u.name} ${u.surname}`.trim() : u.name || u.surname || 'Unknown',
@@ -189,20 +196,17 @@ export default function AdminDashboard() {
       leader1728: u.leader1728,
       stage: u.stage,
     }));
-
-    // update cache
     globalUsersData = transformed;
     globalDataLoaded = true;
     globalDataTimestamp = Date.now();
     globalOrgFilter = org;
-
     return { users: transformed, total: data.total ?? transformed.length };
   }, [API_BASE_URL, authFetch]);
 
   const fetchRoles = useCallback(async (org, force = false) => {
     if (!force) {
       const c = globalRolesCache[org];
-      if (c && Date.now() - c.timestamp < CACHE_DURATION) { setOrganizationRoles(c.roles); return; }
+      if (c && Date.now() - c.timestamp < 300000) { setOrganizationRoles(c.roles); return; }
     }
     setRolesLoading(true);
     try {
@@ -242,7 +246,7 @@ export default function AdminDashboard() {
     }
   }, [API_BASE_URL, authFetch, isSupremeAdmin]);
 
-  // ─── MAIN LOAD ──────────────────────────────────────────────────────────────
+  // ─── MAIN LOAD ────────────────
   useEffect(() => {
     const org = selectedOrg;
     if (!org) { setLoading(false); return; }
@@ -250,7 +254,7 @@ export default function AdminDashboard() {
     const cacheValid = globalDataLoaded &&
       globalOrgFilter === org &&
       globalDataTimestamp &&
-      (Date.now() - globalDataTimestamp < CACHE_DURATION);
+      (Date.now() - globalDataTimestamp < 300000);
 
     if (cacheValid && globalUsersData) {
       setUsers(globalUsersData);
@@ -281,12 +285,11 @@ export default function AdminDashboard() {
         fetchRoles(org, true);
         if (isSupremeAdmin) fetchOrgs();
       });
-  }, [selectedOrg]); 
+  }, [selectedOrg]);
 
-  // ─── org switch ─────────────────────────────────────────────────────────────
+  // ─── org switch ────────────────
   const handleOrgChange = useCallback((orgName) => {
     if (orgName === selectedOrg) { setOrgAnchorEl(null); return; }
-    // bust cache for the old org so new org fetches fresh
     globalDataLoaded = false;
     globalOrgFilter = null;
     globalUsersData = null;
@@ -301,7 +304,7 @@ export default function AdminDashboard() {
     setSelectedOrg(orgName); 
   }, [selectedOrg]);
 
-  // ─── manual refresh ──────────────────────────────────────────────────────────
+  // ─── manual refresh ────────────────
   const handleManualRefresh = useCallback(async () => {
     globalDataLoaded = false;
     fetchingRef.current = false;
@@ -317,7 +320,7 @@ export default function AdminDashboard() {
     }
   }, [fetchUsers, fetchOrgs, selectedOrg, isSupremeAdmin]);
 
-  // ─── CRUD handlers ─────────────────────────
+  // ─── CRUD handlers ────────────────
   const handleCreateUser = async (userData) => {
     setCreatingUser(true);
     try {
@@ -384,7 +387,7 @@ export default function AdminDashboard() {
       const updated = users.filter(u => u.id !== selectedUser.id);
       setUsers(updated); globalUsersData = updated;
       setShowDeleteConfirm(false); setSelectedUser(null);
-    } catch (e) { alert(`Error: ${e.message}`); }
+    } catch (e) { alert(e.message); }
     finally { setDeletingUser(false); }
   };
 
@@ -399,266 +402,294 @@ export default function AdminDashboard() {
     setShowCreateRoleModal(false); setNewRoleName(''); setRoleCreateError('');
   };
 
-  useEffect(() => {
-    if (users.length > 0 && organizationRoles.length > 0) {
-      setOrganizationRoles(prev => prev.map(r => ({ ...r, count: users.filter(u => u.role === r.name).length })));
-    }
-  }, [users]);
+  // Super admin shortcut: promote a user to admin of the org currently being viewed
 
-  // ─── org CRUD ───────────────────────────────────────────────────────────────
-  const handleOpenCreateOrg = () => { setEditingOrg(null); setOrgFormData({ name: '', address: '', phone: '', email: '' }); setOrgFormErrors({}); setShowOrgModal(true); };
-const handleOpenEditOrg = (org) => {
-    const id = org.id || org._id;
-    if (!id || id === 'undefined') { alert('Invalid organization ID'); return; }
-    setEditingOrg({ ...org, id, _id: id });
-    setOrgFormData({ name: org.name || '' });
-    setOrgFormErrors({}); setOrgAnchorEl(null);
+  // ===== TARGETS TAB =====
+  const [selectedWeek, setSelectedWeek] = useState(() => getISOWeekId());
+  const [serviceTargets, setServiceTargets] = useState([]);
+  const [twelveTasksTargets, setTwelveTasksTargets] = useState([]);
+  const [isLoadingTargets, setIsLoadingTargets] = useState(false);
+  const [isLoadingTwelveTasks, setIsLoadingTwelveTasks] = useState(false);
+  const [showSetTargetModal, setShowSetTargetModal] = useState(false);
+  const [showSetTwelveTasksModal, setShowSetTwelveTasksModal] = useState(false);
+
+  const [availableWeeks, setAvailableWeeks] = useState([]);
+
+  const fetchTargets = useCallback(async () => {
+    {
+      if (!selectedOrg || !selectedWeek) {
+        setServiceTargets([]);
+        setTwelveTasksTargets([]);
+        return;
+      }
+      setIsLoadingTargets(true);
+      setIsLoadingTwelveTasks(true);
+      try {
+        const serviceRes = await authFetch(
+          `${API_BASE_URL}/targets/service?week=${selectedWeek}&org=${selectedOrg}`,
+          { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+        );
+        if (serviceRes.ok) {
+          const serviceData = await serviceRes.json();
+          setServiceTargets(serviceData.targets || []);
+        }
+
+        const twelveRes = await authFetch(
+          `${API_BASE_URL}/targets/twelve-tasks?week=${selectedWeek}&org=${selectedOrg}`,
+          { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+        );
+        if (twelveRes.ok) {
+          const twelveData = await twelveRes.json();
+          setTwelveTasksTargets(twelveData.targets || []);
+        }
+      } catch (e) {
+        console.error('fetchTargets error', e);
+        setServiceTargets([]);
+        setTwelveTasksTargets([]);
+      } finally {
+        setIsLoadingTargets(false);
+        setIsLoadingTwelveTasks(false);
+      }
+    }
+  }, [API_BASE_URL, authFetch, selectedOrg, selectedWeek]);
+
+  useEffect(() => { fetchTargets(); }, [fetchTargets]);
+
+  useEffect(() => {
+    const fetchAvailableWeeks = async () => {
+      if (!selectedOrg) return;
+      try {
+        const res = await authFetch(
+          `${API_BASE_URL}/targets/available-weeks?organization=${selectedOrg}`,
+          { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          // Fallback to recent weeks if API fails
+          setAvailableWeeks(data.weeks || ['2026-W41', '2026-W40', '2026-W39', '2026-W38']);
+        }
+      } catch (e) {
+        console.error('fetchAvailableWeeks error', e);
+        setAvailableWeeks(['2026-W41', '2026-W40', '2026-W39', '2026-W38']);
+      }
+    };
+    fetchAvailableWeeks();
+  }, [selectedOrg]);
+
+  // ===== target handlers ────────────
+  const handleCopyLastWeekTargets = async () => {
+    if (!selectedOrg || !selectedWeek) { alert('Please select an organization and week first'); return; }
+    setIsLoadingTargets(true);
+    try {
+      const res = await authFetch(`${API_BASE_URL}/targets/copy-last-week`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(data.message || 'Targets copied successfully');
+        fetchTargets();
+      } else {
+        const err = await res.json();
+        alert('Error: ' + (err.detail || 'Failed to copy targets'));
+      }
+    } catch (e) {
+      console.error('copy-last-week error', e);
+      alert('Error copying targets');
+    } finally {
+      setIsLoadingTargets(false);
+    }
+  };
+
+  const handleSetTargetManual = () => {
+    setShowSetTargetModal(true);
+  };
+
+  const handleSetTwelveTasksTargetManual = () => {
+    setShowSetTwelveTasksModal(true);
+  };
+
+  // ─── derived: filtering / paging / styles ────────────────
+  const cardStyles = {
+    height: '100%', borderRadius: 2, boxShadow: 2,
+    transition: 'transform 0.2s, box-shadow 0.2s',
+    '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 }
+  };
+  const roleCardColors = ['#2196f3', '#9c27b0', '#f44336', '#4caf50', '#ff9800', '#00bcd4', '#795548'];
+
+  const filteredUsers = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return users.filter(u => {
+      const roleOk = selectedRole === 'all' || u.role === selectedRole;
+      const textOk = !q || (u.name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
+      return roleOk && textOk;
+    });
+  }, [users, searchTerm, selectedRole]);
+
+  const paginatedUsers = useMemo(
+    () => filteredUsers.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+    [filteredUsers, page, rowsPerPage]
+  );
+
+  // Mobile card for a user (used when the table is hidden on small screens)
+  const UserCard = ({ user }) => (
+    <Card sx={{ ...cardStyles, mb: 1 }}>
+      <CardContent>
+        <Stack direction="row" spacing={2} alignItems="center">
+          <Avatar sx={{ bgcolor: '#9c27b0' }}>{getInitials(user.name)}</Avatar>
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography variant="body1" fontWeight="medium" noWrap>{user.name}</Typography>
+            <Typography variant="body2" color="text.secondary" noWrap>{user.email}</Typography>
+            <Chip label={getRoleDisplay(user.role)} color={getRoleColor(user.role)} size="small" sx={{ mt: 0.5 }} />
+          </Box>
+          <Stack direction="row">
+            <IconButton size="small" onClick={() => { setSelectedUser(user); setShowRoleModal(true); }}><EditIcon /></IconButton>
+            <IconButton size="small" color="error" onClick={() => { setSelectedUser(user); setShowDeleteConfirm(true); }}><Delete /></IconButton>
+          </Stack>
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+
+  // ─── organization handlers (super admin) ────────────────
+  const handleOpenCreateOrg = () => {
+    setEditingOrg(null);
+    setOrgFormData({ name: '' });
+    setOrgFormErrors({});
     setShowOrgModal(true);
+    setOrgAnchorEl(null);
   };
-  const validateOrgForm = () => {
-    const errors = {};
-    if (!orgFormData.name.trim()) errors.name = 'Name is required';
-    setOrgFormErrors(errors);
-    return !Object.keys(errors).length;
+
+  const handleOpenEditOrg = (org) => {
+    setEditingOrg(org);
+    setOrgFormData({ name: org.name || '' });
+    setOrgFormErrors({});
+    setShowOrgModal(true);
+    setOrgAnchorEl(null);
   };
-const handleSaveOrganization = async () => {
-    if (!validateOrgForm()) return;
+
+  const handleSaveOrganization = async () => {
+    const name = (orgFormData.name || '').trim();
+    if (!name) { setOrgFormErrors({ name: 'Organization name is required' }); return; }
     setSavingOrg(true);
     try {
-      const name = orgFormData.name.trim();
-      const oldName = editingOrg?.name;
-      const isEdit = !!editingOrg;
-      const id = editingOrg?.id || editingOrg?._id;
-      const url = isEdit ? `${API_BASE_URL}/organizations/${id}` : `${API_BASE_URL}/organizations`;
-      const method = isEdit ? 'PUT' : 'POST';
-      const res = await authFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to save'); }
-      addActivityLog(isEdit ? 'ORG_UPDATED' : 'ORG_CREATED', `${isEdit ? 'Updated' : 'Created'}: ${name}`);
-      await fetchOrgs();
-      if (isEdit && oldName !== name && selectedOrg === oldName) handleOrgChange(name);
+      const id = editingOrg ? (editingOrg.id || editingOrg._id) : null;
+      const res = await authFetch(
+        id ? `${API_BASE_URL}/organizations/${id}` : `${API_BASE_URL}/organizations`,
+        { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }
+      );
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to save organization'); }
+      addActivityLog(id ? 'ORG_UPDATED' : 'ORG_CREATED', `${id ? 'Updated' : 'Created'} organization: ${name}`);
       setShowOrgModal(false);
-    } catch (e) {
-      alert(`Error: ${e.message}`);
-    } finally {
-      setSavingOrg(false);
-    }
+      setEditingOrg(null);
+      await fetchOrgs();
+    } catch (e) { setOrgFormErrors({ name: e.message }); }
+    finally { setSavingOrg(false); }
   };
-  const handleDeleteOrganization = async (orgId, orgName) => {
-    if (!orgId || orgId === 'undefined') { alert('Invalid ID'); return; }
-    if (!window.confirm(`Delete "${orgName}"? This cannot be undone.`)) return;
+
+  const handleDeleteOrganization = async (id, name) => {
+    if (!window.confirm(`Delete ${name}? This cannot be undone.`)) return;
     setDeletingOrg(true);
     try {
-      const res = await authFetch(`${API_BASE_URL}/organizations/${orgId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to delete'); }
-      addActivityLog('ORG_DELETED', `Deleted: ${orgName}`);
-      await fetchOrgs();
-      if (selectedOrg === orgName) handleOrgChange('Active Church');
+      const res = await authFetch(`${API_BASE_URL}/organizations/${id}`, { method: 'DELETE' });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to delete organization'); }
+      addActivityLog('ORG_DELETED', `Deleted organization: ${name}`);
       setShowOrgModal(false);
-    } catch (e) { alert(`Error: ${e.message}`); }
+      setEditingOrg(null);
+      if (selectedOrg === name) handleOrgChange('Active Church');
+      await fetchOrgs();
+    } catch (e) { alert(e.message); }
     finally { setDeletingOrg(false); }
   };
+
   const handleAddSupremeAdmin = async () => {
-    if (!supremeAdminEmail.trim()) { setSupremeAdminError('Email required'); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supremeAdminEmail)) { setSupremeAdminError('Invalid email'); return; }
-    setAddingSupremeAdmin(true); setSupremeAdminError('');
+    const email = supremeAdminEmail.trim();
+    if (!email) return;
+    setAddingSupremeAdmin(true);
+    setSupremeAdminError('');
     try {
-      const res = await authFetch(`${API_BASE_URL}/admin/supreme/add`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: supremeAdminEmail }) });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
-      setShowSupremeAdminModal(false); setSupremeAdminEmail('');
-      alert(`Added ${supremeAdminEmail} as supreme admin`);
+      const res = await authFetch(`${API_BASE_URL}/admin/supreme-admins`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email })
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to add supreme admin'); }
+      addActivityLog('SUPREME_ADMIN_ADDED', `Added supreme admin: ${email}`);
+      setShowSupremeAdminModal(false);
+      setSupremeAdminEmail('');
     } catch (e) { setSupremeAdminError(e.message); }
     finally { setAddingSupremeAdmin(false); }
   };
 
-  // ─── pagination / filter ────────────────────────────────────────────────────
-  const filteredUsers = useMemo(() => {
-    const s = searchTerm.toLowerCase().trim();
-    return users.filter(u => {
-      const matchSearch = !s || u.name?.toLowerCase().includes(s) || u.email?.toLowerCase().includes(s);
-      const matchRole = selectedRole === 'all' || u.role === selectedRole;
-      return matchSearch && matchRole;
-    }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [users, searchTerm, selectedRole]);
+  // ─── set targets for people ────────────────
+  const [serviceForm, setServiceForm] = useState({ person: null, count: '' });
+  const [twelveForm, setTwelveForm] = useState({ person: null, count: '' });
+  const [savingTarget, setSavingTarget] = useState(false);
 
-  const paginatedUsers = useMemo(() => filteredUsers.slice(page * rowsPerPage, (page + 1) * rowsPerPage), [filteredUsers, page, rowsPerPage]);
+  const weekOptions = useMemo(() => {
+    const set = new Set([weekOffset(1), weekOffset(0), weekOffset(-1), selectedWeek, ...availableWeeks]);
+    return Array.from(set).filter(Boolean).sort().reverse();
+  }, [availableWeeks, selectedWeek]);
 
-  // reset page when filter changes
-  useEffect(() => { setPage(0); }, [searchTerm, selectedRole]);
-  useEffect(() => {
-    const max = Math.max(0, Math.ceil(filteredUsers.length / rowsPerPage) - 1);
-    if (page > max) setPage(max);
-  }, [filteredUsers.length, rowsPerPage, page]);
+  const personById = useMemo(() => {
+    const m = {};
+    users.forEach(u => { m[u.id] = u; });
+    return m;
+  }, [users]);
 
-  // ─── style constants ────────────────────────────────────────────────────────
-  const cardStyles = {
-    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-    transition: 'all 0.3s cubic-bezier(.25,.8,.25,1)',
-    '&:hover': { boxShadow: '0 8px 24px rgba(0,0,0,0.15)' },
-    height: '100%', display: 'flex', flexDirection: 'column', borderRadius: 2
+  const handleSaveServiceTarget = async () => {
+    const { person, count } = serviceForm;
+    if (!person || count === '' || Number(count) < 0) { alert('Pick a person and enter a target (0 or more).'); return; }
+    setSavingTarget(true);
+    try {
+      const res = await authFetch(`${API_BASE_URL}/targets/service`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leader_name: person.name,
+          email: person.email,
+          target_count: parseInt(count, 10),
+          week_identifier: selectedWeek,
+          person_id: person.id,
+          target_type: 'service',
+        })
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to save service target'); }
+      addActivityLog('TARGET_SET', `Service target ${count} for ${person.name} (${selectedWeek})`);
+      setShowSetTargetModal(false);
+      setServiceForm({ person: null, count: '' });
+      await fetchTargets();
+    } catch (e) { alert(e.message); }
+    finally { setSavingTarget(false); }
   };
-  const roleCardColors = ['#f44336','#9c27b0','#4caf50','#ff9800','#607d8b','#2196f3','#e91e63','#00bcd4','#8bc34a','#ff5722','#673ab7','#3f51b5','#009688','#795548','#ffc107'];
 
-  // ─── sub-components ─────────────────────────────────────────────────────────
-  const UserCard = ({ user }) => (
-    <Card variant="outlined" sx={{ mb: 2 }}>
-      <CardContent sx={{ p: 2 }}>
-        <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
-          <Stack direction="row" spacing={2} alignItems="center" flex={1}>
-            <Avatar sx={{ bgcolor: '#9c27b0', boxShadow: 1 }}>{getInitials(user.name)}</Avatar>
-            <Box flex={1}>
-              <Typography variant="subtitle2" fontWeight="bold">{user.name}</Typography>
-              <Typography variant="body2" color="text.secondary">{user.email}</Typography>
-              {isSupremeAdmin && user.organization && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-                  <BusinessIcon /> {user.organization}
-                </Typography>
-              )}
-              <Chip label={getRoleDisplay(user.role)} color={getRoleColor(user.role)} size="small" icon={getRoleIcon(user.role)} sx={{ mt: 0.5 }} />
-            </Box>
-          </Stack>
-        </Box>
-        <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center">
-          <Box>
-            <Typography variant="body2" color="text.secondary">{user.phoneNumber || 'No phone'}</Typography>
-            <Typography variant="caption" color="text.secondary">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'No date'}</Typography>
-          </Box>
-          <Stack direction="row" spacing={0.5}>
-            <Tooltip title="Change Role"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowRoleModal(true); }} sx={{ boxShadow: 1, borderRadius: 1 }}><Shield /></IconButton></Tooltip>
-            <Tooltip title="Delete User"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowDeleteConfirm(true); }} sx={{ color: 'error.main', boxShadow: 1, borderRadius: 1 }}><Delete /></IconButton></Tooltip>
-          </Stack>
-        </Stack>
-      </CardContent>
-    </Card>
-  );
+  const handleSaveTwelveTasksTarget = async () => {
+    const { person, count } = twelveForm;
+    if (!person || count === '' || Number(count) < 0) { alert('Pick a person and enter a target (0 or more).'); return; }
+    setSavingTarget(true);
+    try {
+      const res = await authFetch(`${API_BASE_URL}/targets/twelve-tasks`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          person_id: person.id,
+          target: parseInt(count, 10),
+          week_identifier: selectedWeek,
+          organization: selectedOrg,
+          is_default: false,
+        })
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to save twelve-tasks target'); }
+      const data = await res.json();
+      if (data.roster_status && data.roster_message) {
+        alert(data.roster_message);
+      }
+      addActivityLog('TARGET_SET', `Twelve-tasks target ${count} for ${person.name} (${selectedWeek})`);
+      setShowSetTwelveTasksModal(false);
+      setTwelveForm({ person: null, count: '' });
+      await fetchTargets();
+    } catch (e) { alert(e.message); }
+    finally { setSavingTarget(false); }
+  };
 
-  const SkeletonCard = () => (
-    <Card variant="outlined" sx={{ mb: 2 }}>
-      <CardContent sx={{ p: 2 }}>
-        <Box display="flex" justifyContent="space-between" alignItems="flex-start">
-          <Box flex={1}>
-            <Skeleton variant="text" width="60%" height={24} />
-            <Skeleton variant="text" width="80%" height={20} sx={{ mt: 0.5 }} />
-          </Box>
-          <Stack direction="row" spacing={1}>
-            <Skeleton variant="circular" width={32} height={32} />
-            <Skeleton variant="circular" width={32} height={32} />
-          </Stack>
-        </Box>
-      </CardContent>
-    </Card>
-  );
-
-  const SkeletonTableRow = () => (
-    <TableRow>
-      {[80, 60, 70, 60, 40].map((w, i) => <TableCell key={i}><Skeleton variant="text" width={`${w}%`} /></TableCell>)}
-    </TableRow>
-  );
-
-  const RoleOption = ({ role, onSelect }) => (
-    <Paper variant="outlined" sx={{
-      p: 2, cursor: 'pointer',
-      border: selectedUser?.role === role.name ? 2 : 1,
-      borderColor: selectedUser?.role === role.name ? 'primary.main' : 'divider',
-      borderRadius: 1, transition: 'all 0.2s',
-      '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover', transform: 'translateY(-1px)', boxShadow: 1 }
-    }} onClick={onSelect}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Avatar sx={{ width: 24, height: 24, bgcolor: role.color || '#9c27b0' }}><PersonIcon /></Avatar>
-          <Typography variant="body1" fontWeight="medium">{role.name}</Typography>
-          {!role.is_system && <Chip label="custom" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.625rem' }} />}
-        </Stack>
-        <Typography variant="body2" color="text.secondary">{role.count} {role.count === 1 ? 'person' : 'people'}</Typography>
-      </Stack>
-    </Paper>
-  );
-
-  // ─── skeleton screen ─────────────────────────────────────────────────────────
-  if (loading) {
-    return (
-      <Box p={containerPadding} sx={{ maxWidth: "1400px", margin: "0 auto", mt: getResponsiveValue(2,3,4,5,5), minHeight: "100vh" }}>
-        <Typography variant="h4" fontWeight="bold" textAlign="center" gutterBottom>Admin Dashboard</Typography>
-        <Grid container spacing={cardSpacing} mb={cardSpacing}>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Grid size={{ xs: 6, sm: 4, md: 2 }} key={i}>
-              <Card sx={{ height: '100%' }}>
-                <CardContent sx={{ textAlign: 'center', p: 2 }}>
-                  <Skeleton variant="circular" width={56} height={56} sx={{ mx: 'auto', mb: 1 }} />
-                  <Skeleton variant="text" width="60%" height={40} sx={{ mx: 'auto' }} />
-                  <Skeleton variant="text" width="80%" height={20} sx={{ mx: 'auto' }} />
-                </CardContent>
-              </Card>
-            </Grid>
-          ))}
-        </Grid>
-        <Paper sx={{ boxShadow: 3, borderRadius: 2, overflow: 'hidden' }}>
-          <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-            <Grid container spacing={2}>
-              <Grid size={{ xs: 12, sm: 8 }}><Skeleton variant="rounded" height={40} /></Grid>
-              <Grid size={{ xs: 12, sm: 4 }}><Skeleton variant="rounded" height={40} /></Grid>
-            </Grid>
-          </Box>
-          {isMdDown
-            ? <Box sx={{ p: 1 }}>{Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)}</Box>
-            : <TableContainer><Table><TableHead><TableRow>{['User','Role','Phone','Created','Actions'].map(h => <TableCell key={h}><Skeleton variant="text" width="60%" /></TableCell>)}</TableRow></TableHead><TableBody>{Array.from({ length: 5 }).map((_, i) => <SkeletonTableRow key={i} />)}</TableBody></Table></TableContainer>
-          }
-        </Paper>
-      </Box>
-    );
-  }
-
-  // ─── Organization tab content ───────────────────────────────────────────────
-  const orgTabContent = () => (
-    <Box sx={{ p: getResponsiveValue(1,2,3,3,3), pt: 3 }}>
-      <Typography variant="h6" fontWeight="bold" sx={{ mb: 2 }}>Organizations</Typography>
-      <Grid container spacing={cardSpacing}>
-        {organizations.map(org => (
-          <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={org.id || org._id}>
-            <Card sx={cardStyles}>
-              <CardContent>
-                <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                  <Avatar sx={{ bgcolor: '#1976d2', width: 48, height: 48, boxShadow: 2 }}><BusinessIcon /></Avatar>
-                  <Box>
-                    <Typography variant="h6" fontWeight="bold">{org.name}</Typography>
-                    <Typography variant="body2" color="text.secondary">{org.email}</Typography>
-                    {org.phone && (
-                      <Typography variant="body2" color="text.secondary">
-                        <PhoneIcon /> {org.phone}
-                      </Typography>
-                    )}
-                  </Box>
-                </Stack>
-                {isSupremeAdmin && (
-                  <Box sx={{ display: "flex", justifyContent: "flex-end", my: 1 }}>
-                    <Button variant="outlined" size="small" startIcon={<EditIcon />} sx={{ mr: 1, borderRadius: 1 }} onClick={() => handleOpenEditOrg(org)}>Edit</Button>
-                    <Button variant="outlined" size="small" startIcon={<Delete />} sx={{ ml: 1, borderRadius: 1, color: "error.main"}} onClick={() => { if (window.confirm("Delete " + org.name + "? This cannot be undone.")) { handleDeleteOrganization(org.id || org._id, org.name); }}}>Delete</Button>
-                  </Box>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-        {organizations.length === 0 && (
-          <Grid size={12}>
-            <Box sx={{ textAlign: "center", py: 8 }}>
-              <BusinessIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} /> <Typography variant="h6" color="text.secondary">No organizations found</Typography>
-            </Box>
-          </Grid>
-        )}
-      </Grid>
-      {isSupremeAdmin && (
-        <Box sx={{ mt: 3 }}>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreateOrg} sx={{ boxShadow: 1, borderRadius: 2, width: "100%" }}>
-            <Typography variant="body1">Create New Organization</Typography>
-          </Button>
-        </Box>
-      )}
-    </Box>
-  );
-
-  // ─── main render ─────────────────────────────────────────────────────────────
+  // ===== render ────────────────
   return (
-    <Box p={containerPadding} sx={{ maxWidth: "1400px", margin: "0 auto", mt: getResponsiveValue(2,3,4,5,5), minHeight: "100vh" }}>
+    <Box padding={containerPadding} sx={{ maxWidth: "1400px", margin: "0 auto", mt: getResponsiveValue(2,3,4,5,5), minHeight: "100vh" }}>
 
       {/* Header */}
       <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
@@ -696,7 +727,7 @@ const handleSaveOrganization = async () => {
 
       {/* Stats cards */}
       <Grid container spacing={cardSpacing} sx={{ mb: cardSpacing }}>
-        <Grid size={{ xs: 6, sm: 4, md: 2 }}>
+        <Grid item xs={6} sm={4} md={2}>
           <Card sx={cardStyles}>
             <CardContent sx={{ textAlign: 'center', p: getResponsiveValue(1.5,2,2.5,3,3) }}>
               <Avatar sx={{ bgcolor: '#2196f3', width: 56, height: 56, mb: 2, mx: 'auto', boxShadow: 2 }}><People /></Avatar>
@@ -715,7 +746,7 @@ const handleSaveOrganization = async () => {
               { role: 'user', color: '#4caf50', icon: <PersonIcon /> },
               { role: 'registrant', color: '#ff9800', icon: <RegistrantIcon /> },
             ].map(({ role, color, icon }) => (
-            <Grid size={{ xs: 6, sm: 4, md: 2 }} key={role}>
+              <Grid size={{ xs: 6, sm: 4, md: 2 }} key={role}>
                 <Card sx={cardStyles}>
                   <CardContent sx={{ textAlign: 'center', p: getResponsiveValue(1.5,2,2.5,3,3) }}>
                     <Avatar sx={{ bgcolor: color, width: 56, height: 56, mb: 2, mx: 'auto', boxShadow: 2 }}>{icon}</Avatar>
@@ -743,12 +774,13 @@ const handleSaveOrganization = async () => {
       {/* Main panel */}
       <Paper sx={{ boxShadow: 3, borderRadius: 2, overflow: 'hidden' }}>
         <Box sx={{ borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: getResponsiveValue('column','column','row','row','row'), justifyContent: 'space-between', alignItems: getResponsiveValue('stretch','stretch','center','center','center'), p: 2, gap: getResponsiveValue(2,2,0,0,0) }}>
-<Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} variant={isMdDown ? "fullWidth" : "standard"}>
-            <Tab label="USERS" sx={{ fontWeight: 600 }} />
-            <Tab label="ROLES & PERMISSIONS" sx={{ fontWeight: 600 }} />
-            <Tab label="ACTIVITY LOG" sx={{ fontWeight: 600 }} />
-            {isSupremeAdmin && <Tab label="ORGANIZATIONS" sx={{ fontWeight: 600 }} />}
-</Tabs>
+          <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} variant={isMdDown ? "fullWidth" : "standard"}>
+            <Tab value={0} label="USERS" sx={{ fontWeight: 600 }} />
+            <Tab value={1} label="ROLES & PERMISSIONS" sx={{ fontWeight: 600 }} />
+            <Tab value={2} label="ACTIVITY LOG" sx={{ fontWeight: 600 }} />
+            {isSupremeAdmin && <Tab value={3} label="ORGANIZATIONS" sx={{ fontWeight: 600 }} />}
+            <Tab value={4} label="TARGETS" sx={{ fontWeight: 600 }} />
+          </Tabs>
           <Box sx={{ display: 'flex', gap: 1 }}>
             <Button variant="outlined" startIcon={<Refresh />} onClick={handleManualRefresh} sx={{ boxShadow: 1, borderRadius: 2, height: 40 }} size={getResponsiveValue("small","small","medium","medium","medium")}>Refresh</Button>
             {isSupremeAdmin && <Button variant="contained" startIcon={<AdminPanelSettings />} onClick={() => setShowSupremeAdminModal(true)} sx={{ boxShadow: 1, borderRadius: 2, height: 40 }} size={getResponsiveValue("small","small","medium","medium","medium")}>Add Supreme</Button>}
@@ -756,43 +788,42 @@ const handleSaveOrganization = async () => {
         </Box>
 
         {/* Users tab */}
-        {activeTab === 0 && (
-          <Box sx={{ p: getResponsiveValue(1,2,3,3,3) }}>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 3 }}>
-              <TextField fullWidth placeholder="Search by name or email..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-                InputProps={{ startAdornment: <InputAdornment position="start"><Search /></InputAdornment> }}
-                size={getResponsiveValue("small","small","medium","medium","medium")} />
-              <FormControl sx={{ minWidth: getResponsiveValue('100%',200,200,200,200) }}>
-                <InputLabel>Filter Role</InputLabel>
-                <Select value={selectedRole} label="Filter Role" onChange={e => setSelectedRole(e.target.value)} size={getResponsiveValue("small","small","medium","medium","medium")}>
-                  <MenuItem value="all">All Roles ({totalUsers})</MenuItem>
-                  {uniqueRoles.map(r => <MenuItem key={r} value={r}>{r} ({roleStats[r]})</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Stack>
+        {activeTab === 0 && (<Box padding={getResponsiveValue(1,2,3,3,3)}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 3 }}>
+            <TextField fullWidth placeholder="Search by name or email..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+              InputProps={{ startAdornment: <InputAdornment position="start"><Search /></InputAdornment> }}
+              size={getResponsiveValue("small","small","medium","medium","medium")} />
+            <FormControl sx={{ minWidth: getResponsiveValue('100%',200,200,200,200) }}>
+              <InputLabel>Filter Role</InputLabel>
+              <Select value={selectedRole} label="Filter Role" onChange={e => setSelectedRole(e.target.value)} size={getResponsiveValue("small","small","medium","medium","medium")}>
+                <MenuItem value="all">All Roles ({totalUsers})</MenuItem>
+                {uniqueRoles.map(r => <MenuItem key={r} value={r}>{r} ({roleStats[r]})</MenuItem>)}
+              </Select>
+            </FormControl>
+          </Stack>
 
-            {filteredUsers.length === 0 ? (
-              <Box sx={{ textAlign: 'center', py: 8 }}>
-                <People sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
-                <Typography variant="h6" color="text.secondary">No users found</Typography>
+          {filteredUsers.length === 0 ? (
+            <Box sx={{ textAlign: 'center', py: 8 }}>
+              <People sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
+              <Typography variant="h6" color="text.secondary">No users found</Typography>
+            </Box>
+          ) : isMdDown ? (
+            <Box>
+              <Box sx={{ maxHeight: 500, overflowY: "auto", border: `1px solid ${theme.palette.divider}`, borderRadius: 1, p: 1 }}>
+                {paginatedUsers.map(u => <UserCard key={u.id} user={u} />)}
               </Box>
-            ) : isMdDown ? (
-              <Box>
-                <Box sx={{ maxHeight: 500, overflowY: "auto", border: `1px solid ${theme.palette.divider}`, borderRadius: 1, p: 1 }}>
-                  {paginatedUsers.map(u => <UserCard key={u.id} user={u} />)}
-                </Box>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>Showing {filteredUsers.length} of {totalUsers} users</Typography>
-              </Box>
-            ) : (
-              <Box>
-                <TableContainer sx={{ maxHeight: 500, boxShadow: 1, borderRadius: 1 }}>
-                  <Table stickyHeader size={getResponsiveValue("small","small","medium","medium","medium")}>
-                    <TableHead>
-                      <TableRow>
-                        {['User','Role','Phone','Created', ...(isSupremeAdmin ? ['Organization'] : []),'Actions'].map(h => (
-                          <TableCell key={h} align={h === 'Actions' ? 'right' : 'left'} sx={{ fontWeight: 'bold', backgroundColor: 'background.paper' }}>{h}</TableCell>
-                        ))}
-                      </TableRow>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>Showing {filteredUsers.length} of {totalUsers} users</Typography>
+            </Box>
+          ) : (
+            <Box>
+              <TableContainer sx={{ maxHeight: 500, boxShadow: 1, borderRadius: 1 }}>
+                <Table stickyHeader size={getResponsiveValue("small","small","medium","medium","medium")}>
+                  <TableHead>
+                    <TableRow>
+                      {['User','Role','Phone','Created', ...(isSupremeAdmin ? ['Organization'] : []),'Actions'].map(h => (
+                        <TableCell key={h} align={h === 'Actions' ? 'right' : 'left'} sx={{ fontWeight: 'bold', backgroundColor: 'background.paper' }}>{h}</TableCell>
+                      ))}
+                    </TableRow>
                     </TableHead>
                     <TableBody>
                       {paginatedUsers.map(user => (
@@ -827,204 +858,394 @@ const handleSaveOrganization = async () => {
                 </TableContainer>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>Showing {filteredUsers.length} of {totalUsers} users</Typography>
               </Box>
-            )}
-          </Box>
-        )}
+          )}
+        </Box>)}
 
         {/* Roles tab */}
-        {activeTab === 1 && (
-          <Box sx={{ p: getResponsiveValue(1,2,3,3,3) }}>
-            <Alert severity="info" sx={{ mb: 3, boxShadow: 1, borderRadius: 2 }}>
-              <AlertTitle>Role Distribution</AlertTitle>
-              {uniqueRoles.length} unique roles in this organization
-            </Alert>
-            <Grid container spacing={cardSpacing}>
-              {uniqueRoles.map((role, i) => (
-                <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={role}>
-                  <Card sx={cardStyles}>
-                    <CardContent>
-                      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                        <Avatar sx={{ bgcolor: roleCardColors[i % roleCardColors.length], width: 48, height: 48, boxShadow: 2 }}>{getRoleIcon(role)}</Avatar>
-                        <Box>
-                          <Typography variant="h6" fontWeight="bold">{getRoleDisplay(role)}</Typography>
-                          <Typography variant="body2" color="text.secondary">{roleStats[role]} {roleStats[role] === 1 ? 'person' : 'people'}</Typography>
-                        </Box>
-                      </Stack>
-                      <Typography variant="body2" color="text.secondary">
-                        {role === 'admin' && 'Full system access'}
-                        {role === 'leader' && 'Group leaders managing cells'}
-                        {role === 'leaderAt12' && 'Leaders at 12 level'}
-                        {role === 'user' && 'Regular members'}
-                        {role === 'registrant' && 'Event check-in volunteers'}
-                        {!['admin','leader','leaderAt12','user','registrant'].includes(role) && `${role} role`}
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-              ))}
-            </Grid>
-          </Box>
-        )}
+        {activeTab === 1 && (<Box padding={getResponsiveValue(1,2,3,3,3)}>
+          <Alert severity="info" sx={{ mb: 3, boxShadow: 1, borderRadius: 2 }}>
+            <AlertTitle>{uniqueRoles.length} unique roles in this organization</AlertTitle>
+          </Alert>
+          <Grid container spacing={cardSpacing}>
+            {uniqueRoles.map((role, i) => (
+              <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={role}>
+                <Card sx={cardStyles}>
+                  <CardContent>
+                    <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+                      <Avatar sx={{ bgcolor: roleCardColors[i % roleCardColors.length], width: 48, height: 48, boxShadow: 2 }}>{getRoleIcon(role)}</Avatar>
+                      <Box>
+                        <Typography variant="h6" fontWeight="bold">{getRoleDisplay(role)}</Typography>
+                        <Typography variant="body2" color="text.secondary">{roleStats[role]} {roleStats[role] === 1 ? 'person' : 'people'}</Typography>
+                      </Box>
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary">
+                      {role === 'admin' && 'Full system access'}
+                      {role === 'leader' && 'Group leaders managing cells'}
+                      {role === 'leaderAt12' && 'Leaders at 12 level'}
+                      {role === 'user' && 'Regular members'}
+                      {role === 'registrant' && 'Event check-in volunteers'}
+                      {!['admin','leader','leaderAt12','user','registrant'].includes(role) && `${role} role`}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
+        </Box>)}
 
         {/* Activity tab */}
-        {activeTab === 2 && (
-          <Box sx={{ p: getResponsiveValue(1,2,3,3,3) }}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-              <Typography variant="h6" fontWeight="bold">Recent Activity</Typography>
-              <Chip icon={<History />} label={`${activityLog.length} events`} size="small" variant="outlined" />
-            </Stack>
-            {activityLog.length === 0 ? (
-              <Box sx={{ textAlign: 'center', py: 8 }}>
-                <History sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
-                <Typography variant="h6" color="text.secondary">No activity yet</Typography>
-              </Box>
-            ) : (
-              <Box sx={{ maxHeight: 500, overflowY: "auto", border: `1px solid ${theme.palette.divider}`, borderRadius: 1, p: 1 }}>
-                <List>
-                  {activityLog.map((log, idx) => (
-                    <React.Fragment key={log.id}>
-                      <ListItem sx={{ py: 2 }}>
-                        <ListItemText
-                          primary={<Typography variant="body1" fontWeight="medium">{log.details}</Typography>}
-                          secondary={<Typography variant="body2" color="text.secondary">{log.action} • {new Date(log.timestamp).toLocaleString()} • {log.user}</Typography>}
-                        />
-                      </ListItem>
-                      {idx < activityLog.length - 1 && <Divider />}
-                    </React.Fragment>
-                  ))}
-                </List>
-              </Box>
-            )}
-          </Box>
-        )}
+        {activeTab === 2 && (<Box padding={getResponsiveValue(1,2,3,3,3)}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+            <Typography variant="h6" fontWeight="bold">Recent Activity</Typography>
+            <Chip icon={<History />} label={`${activityLog.length} events`} size="small" variant="outlined" />
+          </Stack>
+          {activityLog.length === 0 ? (
+            <Box sx={{ textAlign: 'center', py: 8 }}>
+              <History sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
+              <Typography variant="h6" color="text.secondary">No activity yet</Typography>
+            </Box>
+          ) : (
+            <Box sx={{ maxHeight: 500, overflowY: "auto", border: `1px solid ${theme.palette.divider}`, borderRadius: 1, p: 1 }}>
+              <List>
+                {activityLog.map((log, idx) => (
+                  <React.Fragment key={log.id}>
+                    <ListItem sx={{ py: 2 }}>
+                      <ListItemText
+                        primary={<Typography variant="body1" fontWeight="medium">{log.details}</Typography>}
+                        secondary={<Typography variant="body2" color="text.secondary">{log.action} • {new Date(log.timestamp).toLocaleString()} • {log.user}</Typography>}
+                      />
+                    </ListItem>
+                    {idx < activityLog.length - 1 && <Divider />}
+                  </React.Fragment>
+                ))}
+              </List>
+            </Box>
+          )}
+        </Box>)}
 
         {/* Organizations tab (super admin only) */}
-        {activeTab === 3 && isSupremeAdmin && orgTabContent()}
-      </Paper>
-
-      {/* Modals */}
-      <NewUserModal open={showAddUserModal} onClose={() => setShowAddUserModal(false)} onUserCreated={handleCreateUser} loading={creatingUser} />
-
-      {/* Supreme admin modal */}
-      <Dialog open={showSupremeAdminModal} onClose={() => !addingSupremeAdmin && setShowSupremeAdminModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
-        <DialogTitle><Typography variant="h6" fontWeight="bold">Add Supreme Admin</Typography></DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <TextField fullWidth label="User Email" type="email" value={supremeAdminEmail} onChange={e => { setSupremeAdminEmail(e.target.value); setSupremeAdminError(''); }} error={!!supremeAdminError} helperText={supremeAdminError} disabled={addingSupremeAdmin} autoFocus />
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ p: 2, gap: 1 }}>
-          <Button onClick={() => { setShowSupremeAdminModal(false); setSupremeAdminEmail(''); setSupremeAdminError(''); }} variant="outlined" disabled={addingSupremeAdmin}>Cancel</Button>
-          <Button variant="contained" onClick={handleAddSupremeAdmin} disabled={addingSupremeAdmin || !supremeAdminEmail.trim()} startIcon={addingSupremeAdmin ? <CircularProgress size={20} /> : <AdminPanelSettings />}>
-            {addingSupremeAdmin ? 'Adding...' : 'Add'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Org modal */}
-      <Dialog open={showOrgModal} onClose={() => !savingOrg && setShowOrgModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
-        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h6" fontWeight="bold">{editingOrg ? 'Edit Organization' : 'New Organization'}</Typography>
-          <IconButton onClick={() => setShowOrgModal(false)} size="small" disabled={savingOrg}><CloseIcon /></IconButton>
-        </DialogTitle>
-        <Divider />
-        <DialogContent>
-          <Stack spacing={3} sx={{ mt: 1 }}>
-            <TextField label="Organization Name *" value={orgFormData.name} onChange={e => setOrgFormData({ ...orgFormData, name: e.target.value })} error={!!orgFormErrors.name} helperText={orgFormErrors.name} fullWidth required disabled={savingOrg} />
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ p: 3, gap: 1 }}>
-          {editingOrg && (
-            <Button variant="outlined" color="error" onClick={() => { const id = editingOrg.id || editingOrg._id; handleDeleteOrganization(id, editingOrg.name); }} disabled={savingOrg || deletingOrg} startIcon={deletingOrg ? <CircularProgress size={20} /> : <Delete />} sx={{ mr: 'auto' }}>
-              {deletingOrg ? 'Deleting...' : 'Delete'}
-            </Button>
-          )}
-          <Button variant="outlined" onClick={() => setShowOrgModal(false)} disabled={savingOrg}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveOrganization} disabled={savingOrg} startIcon={savingOrg ? <CircularProgress size={20} /> : <CheckIcon />}>{savingOrg ? 'Saving...' : 'Save'}</Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* FAB */}
-      <Fab color={isSupremeAdmin ? "primary" : "secondary"} sx={{ position: 'fixed', bottom: 16, right: 16, boxShadow: 4 }} onClick={isSupremeAdmin ? handleOpenCreateOrg : () => setShowAddUserModal(true)}>
-        <AddIcon />
-      </Fab>
-
-      {/* Role change modal */}
-      <Dialog open={showRoleModal} onClose={() => !updatingRole && setShowRoleModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
-        <DialogTitle><Typography variant="h6" fontWeight="bold">Change User Role</Typography></DialogTitle>
-        <DialogContent>
-          {selectedUser && (
-            <>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>User: <strong>{selectedUser.name}</strong></Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Current: <Chip label={selectedUser.role} size="small" /></Typography>
-              {selectedOrg?.trim().toLowerCase() === 'active church' ? (
-                <>
-                  <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 2 }}>Select New Role:</Typography>
-                  <FormControl fullWidth>
-                    <Select value={selectedUser.role} onChange={e => handleRoleChange(selectedUser.id, e.target.value)} disabled={updatingRole}>
-                      {['admin','leader','leaderAt12','user','registrant'].map(r => <MenuItem key={r} value={r}>{getRoleDisplay(r)}</MenuItem>)}
-                    </Select>
-                  </FormControl>
-                </>
-              ) : (
-                <>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="subtitle2" fontWeight="bold">Available Roles:</Typography>
-                    <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => { setShowRoleModal(false); setShowCreateRoleModal(true); }} sx={{ borderRadius: 2 }}>ADD ROLE</Button>
+        {activeTab === 3 && isSupremeAdmin && (() => {
+          const orgTabContent = () => (
+            <Box padding={getResponsiveValue(1,2,3,3,3)}>
+              <Typography variant="h6" fontWeight="bold" sx={{ mb: 2 }}>Organizations</Typography>
+              <Grid container spacing={cardSpacing}>
+                {organizations.map(org => (
+                  <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={org.id || org._id}>
+                    <Card sx={cardStyles}>
+                      <CardContent>
+                        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+                          <Avatar sx={{ bgcolor: '#1976d2', width: 48, height: 48, boxShadow: 2 }}><BusinessIcon /></Avatar>
+                          <Box>
+                            <Typography variant="h6" fontWeight="bold">{org.name}</Typography>
+                            <Typography variant="body2" color="text.secondary">{org.email}</Typography>
+                            {org.phone && (
+                              <Typography variant="body2" color="text.secondary">
+                                <PhoneIcon /> {org.phone}
+                              </Typography>
+                            )}
+                          </Box>
+                        </Stack>
+                        {isSupremeAdmin && (
+                          <Box sx={{ display: "flex", justifyContent: "flex-end", my: 1 }}>
+                            <Button variant="outlined" size="small" startIcon={<EditIcon />} sx={{ mr: 1, borderRadius: 1 }} onClick={() => handleOpenEditOrg(org)}>Edit</Button>
+                            <Button variant="outlined" size="small" startIcon={<Delete />} sx={{ ml: 1, borderRadius: 1, color: "error.main"}} onClick={() => { if (window.confirm("Delete " + org.name + "? This cannot be undone.")) { handleDeleteOrganization(org.id || org._id, org.name); }}}>Delete</Button>
+                          </Box>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                ))}
+                {organizations.length === 0 && (
+                  <Grid size={12}>
+                    <Box sx={{ textAlign: "center", py: 8 }}>
+                      <BusinessIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} /> <Typography variant="h6" color="text.secondary">No organizations found</Typography>
+                    </Box>
+                  </Grid>
+                )}
+                {isSupremeAdmin && (
+                  <Box sx={{ mt: 3 }}>
+                    <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreateOrg} sx={{ boxShadow: 1, borderRadius: 2, width: "100%" }}>
+                      <Typography variant="body1">Create New Organization</Typography>
+                    </Button>
                   </Box>
-                  <Stack spacing={1} sx={{ maxHeight: 400, overflowY: 'auto', pr: 1 }}>
-                    {rolesForModal.map(role => <RoleOption key={role.name} role={role} onSelect={() => handleRoleChange(selectedUser.id, role.name)} />)}
-                  </Stack>
-                </>
-              )}
-            </>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setShowRoleModal(false)} disabled={updatingRole} variant="outlined">CANCEL</Button>
-        </DialogActions>
-      </Dialog>
+                )}
+              </Grid>
+            </Box>
+          );
+          return orgTabContent();
+        })()}
 
-      {/* Create role modal */}
-      <Dialog open={showCreateRoleModal} onClose={() => !creatingRole && setShowCreateRoleModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
-        <DialogTitle><Typography variant="h6" fontWeight="bold">Create New Role</Typography></DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <TextField fullWidth label="Role Name" value={newRoleName} onChange={e => { setNewRoleName(e.target.value); setRoleCreateError(''); }} placeholder="e.g., Welcome Team, Sound Tech" error={!!roleCreateError} helperText={roleCreateError} disabled={creatingRole} autoFocus />
-            <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
-              <Typography variant="caption" color="text.secondary" display="block" gutterBottom>Preview:</Typography>
-              <Chip label={newRoleName.trim() || 'New Role'} color={getRoleColor(newRoleName)} icon={getRoleIcon(newRoleName)} />
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-                Stored as: <strong>{newRoleName.trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'') || 'new_role'}</strong>
+        {activeTab === 4 && (isAdmin || isSupremeAdmin) && (<Box padding={getResponsiveValue(1, 2, 3, 3, 3)} sx={{ pt: 3 }}>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ md: 'center' }} sx={{ mb: 3 }}>
+            <Box>
+              <Typography variant="h6" fontWeight="bold">Targets</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Set weekly targets for people in {selectedOrg}.
               </Typography>
             </Box>
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ p: 2, gap: 1 }}>
-          <Button onClick={() => { setShowCreateRoleModal(false); setNewRoleName(''); setRoleCreateError(''); }} variant="outlined" disabled={creatingRole}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreateRole} disabled={creatingRole || !newRoleName.trim()} startIcon={<CheckIcon />}>Create Role</Button>
-        </DialogActions>
-      </Dialog>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+              <FormControl size="small" sx={{ minWidth: 150 }}>
+                <InputLabel>Week</InputLabel>
+                <Select label="Week" value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)}>
+                  {weekOptions.map(w => <MenuItem key={w} value={w}>{w}{w === getISOWeekId() ? ' (this week)' : ''}</MenuItem>)}
+                </Select>
+              </FormControl>
+              <Button variant="contained" startIcon={<AddIcon />} onClick={handleSetTargetManual}>Service target</Button>
+              <Button variant="contained" color="secondary" startIcon={<AddIcon />} onClick={handleSetTwelveTasksTargetManual}>Twelve-tasks target</Button>
+              <Button variant="outlined" onClick={handleCopyLastWeekTargets} disabled={isLoadingTargets}>Copy last week</Button>
+            </Stack>
+          </Stack>
 
-      {/* Delete confirm modal */}
-      <Dialog open={showDeleteConfirm} onClose={() => !deletingUser && setShowDeleteConfirm(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
-        <DialogTitle><Typography variant="h6" fontWeight="bold" color="error">Delete User</Typography></DialogTitle>
-        <DialogContent>
-          {selectedUser && (
-            <>
-              <Typography>Are you sure you want to delete <strong>{selectedUser.name}</strong>?</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Email: {selectedUser.email}</Typography>
-              {selectedUser.role === 'admin' && !isSupremeAdmin && <Alert severity="warning" sx={{ mt: 2 }}>You cannot delete another admin user.</Alert>}
-            </>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ p: 2, gap: 1 }}>
-          <Button onClick={() => setShowDeleteConfirm(false)} disabled={deletingUser} variant="outlined">Cancel</Button>
-          <Button variant="contained" color="error" onClick={handleDeleteUser} disabled={deletingUser || (selectedUser?.role === 'admin' && !isSupremeAdmin)} startIcon={deletingUser ? <CircularProgress size={16} /> : <Delete />}>
-            {deletingUser ? 'Deleting...' : 'Delete User'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+          <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Service targets</Typography>
+          <TableContainer sx={{ mb: 4, borderRadius: 1, boxShadow: 1 }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Person</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Email</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>Target</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>Actual</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {isLoadingTargets ? (
+                  <TableRow><TableCell colSpan={4} align="center"><CircularProgress size={20} /></TableCell></TableRow>
+                ) : serviceTargets.length === 0 ? (
+                  <TableRow><TableCell colSpan={4} align="center" sx={{ color: 'text.secondary' }}>No service targets for {selectedWeek}</TableCell></TableRow>
+                ) : serviceTargets.map((t, i) => (
+                  <TableRow key={t.id || t._id || i} hover>
+                    <TableCell>{t.leader_name || personById[t.person_id]?.name || (t.person_id ? t.person_id : 'Leader default')}</TableCell>
+                    <TableCell>{t.email || personById[t.person_id]?.email || '—'}</TableCell>
+                    <TableCell align="right">{t.target_count ?? '—'}</TableCell>
+                    <TableCell align="right">{t.actual_count ?? 0}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Twelve-tasks targets</Typography>
+          <TableContainer sx={{ borderRadius: 1, boxShadow: 1 }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Person</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>Target</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>Actual</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Type</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {isLoadingTwelveTasks ? (
+                  <TableRow><TableCell colSpan={4} align="center"><CircularProgress size={20} /></TableCell></TableRow>
+                ) : twelveTasksTargets.length === 0 ? (
+                  <TableRow><TableCell colSpan={4} align="center" sx={{ color: 'text.secondary' }}>No twelve-tasks targets for {selectedWeek}</TableCell></TableRow>
+                ) : twelveTasksTargets.map((t, i) => (
+                  <TableRow key={t.id || t._id || i} hover>
+                    <TableCell>{personById[t.person_id]?.name || t.leader_name || (t.person_id ? t.person_id : 'Leader default')}</TableCell>
+                    <TableCell align="right">{t.target ?? '—'}</TableCell>
+                    <TableCell align="right">{t.actual ?? 0}</TableCell>
+                    <TableCell>{t.is_default ? <Chip size="small" label="Default" /> : <Chip size="small" variant="outlined" label="Custom" />}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>)}
+      </Paper>
+
+        {/* Modals */}
+        <NewUserModal open={showAddUserModal} onClose={() => setShowAddUserModal(false)} onUserCreated={handleCreateUser} loading={creatingUser} />
+
+        {/* Supreme admin modal */}
+        <Dialog open={showSupremeAdminModal} onClose={() => !addingSupremeAdmin && setShowSupremeAdminModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+          <DialogTitle><Typography variant="h6" fontWeight="bold">Add Supreme Admin</Typography></DialogTitle>
+          <DialogContent>
+            <Box sx={{ mt: 2 }}>
+              <TextField fullWidth label="User Email" type="email" value={supremeAdminEmail} onChange={e => { setSupremeAdminEmail(e.target.value); setSupremeAdminError(''); }} error={!!supremeAdminError} helperText={supremeAdminError} disabled={addingSupremeAdmin} autoFocus />
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ p: 2, gap: 1 }}>
+            <Button onClick={() => { setShowSupremeAdminModal(false); setSupremeAdminEmail(''); setSupremeAdminError(''); }} variant="outlined" disabled={addingSupremeAdmin}>Cancel</Button>
+            <Button variant="contained" onClick={handleAddSupremeAdmin} disabled={addingSupremeAdmin || !supremeAdminEmail.trim()} startIcon={addingSupremeAdmin ? <CircularProgress size={20} /> : <AdminPanelSettings />}>
+              {addingSupremeAdmin ? 'Adding...' : 'Add'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Org modal */}
+        <Dialog open={showOrgModal} onClose={() => !savingOrg && setShowOrgModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+          <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h6" fontWeight="bold">{editingOrg ? 'Edit Organization' : 'New Organization'}</Typography>
+            <IconButton onClick={() => setShowOrgModal(false)} size="small" disabled={savingOrg}><CloseIcon /></IconButton>
+          </DialogTitle>
+          <Divider />
+          <DialogContent>
+            <Stack spacing={3} sx={{ mt: 1 }}>
+              <TextField label="Organization Name *" value={orgFormData.name} onChange={e => setOrgFormData({ ...orgFormData, name: e.target.value })} error={!!orgFormErrors.name} helperText={orgFormErrors.name} fullWidth required disabled={savingOrg} />
+            </Stack>
+          </DialogContent>
+          <DialogActions sx={{ p: 3, gap: 1 }}>
+            {editingOrg && (
+              <Button variant="outlined" color="error" onClick={() => { const id = editingOrg.id || editingOrg._id; handleDeleteOrganization(id, editingOrg.name); }} disabled={savingOrg || deletingOrg} startIcon={deletingOrg ? <CircularProgress size={20} /> : <Delete />} sx={{ mr: 'auto' }}>
+                Deleting...
+              </Button>
+            )}
+            <Button variant="outlined" onClick={() => setShowOrgModal(false)} disabled={savingOrg}>Cancel</Button>
+            <Button variant="contained" onClick={handleSaveOrganization} disabled={savingOrg} startIcon={savingOrg ? <CircularProgress size={20} /> : <CheckIcon />}>{savingOrg ? 'Saving...' : 'Save'}</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Set service target */}
+        <Dialog open={showSetTargetModal} onClose={() => !savingTarget && setShowSetTargetModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+          <DialogTitle><Typography variant="h6" fontWeight="bold">Set service target · {selectedWeek}</Typography></DialogTitle>
+          <DialogContent>
+            <Stack spacing={3} sx={{ mt: 1 }}>
+              <Autocomplete
+                options={users}
+                value={serviceForm.person}
+                onChange={(_, v) => setServiceForm(f => ({ ...f, person: v }))}
+                getOptionLabel={u => `${u.name || ''}${u.email ? ` (${u.email})` : ''}`}
+                isOptionEqualToValue={(a, b) => a.id === b.id}
+                renderInput={params => <TextField {...params} label="Person" />}
+              />
+              <TextField label="Target (services this week)" type="number" inputProps={{ min: 0 }} value={serviceForm.count}
+                onChange={e => setServiceForm(f => ({ ...f, count: e.target.value }))} fullWidth />
+            </Stack>
+          </DialogContent>
+          <DialogActions sx={{ p: 2, gap: 1 }}>
+            <Button onClick={() => setShowSetTargetModal(false)} disabled={savingTarget} variant="outlined">Cancel</Button>
+            <Button onClick={handleSaveServiceTarget} disabled={savingTarget || !serviceForm.person || serviceForm.count === ''} variant="contained"
+              startIcon={savingTarget ? <CircularProgress size={20} /> : <CheckIcon />}>Save</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Set twelve-tasks target */}
+        <Dialog open={showSetTwelveTasksModal} onClose={() => !savingTarget && setShowSetTwelveTasksModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+          <DialogTitle><Typography variant="h6" fontWeight="bold">Set twelve-tasks target · {selectedWeek}</Typography></DialogTitle>
+          <DialogContent>
+            <Stack spacing={3} sx={{ mt: 1 }}>
+              <Autocomplete
+                options={users}
+                value={twelveForm.person}
+                onChange={(_, v) => setTwelveForm(f => ({ ...f, person: v }))}
+                getOptionLabel={u => `${u.name || ''}${u.email ? ` (${u.email})` : ''}`}
+                isOptionEqualToValue={(a, b) => a.id === b.id}
+                renderInput={params => <TextField {...params} label="Person" />}
+              />
+              <TextField label="Target (tasks this week)" type="number" inputProps={{ min: 0 }} value={twelveForm.count}
+                onChange={e => setTwelveForm(f => ({ ...f, count: e.target.value }))} fullWidth />
+            </Stack>
+          </DialogContent>
+          <DialogActions sx={{ p: 2, gap: 1 }}>
+            <Button onClick={() => setShowSetTwelveTasksModal(false)} disabled={savingTarget} variant="outlined">Cancel</Button>
+            <Button onClick={handleSaveTwelveTasksTarget} disabled={savingTarget || !twelveForm.person || twelveForm.count === ''} variant="contained"
+              startIcon={savingTarget ? <CircularProgress size={20} /> : <CheckIcon />}>Save</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* FAB */}
+        <Fab color={isSupremeAdmin ? "primary" : "secondary"} sx={{ position: 'fixed', bottom: 16, right: 16, boxShadow: 4 }} onClick={isSupremeAdmin ? handleOpenCreateOrg : () => setShowAddUserModal(true)}>
+          <AddIcon />
+        </Fab>
+
+        {/* Role change modal */}
+        <Dialog open={showRoleModal} onClose={() => !updatingRole && setShowRoleModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+          <DialogTitle><Typography variant="h6" fontWeight="bold">Change User Role</Typography></DialogTitle>
+          <DialogContent>
+            {selectedUser && (
+              <>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>User: <strong>{selectedUser.name}</strong></Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Current: <Chip label={selectedUser.role} size="small" /></Typography>
+                {selectedOrg?.trim().toLowerCase() === 'active church' ? (
+                  <>
+                    <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 2 }}>Select New Role:</Typography>
+                    <FormControl fullWidth>
+                      <Select value={selectedUser.role} onChange={e => handleRoleChange(selectedUser.id, e.target.value)} disabled={updatingRole}>
+                        {['admin','leader','leaderAt12','user','registrant'].map(r => <MenuItem key={r} value={r}>{getRoleDisplay(r)}</MenuItem>)}
+                      </Select>
+                    </FormControl>
+                  </>
+                  )
+                  : (
+                    <>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="subtitle2" fontWeight="bold">Available Roles:</Typography>
+                        <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => { setShowRoleModal(false); setShowCreateRoleModal(true); }} sx={{ borderRadius: 2 }}>ADD ROLE</Button>
+                      </Box>
+                      <Stack spacing={1} sx={{ maxHeight: 400, overflowY: 'auto', pr: 1 }}>
+                        {rolesForModal.map(role => <RoleOption key={role.name} role={role} isSelected={selectedUser?.role === role.name} onSelect={() => handleRoleChange(selectedUser.id, role.name)} />)}
+                      </Stack>
+                    </>
+                  )}
+                </>
+              )}
+            </DialogContent>
+            <DialogActions sx={{ p: 2 }}>
+              <Button onClick={() => setShowRoleModal(false)} disabled={updatingRole} variant="outlined">CANCEL</Button>
+            </DialogActions>
+          </Dialog>
+
+        {/* Create role modal */}
+        <Dialog open={showCreateRoleModal} onClose={() => !creatingRole && setShowCreateRoleModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+          <DialogTitle><Typography variant="h6" fontWeight="bold">Create New Role</Typography></DialogTitle>
+          <DialogContent>
+            <Box sx={{ mt: 2 }}>
+              <TextField fullWidth label="Role Name" value={newRoleName} onChange={e => { setNewRoleName(e.target.value); setRoleCreateError(''); }} placeholder="e.g., Welcome Team, Sound Tech" error={!!roleCreateError} helperText={roleCreateError} disabled={creatingRole} autoFocus />
+              <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
+                <Typography variant="caption" color="text.secondary" display="block" gutterBottom>Preview:</Typography>
+                <Chip label={newRoleName.trim() || 'New Role'} color={getRoleColor(newRoleName)} icon={getRoleIcon(newRoleName)} />
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                  Stored as: <strong>{newRoleName.trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'') || 'new_role'}</strong>
+                </Typography>
+              </Box>
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ p: 2, gap: 1 }}>
+            <Button onClick={() => { setShowCreateRoleModal(false); setNewRoleName(''); setRoleCreateError(''); }} variant="outlined" disabled={creatingRole}>Cancel</Button>
+            <Button variant="contained" onClick={handleCreateRole} disabled={creatingRole || !newRoleName.trim()} startIcon={<CheckIcon />}>Create Role</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Delete confirm modal */}
+        <Dialog open={showDeleteConfirm} onClose={() => !deletingUser && setShowDeleteConfirm(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+          <DialogTitle><Typography variant="h6" fontWeight="bold" color="error">Delete User</Typography></DialogTitle>
+          <DialogContent>
+            {selectedUser && (
+              <>
+                <Typography>Are you sure you want to delete <strong>{selectedUser.name}</strong>?</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Email: {selectedUser.email}</Typography>
+                {selectedUser.role === 'admin' && !isSupremeAdmin && <Alert severity="warning" sx={{ mt: 2 }}>You cannot delete another admin user.</Alert>}
+              </>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ p: 2, gap: 1 }}>
+            <Button onClick={() => setShowDeleteConfirm(false)} disabled={deletingUser} variant="outlined">Cancel</Button>
+            <Button variant="contained" color="error" onClick={handleDeleteUser} disabled={deletingUser || (selectedUser?.role === 'admin' && !isSupremeAdmin)} startIcon={deletingUser ? <CircularProgress size={16} /> : <Delete />}>
+              {deletingUser ? 'Deleting...' : 'Delete User'}
+            </Button>
+          </DialogActions>
+        </Dialog>
     </Box>
   );
 }
+
+// RoleOption component
+const RoleOption = ({ role, onSelect, isSelected }) => (
+  <Paper variant="outlined" sx={{
+    p: 2, cursor: 'pointer',
+    border: isSelected ? 2 : 1,
+    borderColor: isSelected ? 'primary.main' : 'divider',
+    borderRadius: 1, transition: 'all 0.2s',
+    '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover', transform: 'translateY(-1px)', boxShadow: 1 }
+  }} onClick={onSelect}>
+    <Stack direction="row" justifyContent="space-between" alignItems="center">
+      <Stack direction="row" spacing={1} alignItems="center">
+        <Avatar sx={{ width: 24, height: 24, bgcolor: role.color || '#9c27b0' }}><PersonIcon /></Avatar>
+        <Typography variant="body1" fontWeight="medium">{role.name}</Typography>
+        {!role.is_system && <Chip label="custom" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.625rem' }} />}
+      </Stack>
+      <Typography variant="body2" color="text.secondary">{role.count} {role.count === 1 ? 'person' : 'people'}</Typography>
+    </Stack>
+  </Paper>
+);

@@ -232,6 +232,11 @@ export default function Profile() {
     currentPassword: "",
     newPassword: "",
     confirmPassword: "",
+    week_identifier: "",
+    service_target: "",
+    twelve_tasks_target: "",
+    service_actual: "",
+    twelve_tasks_actual: "",
   });
 
   const [originalForm, setOriginalForm] = useState({ ...form });
@@ -246,6 +251,8 @@ export default function Profile() {
     message: "",
     severity: "success",
   });
+
+  const [savingTargets, setSavingTargets] = useState(false);
 
   const hasFetchedProfile = useRef(false);
 
@@ -714,6 +721,77 @@ if (profile?.leaders) {
 
   if (loadingProfile) return <ProfileSkeleton />;
 
+  const handleSaveTargets = async () => {
+    if (!form.week_identifier || !form.service_target || form.service_target === '') {
+      setSnackbar({
+        open: true,
+        message: 'Please fill in week identifier and service target',
+        severity: 'error',
+      });
+      return;
+    }
+    setSavingTargets(true);
+    try {
+      // Set service target
+      await authFetch(`${BACKEND_URL}/targets/service`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leader_name: form.name || userProfile?.name || '',
+          target_count: parseInt(form.service_target),
+          email: form.email || userProfile?.email || '',
+          week_identifier: form.week_identifier,
+          person_id: '',  // Leader target (no specific person)
+          target_type: 'service',
+        }),
+      });
+
+      // Set twelve tasks target
+      await authFetch(`${BACKEND_URL}/targets/twelve-tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          person_id: '',  // Same - leader target
+          target: parseInt(form.twelve_tasks_target),
+          week_identifier: form.week_identifier,
+          organization: form.organization || userProfile?.Organization || userProfile?.organization || 'Active Church',
+          is_default: false,
+        }),
+      });
+
+      // Fetch actuals from API
+      const serviceRes = await authFetch(
+        `${BACKEND_URL}/targets/service?week=${form.week_identifier}&org=${form.organization || userProfile?.Organization || userProfile?.organization || 'Active Church'}`,
+        { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+      );
+      if (serviceRes.ok) {
+        const serviceData = await serviceRes.json();
+        // Update form with actuals
+        setForm(prev => ({
+          ...prev,
+          service_actual: serviceData.targets?.[0]?.actual_count || 0,
+          twelve_tasks_actual: serviceData.targets?.[0]?.actual || 0,
+        }));
+      }
+
+      // Show success snackbar
+      setSnackbar({
+        open: true,
+        message: 'Targets saved successfully',
+        severity: 'success',
+      });
+    } catch (e) {
+      console.error('save targets error', e);
+      setSnackbar({
+        open: true,
+        message: 'Error saving targets',
+        severity: 'error',
+      });
+    } finally {
+      setSavingTargets(false);
+    }
+  };
+
   return (
     <Box sx={{ minHeight: "100vh", bgcolor: isDark ? "#0a0a0a" : "#f8f9fa", pb: 4 }}>
       <Box sx={{
@@ -1002,6 +1080,74 @@ if (profile?.leaders) {
                   />
                 </Grid>
               </Grid>
+
+              <Box sx={{ mt: 4 }}>
+                <Typography variant="h6" sx={{ mb: 2, color: isDark ? "#cccccc" : "#666666", fontWeight: 600 }}>Targets</Typography>
+                <Grid container spacing={3}>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Week Identifier</Typography>
+                    <TextField
+                      value={form.week_identifier || ""}
+                      onChange={handleChange("week_identifier")}
+                      fullWidth
+                      sx={commonFieldSx}
+                      placeholder="e.g., 2026-W41"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Service Target</Typography>
+                    <TextField
+                      value={form.service_target || ""}
+                      onChange={handleChange("service_target")}
+                      fullWidth
+                      sx={commonFieldSx}
+                      placeholder="Service target count"
+                      type="number"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Twelve Tasks Target</Typography>
+                    <TextField
+                      value={form.twelve_tasks_target || ""}
+                      onChange={handleChange("twelve_tasks_target")}
+                      fullWidth
+                      sx={commonFieldSx}
+                      placeholder="12 Tasks target count"
+                      type="number"
+                    />
+                  </Grid>
+                </Grid>
+                <Grid container spacing={3}>
+                  <Grid size={{ xs: 12 }}>
+                    <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Current Service Actual</Typography>
+                    <TextField
+                      value={form.service_actual || ""}
+                      fullWidth
+                      disabled
+                      sx={{ ...commonFieldSx, bgcolor: isDark ? "#2a2a2a" : "#f1f1f1" }}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12 }}>
+                    <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: isDark ? "#cccccc" : "#666666" }}>Current Twelve Tasks Actual</Typography>
+                    <TextField
+                      value={form.twelve_tasks_actual || ""}
+                      fullWidth
+                      disabled
+                      sx={{ ...commonFieldSx, bgcolor: isDark ? "#2a2a2a" : "#f1f1f1" }}
+                    />
+                  </Grid>
+                </Grid>
+                <Box sx={{ mt: 2, textAlign: 'center' }}>
+                  <Button
+                    variant="contained"
+                    sx={{ mb: 2, boxShadow: 1, width: '100%' }}
+                    onClick={handleSaveTargets}
+                    disabled={savingTargets || !form.week_identifier || !form.service_target || form.service_target === ''}
+                  >
+                    {savingTargets ? 'Saving...' : 'Save Targets'}
+                  </Button>
+                </Box>
+              </Box>
 
               <Box sx={{ mt: 4 }}>
                 <Accordion

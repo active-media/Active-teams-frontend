@@ -28,3 +28,4 @@ package-lock.json
 .env
 .env.*
 *yarn
+*yarn.lock

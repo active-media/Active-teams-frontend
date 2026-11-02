@@ -28,6 +28,7 @@ import MergeIcon from "@mui/icons-material/Merge";
 import EventHistory from "../components/EventHistory";
 import SaveIcon from "@mui/icons-material/Save";
 import CloseIcon from "@mui/icons-material/Close";
+import CheckIcon from "@mui/icons-material/Check";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import DownloadIcon from "@mui/icons-material/Download";
 import DeleteConfirmationModal from "../components/DeleteConfirmationModal";
@@ -1398,9 +1399,9 @@ const sortedFilteredAttendees = useMemo(() => {
           <StatsCard title="Consolidated" count={consolidationCount} icon={<MergeIcon />} color="secondary"
             onClick={() => { if (currentEventId) { setConsolidatedModalOpen(true); setConsolidatedSearch(""); setConsolidatedPage(0); } }}
             disabled={!currentEventId} />
-        </Grid>
-      </Grid>
+</Grid>
 
+      </Grid>
       {/* Controls Row */}
       <Box mb={cardSpacing}>
         <Grid container spacing={1} mb={1} alignItems="center">

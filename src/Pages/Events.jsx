@@ -1033,8 +1033,13 @@ const isValidObjectId = (id) => {
   return /^[0-9a-fA-F]{24}$/.test(id);
 };
 const Events = () => {
-  const { authFetch, logout } = React.useContext(AuthContext);
+  const { authFetch, logout, supabase } = React.useContext(AuthContext);
   const { orgConfig, configLoaded } = useOrgConfig();
+  // Auth now lives in Supabase; there is no "access_token" key in localStorage any more.
+  const getSessionToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  };
   
   // Get user from localStorage immediately (available on login)
   const currentUser = JSON.parse(localStorage.getItem("userProfile")) || {};
@@ -1642,7 +1647,7 @@ const fetchEventsFilters = (filters) => {
         }
 
         try {
-          const token = localStorage.getItem("access_token");
+          const token = await getSessionToken();
           if (!token) {
             logout();
             window.location.href = "/login";
@@ -3012,7 +3017,7 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handleDeleteType = useCallback(async () => {
     try {
-      const token = localStorage.getItem("access_token");
+      const token = await getSessionToken();
 
       if (!token) {
         toast.error("Please log in again");
@@ -3233,7 +3238,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     const checkAccess = async () => {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      const token = localStorage.getItem("access_token");
+      const token = await getSessionToken();
       const userProfile = localStorage.getItem("userProfile");
 
       if (!token || !userProfile) {
@@ -3275,7 +3280,7 @@ const getFilteredEventTypes = (allEventTypes) => {
               },
             );
 
-            const { hasCell, canAccessEvents } = response.data;
+            const { hasCell, canAccessEvents } = await response.json();
 
             if (!canAccessEvents || !hasCell) {
               toast.warning("You must have a cell to access the Events page");
@@ -3345,7 +3350,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   const handleSaveEventType = useCallback(
     async (eventTypeData, eventTypeId = null) => {
       try {
-        const token = localStorage.getItem("access_token");
+        const token = await getSessionToken();
         if (!token) {
           throw new Error("No authentication token found");
         }
