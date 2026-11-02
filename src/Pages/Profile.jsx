@@ -9,6 +9,7 @@ import getCroppedImg from "../components/cropImageHelper";
 import { UserContext } from "../contexts/UserContext.jsx";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import { CameraAlt, ExpandMore } from "@mui/icons-material";
+import { isPasswordValid, PasswordRequirements } from "../components/PasswordField";
 
 /* Add to index.html for the new look (falls back to system fonts if skipped):
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet"> */
@@ -405,7 +406,7 @@ export default function Profile() {
 
     if (passwordTouched) {
       if (!form.currentPassword.trim()) n.currentPassword = "Enter your current password";
-      if (form.newPassword && form.newPassword.length < 8) n.newPassword = "Use at least 8 characters";
+      if (form.newPassword && !isPasswordValid(form.newPassword)) n.newPassword = "Password does not meet all requirements";
       if (form.newPassword !== form.confirmPassword) n.confirmPassword = "Passwords don't match";
       if (form.newPassword && !form.confirmPassword) n.confirmPassword = "Confirm your new password";
     }
@@ -571,7 +572,7 @@ export default function Profile() {
     </Grid>
   );
 
-  const passwordField = (label, key, visKey, size, autoComplete) => (
+  const passwordField = (label, key, visKey, size, autoComplete, showRequirements = false) => (
     <Grid size={size} key={key}>
       <Typography component="label" htmlFor={`f-${key}`} sx={{ ...labelSx, display: "block" }}>{label}</Typography>
       <TextField
@@ -600,6 +601,9 @@ export default function Profile() {
           },
         }}
       />
+      {showRequirements && form[key] && (
+        <PasswordRequirements value={form[key]} visible />
+      )}
     </Grid>
   );
 
@@ -779,7 +783,7 @@ export default function Profile() {
               <Collapse in={passwordOpen} unmountOnExit={false}>
                 <Grid container spacing={2} sx={{ p: 2, pt: 0.5 }}>
                   {passwordField("Current password", "currentPassword", "current", { xs: 12 }, "current-password")}
-                  {passwordField("New password", "newPassword", "new", { xs: 12, sm: 6 }, "new-password")}
+                  {passwordField("New password", "newPassword", "new", { xs: 12, sm: 6 }, "new-password", true)}
                   {passwordField("Confirm new password", "confirmPassword", "confirm", { xs: 12, sm: 6 }, "new-password")}
                 </Grid>
               </Collapse>

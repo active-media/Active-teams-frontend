@@ -14,6 +14,7 @@ import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import darkLogo from "../assets/active-teams.png";
 import { AuthContext } from "../contexts/AuthContext";
+import PasswordField, { isPasswordValid } from "./PasswordField";
 
 const ResetPassword = ({ mode }) => {
   const [searchParams] = useSearchParams();
@@ -24,7 +25,6 @@ const ResetPassword = ({ mode }) => {
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -47,8 +47,8 @@ const ResetPassword = ({ mode }) => {
       setError("Invalid or expired reset token.");
       return;
     }
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters long.");
+    if (!isPasswordValid(password)) {
+      setError("Password does not meet all requirements.");
       return;
     }
     if (password !== confirm) {
@@ -132,14 +132,13 @@ const ResetPassword = ({ mode }) => {
         )}
 
         {/* New Password */}
-        <TextField
+        <PasswordField
           label="New Password"
-          type={showPassword ? "text" : "password"}
           variant="outlined"
           fullWidth
           required
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={setPassword}
           sx={{
             mb: 2,
             "& .MuiOutlinedInput-root": {
@@ -151,16 +150,6 @@ const ResetPassword = ({ mode }) => {
             "& .MuiInputLabel-root": {
               color: theme.palette.text.secondary,
             },
-          }}
-          InputProps={{
-            endAdornment: (
-              <IconButton
-                onClick={() => setShowPassword((prev) => !prev)}
-                edge="end"
-              >
-                {showPassword ? <VisibilityOff /> : <Visibility />}
-              </IconButton>
-            ),
           }}
         />
 
