@@ -255,9 +255,9 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
       </TableCell>
       <TableCell>{item.email || item.person_email || '—'}</TableCell>
       <TableCell>{item.phone || item.person_phone || '—'}</TableCell>
-      <TableCell>{item.leader1 || '—'}</TableCell>
-      <TableCell>{item.leader12 || '—'}</TableCell>
-      <TableCell>{item.leader144 || '—'}</TableCell>
+      <TableCell>{item.leader_at_1 || '—'}</TableCell>
+      <TableCell>{item.leader_at_12 || '—'}</TableCell>
+      <TableCell>{item.leader_at_144 || '—'}</TableCell>
       {activeTab === 2 && (
         <>
           <TableCell>{item.decision_type || item.consolidation_type || '—'}</TableCell>
