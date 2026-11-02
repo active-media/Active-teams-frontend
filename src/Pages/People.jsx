@@ -682,6 +682,7 @@ export const PeopleSection = () => {
   // ── Initialise from cache immediately so the page is never blank ──────────
   const hasCachedData = !!(
     window.globalPeopleCache &&
+    window.globalPeopleCache.length > 0 &&
     window.globalCacheTimestamp &&
     Date.now() - window.globalCacheTimestamp < CACHE_DURATION &&
     window.globalPeopleCacheOrg ===
@@ -735,6 +736,7 @@ export const PeopleSection = () => {
   const ITEMS_PER_PAGE = 100;
 
   const isFetchingRef = useRef(false);
+  const fetchGenerationRef = useRef(0);
   const searchDebounceRef = useRef(null);
   const peopleFetchPromiseRef = useRef(null);
   const prevOrgRef = useRef(currentUserOrg);
@@ -758,6 +760,7 @@ export const PeopleSection = () => {
       if (
         !forceRefresh &&
         window.globalPeopleCache &&
+        window.globalPeopleCache.length > 0 &&
         window.globalCacheTimestamp &&
         now - window.globalCacheTimestamp < CACHE_DURATION
       ) {
@@ -785,6 +788,7 @@ export const PeopleSection = () => {
       }
 
       isFetchingRef.current = true;
+      const generation = ++fetchGenerationRef.current;
 
       // If we already have data (cached), show it immediately and refresh silently
       if (window.globalPeopleCache && window.globalPeopleCache.length > 0) {
@@ -805,6 +809,8 @@ export const PeopleSection = () => {
           const data = await response.json();
           if (!data.success)
             throw new Error(data.error || "Cache returned error");
+          if (generation !== fetchGenerationRef.current)
+            return window.globalPeopleCache || [];
 
           setCacheInfo({
             source: safeStr(data.source),
@@ -815,47 +821,59 @@ export const PeopleSection = () => {
             .map(mapRawPerson)
             .filter(Boolean);
 
-          // ── NEW: if backend is still loading, show partial data and poll ──
-          if (!data.is_complete && data.source === "loading") {
+          // ── Cache not complete yet (loading / triggered_load / fallback):
+          // show partial data and keep polling until the backend finishes.
+          // Do NOT cache incomplete results, otherwise the next mount would
+          // treat an empty/partial list as fresh and stop after the loader.
+          if (!data.is_complete) {
             if (mapped.length > 0) {
               setAllPeople(mapped);
-              window.globalPeopleCache = mapped;
-              window.globalCacheTimestamp = Date.now();
-              window.globalPeopleCacheOrg = orgKey;
+              setLoading(false);
+              setBackgroundLoading(true);
+            } else {
+              setLoading(true);
+              setBackgroundLoading(false);
             }
-            // Poll every 3s until complete
-            await new Promise((resolve) => {
-              let attempts = 0;
-              const interval = setInterval(async () => {
-                attempts++;
-                try {
-                  const pollRes = await authFetch(
-                    `${BACKEND_URL}/cache/people`,
-                  );
-                  if (!pollRes?.ok) return;
-                  const pollData = await pollRes.json();
-                  const pollMapped = (pollData?.cached_data || [])
-                    .map(mapRawPerson)
-                    .filter(Boolean);
-                  if (pollMapped.length > 0) {
-                    setAllPeople(pollMapped);
-                    window.globalPeopleCache = pollMapped;
-                    window.globalCacheTimestamp = Date.now();
-                    window.globalPeopleCacheOrg = orgKey;
-                  }
-                  if (pollData.is_complete || attempts >= 20) {
-                    clearInterval(interval);
-                    resolve();
-                  }
-                } catch {
-                  if (attempts >= 20) {
-                    clearInterval(interval);
-                    resolve();
-                  }
+
+            let latest = mapped;
+            for (let attempt = 0; attempt < 60; attempt++) {
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              if (generation !== fetchGenerationRef.current) return latest;
+              try {
+                const pollRes = await authFetch(`${BACKEND_URL}/cache/people`);
+                if (!pollRes?.ok) continue;
+                const pollData = await pollRes.json();
+                if (!pollData?.success) continue;
+
+                const pollMapped = (pollData.cached_data || [])
+                  .map(mapRawPerson)
+                  .filter(Boolean);
+
+                if (generation !== fetchGenerationRef.current) return latest;
+
+                if (pollMapped.length > 0) {
+                  latest = pollMapped;
+                  setAllPeople(pollMapped);
+                  setLoading(false);
+                  setBackgroundLoading(true);
                 }
-              }, 3000);
-            });
-            return window.globalPeopleCache || [];
+                setCacheInfo({
+                  source: safeStr(pollData.source),
+                  org: safeStr(pollData.organization || orgKey),
+                });
+
+                if (pollData.is_complete) {
+                  window.globalPeopleCache = pollMapped;
+                  window.globalCacheTimestamp = Date.now();
+                  window.globalPeopleCacheOrg = orgKey;
+                  return pollMapped;
+                }
+              } catch {
+                // transient error — keep polling
+              }
+            }
+
+            return latest;
           }
           // ── END NEW ──
 
@@ -866,21 +884,25 @@ export const PeopleSection = () => {
           return mapped;
         } catch (err) {
           console.error("Fetch error:", err);
-          setSnackbar({
-            open: true,
-            message: `Failed to load people: ${safeStr(err?.message)}`,
-            severity: "error",
-          });
-          if (window.globalPeopleCache) {
-            setAllPeople(window.globalPeopleCache);
-            return window.globalPeopleCache;
+          if (generation === fetchGenerationRef.current) {
+            setSnackbar({
+              open: true,
+              message: `Failed to load people: ${safeStr(err?.message)}`,
+              severity: "error",
+            });
+            if (window.globalPeopleCache) {
+              setAllPeople(window.globalPeopleCache);
+              return window.globalPeopleCache;
+            }
           }
           return [];
         } finally {
-          setLoading(false);
-          setBackgroundLoading(false);
-          isFetchingRef.current = false;
-          peopleFetchPromiseRef.current = null;
+          if (generation === fetchGenerationRef.current) {
+            setLoading(false);
+            setBackgroundLoading(false);
+            isFetchingRef.current = false;
+            peopleFetchPromiseRef.current = null;
+          }
         }
       })();
 
@@ -895,6 +917,7 @@ export const PeopleSection = () => {
     const orgKey = currentUserOrg;
     const cacheValid =
       window.globalPeopleCache &&
+      window.globalPeopleCache.length > 0 &&
       window.globalCacheTimestamp &&
       now - window.globalCacheTimestamp < CACHE_DURATION &&
       window.globalPeopleCacheOrg === orgKey;
