@@ -40,6 +40,7 @@ import Eventsfilter from "./AddPersonToEvents";
 import CreateEvents from "./CreateEvents";
 import EventTypesModal from "./EventTypesModal";
 import EditEventModal from "./EditEventModal";
+import ConvertsReportDialog from "../components/ConvertsReportDialog";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { AuthContext } from "../contexts/AuthContext";
@@ -1215,6 +1216,8 @@ const Events = () => {
     day: "all",
     eventType: "all",
   });
+  const [selectedDayFilter, setSelectedDayFilter] = useState("all");
+  const [convertsReportOpen, setConvertsReportOpen] = useState(false);
 
   const cacheRef = useRef({
     data: new Map(),
@@ -1461,7 +1464,7 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
 
       toast.info("Preparing export — fetching events...", { toastId: TOAST_ID, autoClose: false });
 
-      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
       let sourceEvents =
         (eventsCache.current && eventsCache.current[cacheKey]) ||
         (allCurrentEvents && allCurrentEvents.length ? allCurrentEvents : null) ||
@@ -1609,6 +1612,12 @@ const fetchEventsFilters = (filters) => {
   }
 
   if (filters.search) params.search = filters.search;
+
+  const requestedDay = filters.day || selectedDayFilter;
+  if (requestedDay && requestedDay !== "all") {
+    params.day = requestedDay;
+  }
+
   if (filters.event_type) {
     
     params.event_type = getEventTypeName(filters.event_type);
@@ -1702,7 +1711,8 @@ const fetchEventsFilters = (filters) => {
           const filtered = allEvents;
 
           console.log("Final events to display:", filtered.length);
-          const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
+          const effectiveDay = filters.day || selectedDayFilter;
+          const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${effectiveDay}`;
           eventsCache.current[cacheKey] = filtered;
           const pageSize = filters.limit || rowsPerPage;
           const eventCount = data.total_events ?? filtered.length;
@@ -1738,6 +1748,7 @@ const fetchEventsFilters = (filters) => {
         selectedEventTypeFilter,
         selectedStatus,
         selectedDateRange,
+        selectedDayFilter,
       ],
     );
 
@@ -2351,6 +2362,8 @@ const getFilteredEventTypes = (allEventTypes) => {
     setDebouncedSearchTerm("");
     setIsSearching(false);
     setSelectedDateRange("all");
+    setSelectedDayFilter("all");
+    setFilterOptions((current) => ({ ...current, day: "all" }));
     setCurrentPage(1);
 
   }, []);
@@ -2408,6 +2421,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     rowsPerPage,
     selectedStatus,
     selectedEventTypeFilter,
+    selectedDayFilter,
     DEFAULT_API_START_DATE,
   ]);
 
@@ -2417,7 +2431,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   // the rows could change under the user, the request could land after the
   // first keystroke and wipe the matches, and the loaded page was ignored.
   const loadedEvents = useMemo(() => {
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
     const cached = eventsCache.current?.[cacheKey];
     const cachedList = Array.isArray(cached) ? cached : [];
     // The cache holds everything fetched for the filter, while `events` holds
@@ -2426,7 +2440,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     const source =
       cachedList.length > (events?.length || 0) ? cachedList : events;
     return Array.isArray(source) ? source : [];
-  }, [events, selectedEventTypeFilter, selectedStatus, viewFilter, selectedDateRange]);
+  }, [events, selectedEventTypeFilter, selectedStatus, viewFilter, selectedDateRange, selectedDayFilter]);
 
   // Pure filter over the events already loaded in the browser. It must stay
   // free of state writes because it runs inside a useMemo — setting state
@@ -2578,7 +2592,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     const newRowsPerPage = Number(e.target.value);
     if (!Number.isInteger(newRowsPerPage) || newRowsPerPage < 1) return;
 
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
     const cached = eventsCache.current[cacheKey];
 
     setRowsPerPage(newRowsPerPage);
@@ -2602,6 +2616,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     dateFilteredEvents.length,
     hasActiveSearch,
     selectedDateRange,
+    selectedDayFilter,
     selectedEventTypeFilter,
     selectedStatus,
     viewFilter,
@@ -2739,6 +2754,14 @@ const getFilteredEventTypes = (allEventTypes) => {
       fetchEvents,
       DEFAULT_API_START_DATE,
     ],
+  );
+
+  const handleDayChange = useCallback(
+    (day) => {
+      setSelectedDayFilter(day);
+      applyFilters({ ...filterOptions, day });
+    },
+    [applyFilters, filterOptions],
   );
 
   const getAttendanceEventId = (eventObject) => {
@@ -3391,7 +3414,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       setCurrentPage(page);
       if (hasActiveSearch || selectedDateRange !== "all") return;
 
-      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
+      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
       const cached = eventsCache.current[cacheKey];
 
       if (cached) {
@@ -3407,6 +3430,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       isLoading,
       rowsPerPage,
       selectedDateRange,
+      selectedDayFilter,
       selectedEventTypeFilter,
       selectedStatus,
       totalPages,
@@ -3627,7 +3651,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   useEffect(() => {
     if (!selectedEventTypeFilter || !showingEvents) return;
 
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
     const cached = eventsCache.current[cacheKey];
 
     if (cached) {
@@ -3721,6 +3745,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     selectedStatus,
     viewFilter,
     selectedDateRange,
+    selectedDayFilter,
     isAdmin,
     isRegistrant,
     isRegularUser,
@@ -4833,6 +4858,81 @@ const getTypeValue = (type) => {
                     flexWrap: "wrap",
                   }}
                 >
+                  <Box
+                    role="group"
+                    aria-label="Filter events by weekday"
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 0.4,
+                      flexWrap: "wrap",
+                      mr: 0.5,
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        fontWeight: 700,
+                        color: "text.secondary",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.4px",
+                        mr: 0.4,
+                      }}
+                    >
+                      Day
+                    </Typography>
+                    {[
+                      { value: "all", label: "All" },
+                      { value: "Monday", label: "Mon" },
+                      { value: "Tuesday", label: "Tue" },
+                      { value: "Wednesday", label: "Wed" },
+                      { value: "Thursday", label: "Thu" },
+                      { value: "Friday", label: "Fri" },
+                      { value: "Saturday", label: "Sat" },
+                      { value: "Sunday", label: "Sun" },
+                    ].map((day) => {
+                      const active = selectedDayFilter === day.value;
+                      return (
+                        <Button
+                          key={day.value}
+                          size="small"
+                          variant={active ? "contained" : "outlined"}
+                          onClick={() => handleDayChange(day.value)}
+                          aria-pressed={active}
+                          title={`Show ${day.value === "all" ? "all days" : day.value}`}
+                          sx={{
+                            minWidth: 0,
+                            px: 1,
+                            py: 0.25,
+                            fontSize: "0.68rem",
+                            fontWeight: 700,
+                            lineHeight: 1.4,
+                            textTransform: "none",
+                            borderRadius: 999,
+                            borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
+                            color: isDarkMode ? "#e5e7eb" : "#374151",
+                            "&:hover": {
+                              borderColor: "#12a5b5",
+                              backgroundColor: "rgba(18,165,181,0.08)",
+                            },
+                            ...(active
+                              ? {
+                                  backgroundColor: "#12a5b5",
+                                  color: "#fff",
+                                  borderColor: "#12a5b5",
+                                  "&:hover": {
+                                    backgroundColor: "#0d8b99",
+                                    borderColor: "#0d8b99",
+                                  },
+                                }
+                              : {}),
+                          }}
+                        >
+                          {day.label}
+                        </Button>
+                      );
+                    })}
+                  </Box>
                   <StatusBadges
                     selectedStatus={selectedStatus}
                     setSelectedStatus={setSelectedStatus}
@@ -4851,7 +4951,33 @@ const getTypeValue = (type) => {
                   />
                 </div>
               </div>
-              <ViewFilterButtons />
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  flexWrap: "wrap",
+                }}
+              >
+                {(isAdmin || isRegistrant || isLeader || isLeaderAt12) && (
+                  <Button
+                    variant="contained"
+                    size="small"
+                    startIcon={<PeopleAltIcon />}
+                    onClick={() => setConvertsReportOpen(true)}
+                    sx={{
+                      textTransform: "none",
+                      fontWeight: 700,
+                      backgroundColor: "#12a5b5",
+                      whiteSpace: "nowrap",
+                      "&:hover": { backgroundColor: "#0d8b99" },
+                    }}
+                  >
+                    View Converts
+                  </Button>
+                )}
+                <ViewFilterButtons />
+              </Box>
             </Box>
           </>
         ) : (
@@ -6258,6 +6384,13 @@ const getTypeValue = (type) => {
         }}
         event={selectedEvent}
         token={token}
+      />
+
+      <ConvertsReportDialog
+        open={convertsReportOpen}
+        onClose={() => setConvertsReportOpen(false)}
+        authFetch={authFetch}
+        backendUrl={BACKEND_URL}
       />
 
       <Dialog

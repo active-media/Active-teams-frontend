@@ -77,6 +77,8 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState(globalUsersData || []);
   const [totalUsers, setTotalUsers] = useState(globalUsersData?.length || 0);
   const [activityLog, setActivityLog] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState('');
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -226,6 +228,35 @@ export default function AdminDashboard() {
     }
   }, [API_BASE_URL, authFetch]);
 
+  const fetchActivityLog = useCallback(async () => {
+    setActivityLoading(true);
+    setActivityError('');
+    try {
+      const res = await authFetch(
+        `${API_BASE_URL}/admin/activity-logs?limit=100`,
+        { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || `Activity log fetch failed: ${res.status}`);
+      }
+      const rows = Array.isArray(data.logs) ? data.logs : [];
+      const mapped = rows.map((log, index) => ({
+        id: log.id || log._id || `${log.timestamp || 'activity'}-${index}`,
+        action: log.action || 'ACTIVITY',
+        details: log.details || 'No details recorded',
+        timestamp: log.timestamp || new Date().toISOString(),
+        user: log.user_id || log.user || 'System',
+      }));
+      if (mountedRef.current) setActivityLog(mapped);
+    } catch (e) {
+      console.error('fetchActivityLog error', e);
+      if (mountedRef.current) setActivityError(e.message || 'Could not load activity log');
+    } finally {
+      if (mountedRef.current) setActivityLoading(false);
+    }
+  }, [API_BASE_URL, authFetch]);
+
   const fetchOrgs = useCallback(async () => {
     if (!isSupremeAdmin) return;
     setLoadingOrgs(true);
@@ -287,7 +318,13 @@ export default function AdminDashboard() {
       });
   }, [selectedOrg]);
 
-  // ─── org switch ────────────────
+  useEffect(() => {
+    if (activeTab === 2) {
+      fetchActivityLog();
+    }
+  }, [activeTab, fetchActivityLog]);
+
+  // ─── org switch ─────────────────────────────────────────────────────────────
   const handleOrgChange = useCallback((orgName) => {
     if (orgName === selectedOrg) { setOrgAnchorEl(null); return; }
     globalDataLoaded = false;
@@ -313,12 +350,13 @@ export default function AdminDashboard() {
       const { users: u, total } = await fetchUsers(selectedOrg);
       if (mountedRef.current) { setUsers(u); setTotalUsers(total); }
       if (isSupremeAdmin) fetchOrgs();
+      if (activeTab === 2) await fetchActivityLog();
     } catch (e) {
       console.error(e);
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, [fetchUsers, fetchOrgs, selectedOrg, isSupremeAdmin]);
+  }, [fetchUsers, fetchOrgs, fetchActivityLog, selectedOrg, isSupremeAdmin, activeTab]);
 
   // ─── CRUD handlers ────────────────
   const handleCreateUser = async (userData) => {
@@ -894,34 +932,57 @@ export default function AdminDashboard() {
         </Box>)}
 
         {/* Activity tab */}
-        {activeTab === 2 && (<Box padding={getResponsiveValue(1,2,3,3,3)}>
-          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-            <Typography variant="h6" fontWeight="bold">Recent Activity</Typography>
-            <Chip icon={<History />} label={`${activityLog.length} events`} size="small" variant="outlined" />
-          </Stack>
-          {activityLog.length === 0 ? (
-            <Box sx={{ textAlign: 'center', py: 8 }}>
-              <History sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
-              <Typography variant="h6" color="text.secondary">No activity yet</Typography>
-            </Box>
-          ) : (
-            <Box sx={{ maxHeight: 500, overflowY: "auto", border: `1px solid ${theme.palette.divider}`, borderRadius: 1, p: 1 }}>
-              <List>
-                {activityLog.map((log, idx) => (
-                  <React.Fragment key={log.id}>
-                    <ListItem sx={{ py: 2 }}>
-                      <ListItemText
-                        primary={<Typography variant="body1" fontWeight="medium">{log.details}</Typography>}
-                        secondary={<Typography variant="body2" color="text.secondary">{log.action} • {new Date(log.timestamp).toLocaleString()} • {log.user}</Typography>}
-                      />
-                    </ListItem>
-                    {idx < activityLog.length - 1 && <Divider />}
-                  </React.Fragment>
-                ))}
-              </List>
-            </Box>
-          )}
-        </Box>)}
+        {activeTab === 2 && (
+          <Box sx={{ p: getResponsiveValue(1,2,3,3,3) }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+              <Typography variant="h6" fontWeight="bold">Recent Activity</Typography>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Tooltip title="Refresh activity log">
+                  <IconButton size="small" onClick={fetchActivityLog} disabled={activityLoading}>
+                    <Refresh fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Chip icon={<History />} label={`${activityLog.length} events`} size="small" variant="outlined" />
+              </Stack>
+            </Stack>
+            {activityError && (
+              <Alert
+                severity="error"
+                sx={{ mb: 2 }}
+                action={<Button color="inherit" size="small" onClick={fetchActivityLog}>Retry</Button>}
+              >
+                {activityError}
+              </Alert>
+            )}
+            {activityLoading ? (
+              <Box sx={{ textAlign: 'center', py: 8 }}>
+                <CircularProgress />
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Loading activity log...</Typography>
+              </Box>
+            ) : activityLog.length === 0 ? (
+              <Box sx={{ textAlign: 'center', py: 8 }}>
+                <History sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
+                <Typography variant="h6" color="text.secondary">No activity yet</Typography>
+              </Box>
+            ) : (
+              <Box sx={{ maxHeight: 500, overflowY: "auto", border: `1px solid ${theme.palette.divider}`, borderRadius: 1, p: 1 }}>
+                <List>
+                  {activityLog.map((log, idx) => (
+                    <React.Fragment key={log.id}>
+                      <ListItem sx={{ py: 2 }}>
+                        <ListItemText
+                          primary={<Typography variant="body1" fontWeight="medium">{log.details}</Typography>}
+                          secondary={<Typography variant="body2" color="text.secondary">{log.action} • {new Date(log.timestamp).toLocaleString()} • {log.user}</Typography>}
+                        />
+                      </ListItem>
+                      {idx < activityLog.length - 1 && <Divider />}
+                    </React.Fragment>
+                  ))}
+                </List>
+              </Box>
+            )}
+          </Box>
+        )}
 
         {/* Organizations tab (super admin only) */}
         {activeTab === 3 && isSupremeAdmin && (() => {

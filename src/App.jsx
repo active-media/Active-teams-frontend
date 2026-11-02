@@ -42,7 +42,7 @@ const ProtectedHome = withAuthCheck(Home, ['admin', 'leader', 'leaderAt12', 'use
 const ProtectedProfile = withAuthCheck(Profile, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
 const ProtectedPeople = withAuthCheck(People, ['admin', 'leader', 'leaderAt12']);
 const ProtectedEvents = withAuthCheck(Events, ['admin', 'leader', 'leaderAt12', 'registrant'], true); 
-const ProtectedStats = withAuthCheck(Stats, ['admin','leaderAt12']);
+const ProtectedStats = withAuthCheck(Stats, ['admin','leader','leaderAt12']);
 const ReportingRoles = ['admin', 'super_admin', 'leader', 'leaderAt12'];
 const ProtectedReports = withAuthCheck(Reports, ReportingRoles, false, true);
 const ProtectedCellsLeader = withAuthCheck(() => <CellsDrilldown mode="leader" />, ReportingRoles, false, true);

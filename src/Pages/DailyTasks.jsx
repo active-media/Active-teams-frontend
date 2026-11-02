@@ -96,6 +96,27 @@ function Modal({ isOpen, onClose, children, isDarkMode }) {
 }
 
 // Spinner component
+const toDateInputValue = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const bulkButtonStyle = (isDarkMode, backgroundColor, color, outlined = false) => ({
+  padding: "7px 12px",
+  borderRadius: "8px",
+  border: outlined
+    ? `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`
+    : "none",
+  backgroundColor,
+  color,
+  fontSize: "12px",
+  fontWeight: "700",
+  cursor: "pointer",
+  opacity: 1,
+});
+
 function Spinner({ size = 16, color = "#6b7280" }) {
   return (
     <div
@@ -132,6 +153,17 @@ export default function DailyTasks() {
   const [formType, setFormType] = useState("");
   const [dateRange, setDateRange] = useState("today");
   const [filterType, setFilterType] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [customStartDate, setCustomStartDate] = useState(() => {
+    const start = new Date();
+    start.setDate(start.getDate() - 30);
+    return toDateInputValue(start);
+  });
+  const [customEndDate, setCustomEndDate] = useState(() =>
+    toDateInputValue(new Date()),
+  );
+  const [selectedTaskIds, setSelectedTaskIds] = useState([]);
+  const [bulkActionLoading, setBulkActionLoading] = useState("");
   const [newTaskTypeName, setNewTaskTypeName] = useState("");
   const [addingTaskType, setAddingTaskType] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -404,12 +436,15 @@ export default function DailyTasks() {
       setLoading(true);
       const normalizedEmail = (user.email || "").trim().toLowerCase();
 
+      const taskParams = new URLSearchParams({ email: normalizedEmail });
+      if (dateRange === "custom" && customStartDate && customEndDate) {
+        taskParams.set("start_date", customStartDate);
+        taskParams.set("end_date", customEndDate);
+      }
+
       // Fetch regular tasks and special tasks in parallel
       const [regularRes, specialRes] = await Promise.all([
-        authFetch(
-          `${API_URL}/tasks?email=${encodeURIComponent(normalizedEmail)}`,
-          { signal },
-        ),
+        authFetch(`${API_URL}/tasks?${taskParams.toString()}`, { signal }),
         authFetch(`${API_URL}/tasks/my-special-tasks`, { signal }),
       ]);
 
@@ -528,7 +563,7 @@ export default function DailyTasks() {
     }
 
     return () => controller.abort();
-  }, [user, authFetch, API_URL]);
+  }, [user, authFetch, API_URL, dateRange, customStartDate, customEndDate]);
 
   const pollIntervalRef = useRef(null);
 
@@ -861,11 +896,11 @@ export default function DailyTasks() {
   };
 
   useEffect(() => {
-    if (user && !loading) {
+    if (user) {
       fetchUserTasks();
       fetchTaskTypes();
     }
-  }, [user]);
+  }, [user, fetchUserTasks]);
 
   const handleOpen = (type) => {
     setFormType(type);
@@ -1235,7 +1270,11 @@ export default function DailyTasks() {
   };
 
   const filteredTasks = tasks.filter((task) => {
-  const isCompleted = (task.status || "").toLowerCase() === "completed";
+  const normalizedStatus = (task.status || "").toLowerCase();
+  const isCompleted = normalizedStatus === "completed";
+  const isAwaiting = normalizedStatus.includes("await");
+  const isCancelled = ["cancelled", "canceled", "deleted"].includes(normalizedStatus);
+  const isOpen = !isCompleted && !isAwaiting && !isCancelled;
   const isConsolidationOrFollowUp =
     task.is_consolidation_task === true || task.is_new_person_task === true;
 
@@ -1245,6 +1284,14 @@ export default function DailyTasks() {
     (filterType === "consolidation" && isConsolidationOrFollowUp);
 
   if (!matchesType) return false;
+
+  const matchesStatus =
+    statusFilter === "all" ||
+    (statusFilter === "open" && isOpen) ||
+    (statusFilter === "awaiting" && isAwaiting) ||
+    (statusFilter === "completed" && isCompleted);
+
+  if (!matchesStatus) return false;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -1318,6 +1365,15 @@ export default function DailyTasks() {
         getStartOfMonth(lastMonthDate),
         getEndOfMonth(lastMonthDate)
       );
+    }
+
+    case "custom": {
+      const start = parseDate(customStartDate);
+      const end = parseDate(customEndDate);
+      if (!start || !end) return true;
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      return isDateInRange(dateToCheck, start, end);
     }
 
     default:
@@ -1474,6 +1530,14 @@ export default function DailyTasks() {
   }, [filteredTasks]);
 
   useEffect(() => {
+    setSelectedTaskIds((current) =>
+      current.filter((taskId) =>
+        tasks.some((task) => String(task._id) === taskId),
+      ),
+    );
+  }, [tasks]);
+
+  useEffect(() => {
     if (!user) return;
 
     const handleTaskUpdated = (event) => {
@@ -1492,7 +1556,7 @@ export default function DailyTasks() {
     return () => {
       window.removeEventListener("taskUpdated", handleTaskUpdated);
     };
-  }, [user]);
+  }, [user, fetchUserTasks]);
 
   // Listen for task updates from TaskUpdateContext
   useEffect(() => {
@@ -1501,6 +1565,92 @@ export default function DailyTasks() {
       fetchUserTasks();
     }
   }, [updateCount, fetchUserTasks]);
+
+  const toggleTaskSelection = (taskId) => {
+    setSelectedTaskIds((current) =>
+      current.includes(taskId)
+        ? current.filter((id) => id !== taskId)
+        : [...current, taskId],
+    );
+  };
+
+  const selectAllVisibleTasks = () => {
+    const visibleIds = filteredTasks.map((task) => String(task._id));
+    const allSelected =
+      visibleIds.length > 0 &&
+      visibleIds.every((taskId) => selectedTaskIds.includes(taskId));
+    setSelectedTaskIds(allSelected ? [] : visibleIds);
+  };
+
+  const runBulkAction = async (action) => {
+    if (!selectedTaskIds.length || bulkActionLoading) return;
+    if (
+      action === "delete" &&
+      !window.confirm(
+        `Delete ${selectedTaskIds.length} selected task${
+          selectedTaskIds.length === 1 ? "" : "s"
+        }? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    setBulkActionLoading(action);
+    try {
+      const response = await authFetch(`${API_URL}/tasks/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_ids: selectedTaskIds,
+          action,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || `HTTP ${response.status}`);
+      }
+
+      const affectedIds = new Set(selectedTaskIds.map(String));
+      const nowIso = new Date().toISOString();
+      setTasks((current) =>
+        action === "delete"
+          ? current.filter((task) => !affectedIds.has(String(task._id)))
+          : current.map((task) =>
+              affectedIds.has(String(task._id))
+                ? {
+                    ...task,
+                    status: action === "complete" ? "completed" : "open",
+                    completedAt: action === "complete" ? nowIso : null,
+                  }
+                : task,
+            ),
+      );
+
+      setSelectedTaskIds([]);
+      toast.success(
+        action === "delete"
+          ? `Deleted ${payload.updated_count ?? selectedTaskIds.length} task(s)`
+          : action === "complete"
+            ? `Completed ${payload.updated_count ?? selectedTaskIds.length} task(s)`
+            : `Reopened ${payload.updated_count ?? selectedTaskIds.length} task(s)`,
+      );
+      window.dispatchEvent(
+        new CustomEvent("taskUpdated", {
+          detail: {
+            action: "bulkTasksUpdated",
+            bulkAction: action,
+            count: payload.updated_count,
+          },
+        }),
+      );
+      await fetchUserTasks();
+    } catch (err) {
+      console.error("Bulk task action failed:", err);
+      toast.error(err.message || "Bulk action failed");
+    } finally {
+      setBulkActionLoading("");
+    }
+  };
 
   // Whether people are still being loaded for the first time
   const peopleNotLoadedYet = !hasCachedPeople() && allPeople.length === 0;
@@ -1657,7 +1807,15 @@ export default function DailyTasks() {
             )}
           </div>
 
-          <div style={{ marginTop: "20px" }}>
+          <div
+            style={{
+              marginTop: "20px",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              flexWrap: "wrap",
+            }}
+          >
             <select
               style={{
                 padding: "10px 16px",
@@ -1680,7 +1838,48 @@ export default function DailyTasks() {
               <option value="thisMonth">This Month</option>
               <option value="previousWeek">Previous Week</option>
               <option value="previousMonth">Previous Month</option>
+              <option value="custom">Custom range</option>
             </select>
+            {dateRange === "custom" && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <input
+                  type="date"
+                  aria-label="Task range start date"
+                  value={customStartDate}
+                  max={customEndDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: "10px",
+                    border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                    backgroundColor: isDarkMode ? "#2d2d2d" : "#fff",
+                    color: isDarkMode ? "#fff" : "#1a1a24",
+                  }}
+                />
+                <span style={{ color: isDarkMode ? "#aaa" : "#6b7280" }}>to</span>
+                <input
+                  type="date"
+                  aria-label="Task range end date"
+                  value={customEndDate}
+                  min={customStartDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: "10px",
+                    border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                    backgroundColor: isDarkMode ? "#2d2d2d" : "#fff",
+                    color: isDarkMode ? "#fff" : "#1a1a24",
+                  }}
+                />
+              </div>
+            )}
           </div>
 
           <div style={{ marginTop: "12px" }}>
@@ -1769,6 +1968,70 @@ export default function DailyTasks() {
             </button>
           ))}
         </div>
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: "8px",
+            marginTop: "10px",
+            flexWrap: "wrap",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "12px",
+              fontWeight: "700",
+              color: isDarkMode ? "#aaa" : "#6b7280",
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+              marginRight: "4px",
+            }}
+          >
+            Status
+          </span>
+          {[
+            { value: "all", label: "All" },
+            { value: "open", label: "Open only" },
+            { value: "awaiting", label: "Awaiting" },
+            { value: "completed", label: "Completed" },
+          ].map((status) => (
+            <button
+              key={status.value}
+              style={{
+                padding: "6px 14px",
+                borderRadius: "18px",
+                border:
+                  statusFilter === status.value
+                    ? "none"
+                    : `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+                fontWeight: "600",
+                cursor: "pointer",
+                fontSize: "12px",
+                backgroundColor:
+                  statusFilter === status.value
+                    ? isDarkMode
+                      ? "#fff"
+                      : "#000"
+                    : isDarkMode
+                      ? "#2d2d2d"
+                      : "#ffffff",
+                color:
+                  statusFilter === status.value
+                    ? isDarkMode
+                      ? "#000"
+                      : "#fff"
+                    : isDarkMode
+                      ? "#fff"
+                      : "#1a1a24",
+              }}
+              onClick={() => setStatusFilter(status.value)}
+            >
+              {status.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Task list container */}
@@ -1784,6 +2047,68 @@ export default function DailyTasks() {
         }}
       >
         <div style={{ marginTop: "16px" }}>
+          {selectedTaskIds.length > 0 && (
+            <div
+              style={{
+                position: "sticky",
+                top: 0,
+                zIndex: 2,
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                flexWrap: "wrap",
+                padding: "10px 12px",
+                marginBottom: "12px",
+                borderRadius: "12px",
+                border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
+                backgroundColor: isDarkMode ? "#111827" : "#eef6f8",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+              }}
+            >
+              <strong style={{ fontSize: "13px", marginRight: "4px" }}>
+                {selectedTaskIds.length} selected
+              </strong>
+              <button
+                style={bulkButtonStyle(isDarkMode, "#000", "#fff")}
+                onClick={selectAllVisibleTasks}
+              >
+                {filteredTasks.length > 0 &&
+                filteredTasks.every((task) =>
+                  selectedTaskIds.includes(String(task._id)),
+                )
+                  ? "Clear selection"
+                  : "Select all visible"}
+              </button>
+              <button
+                style={bulkButtonStyle(isDarkMode, "#166534", "#fff")}
+                onClick={() => runBulkAction("complete")}
+                disabled={!!bulkActionLoading}
+              >
+                {bulkActionLoading === "complete" ? "Completing..." : "Mark complete"}
+              </button>
+              <button
+                style={bulkButtonStyle(isDarkMode, "#92400e", "#fff")}
+                onClick={() => runBulkAction("reopen")}
+                disabled={!!bulkActionLoading}
+              >
+                {bulkActionLoading === "reopen" ? "Reopening..." : "Reopen"}
+              </button>
+              <button
+                style={bulkButtonStyle(isDarkMode, "#991b1b", "#fff")}
+                onClick={() => runBulkAction("delete")}
+                disabled={!!bulkActionLoading}
+              >
+                {bulkActionLoading === "delete" ? "Deleting..." : "Delete"}
+              </button>
+              <button
+                style={bulkButtonStyle(isDarkMode, "transparent", isDarkMode ? "#fff" : "#111827", true)}
+                onClick={() => setSelectedTaskIds([])}
+                disabled={!!bulkActionLoading}
+              >
+                Clear
+              </button>
+            </div>
+          )}
           {loading ? (
             <p
               style={{
@@ -1852,6 +2177,21 @@ export default function DailyTasks() {
                       : "0 4px 24px rgba(0, 0, 0, 0.08)",
                   }}
                 >
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${recipientName || "task"}`}
+                    checked={selectedTaskIds.includes(String(task._id))}
+                    onChange={() => toggleTaskSelection(String(task._id))}
+                    onClick={(event) => event.stopPropagation()}
+                    style={{
+                      width: 18,
+                      height: 18,
+                      marginRight: 12,
+                      flexShrink: 0,
+                      cursor: "pointer",
+                      accentColor: "#12a5b5",
+                    }}
+                  />
                   <div
                     style={{
                       cursor: "pointer",
