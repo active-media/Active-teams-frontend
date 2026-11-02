@@ -425,6 +425,7 @@ function ServiceCheckIn() {
       const newPeopleArr = payload.new_people ?? payload.newPeople ?? [];
       const consolidationsArr = payload.consolidations ?? payload.consolidatedData ?? [];
       setPresentCount(payload.present_count);
+      setNewPeopleCount(payload.new_people_count ?? newPeopleArr.length);
       return {
         ...payload,
         success: payload.success ?? true,
@@ -967,7 +968,7 @@ function ServiceCheckIn() {
 
   // const presentCount = realTimeData?.present_count ;
   const [presentCount, setPresentCount] = useState(realTimeData?.present_count ||0);
-  const newPeopleCount = realTimeData?.newPeople
+  const [newPeopleCount, setNewPeopleCount] = useState(realTimeData?.new_people_count || 0);  
   console.log('real',realTimeData)
   const consolidationCount = realTimeData?.consolidation_count ?? realTimeData?.consolidations?.length ?? 0;
 
@@ -2165,7 +2166,6 @@ const mainColumns = useMemo(() => {
         </Grid>
       </Grid>
 
-      </Grid>
       {/* Controls Row */}
       <Box mb={cardSpacing}>
         <Grid container spacing={1} mb={1} alignItems="center">
