@@ -165,8 +165,7 @@ export default function Sidebar({ mode, setMode }) {
         return;
       }
 
-      const userRole = "admin"
-      // user?.role?.toLowerCase() || '';
+      const userRole = user?.role?.toLowerCase() || '';
       const isSupremeAdmin = user?.is_supreme_admin || user?.email === "tkgenia1234@gmail.com";
       const isCustomRole = !SYSTEM_ROLES.includes(normalizeRole(userRole));
 
