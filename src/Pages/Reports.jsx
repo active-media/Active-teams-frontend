@@ -6,8 +6,7 @@ import DownloadIcon from "@mui/icons-material/Download";
 import SaveIcon from "@mui/icons-material/Save";
 import { AuthContext } from "../contexts/AuthContext";
 import { exportReport, generateReport, getCatalog, getReport } from "../api/reportingApi";
-import { ALL_CAMPUSES, DEFAULT_PERIOD, REPORT_EXPORT_FORMATS } from "../features/reporting/constants";
-import CampusSelect from "../features/reporting/components/CampusSelect";
+import { DEFAULT_PERIOD, REPORT_EXPORT_FORMATS } from "../features/reporting/constants";
 import KpiGrid from "../features/reporting/components/KpiGrid";
 import PeriodPicker from "../features/reporting/components/PeriodPicker";
 import ReportEnvelopeView from "../features/reporting/components/ReportEnvelopeView";
@@ -43,16 +42,14 @@ export default function Reports() {
     end_date: searchParams.get("end_date") || "",
     isCustom: searchParams.get("custom") === "true",
   }));
-  const [campus, setCampus] = useState(() => searchParams.get("campus") || ALL_CAMPUSES);
   const [gender, setGender] = useState(() => searchParams.get("gender") || "");
   const isSuper = Boolean(user?.is_supreme_admin) || normalizeRole(user?.role) === "superadmin";
   const params = useMemo(() => ({
     ...(periodValue.isCustom && periodValue.start_date && periodValue.end_date
       ? { start_date: periodValue.start_date, end_date: periodValue.end_date }
       : { period: periodValue.period }),
-    campus,
     gender: gender || undefined,
-  }), [periodValue, campus, gender]);
+  }), [periodValue, gender]);
 
   // Mirror the selection into the URL so drill-down links (and the dashboard's links) keep it.
   useEffect(() => {
@@ -64,10 +61,9 @@ export default function Reports() {
     } else if (periodValue.period) {
       next.set("period", periodValue.period);
     }
-    if (campus && campus !== ALL_CAMPUSES) next.set("campus", campus);
     if (gender) next.set("gender", gender);
     setSearchParams(next, { replace: true });
-  }, [periodValue, campus, setSearchParams]);
+  }, [periodValue, gender, setSearchParams]);
 
   useEffect(() => {
     let active = true;
@@ -128,8 +124,6 @@ export default function Reports() {
   };
 
   const selectedReport = catalog.find((item) => item.report_type === reportType);
-  const campuses = envelope?.series?.find((series) => series.key === "campus_comparison")?.points?.map((point) => point.x).filter(Boolean) || [];
-
   if (!reportType) {
     return (
       <Box sx={{ px: { xs: 2, md: 4 }, py: 3, maxWidth: 1440, mx: "auto" }}>
@@ -175,7 +169,6 @@ export default function Reports() {
 
       <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} sx={{ mb: 2 }}>
         <PeriodPicker value={periodValue} onChange={(next) => setPeriodValue((previous) => ({ ...previous, ...next }))} resolvedLabel={envelope?.meta?.period?.label} />
-        {selectedReport?.params?.some((param) => param.name === "campus") && <CampusSelect value={campus} options={campuses} onChange={setCampus} />}
         {selectedReport?.report_type === "twelve_tasks" && (
           <Box sx={{ mt: 1 }}>
             <TextField
