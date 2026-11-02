@@ -1076,6 +1076,11 @@ const isValidObjectId = (id) => {
 const Events = () => {
   const { authFetch } = React.useContext(AuthContext);
   const { orgConfig, configLoaded } = useOrgConfig();
+  // Auth now lives in Supabase; there is no "access_token" key in localStorage any more.
+  const getSessionToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  };
   
   // Get user from localStorage immediately (available on login)
   const currentUser = JSON.parse(localStorage.getItem("userProfile")) || {};
@@ -3187,7 +3192,7 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handleDeleteType = useCallback(async () => {
     try {
-      const token = localStorage.getItem("access_token");
+      const token = await getSessionToken();
 
       if (!token) {
         toast.error("Please log in again");
@@ -3424,7 +3429,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     const checkAccess = async () => {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      const token = localStorage.getItem("access_token");
+      const token = await getSessionToken();
       const userProfile = localStorage.getItem("userProfile");
 
       if (!token || !userProfile) {
