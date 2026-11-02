@@ -44,7 +44,7 @@ const LEADER_TABLES = {
       { key: "leader", label: "Leader" },
       { key: "meetings", label: "Meetings", format: "number" },
       { key: "attendance", label: "Attendance", format: "number" },
-      { key: "location", label: "Campus" },
+      // { key: "location", label: "Campus" },
     ],
   },
 };
