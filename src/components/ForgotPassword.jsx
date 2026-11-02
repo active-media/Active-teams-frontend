@@ -71,10 +71,21 @@ const ForgotPassword = ({ mode }) => {
     e.preventDefault();
     setMessage("");
     setError("");
+
+    const trimmed = (email || "").trim();
+    if (!trimmed) {
+      setError("Please enter your email address.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await requestPasswordReset(email);
+      await requestPasswordReset(trimmed);
       setMessage("If your email exists, a reset link has been sent.");
       setEmail("");
     } catch (err) {
@@ -134,6 +145,7 @@ const ForgotPassword = ({ mode }) => {
 
         <TextField
           label="Email Address"
+          type="email"
           variant="outlined"
           fullWidth
           required

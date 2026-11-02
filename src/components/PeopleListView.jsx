@@ -33,7 +33,7 @@ import {
   ExpandLess as ExpandLessIcon
 } from '@mui/icons-material';
 
-const PeopleListView = ({ people, onEdit, onDelete, loading }) => {
+const PeopleListView = ({ people, onEdit, onDelete }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [anchorEl, setAnchorEl] = useState(null);

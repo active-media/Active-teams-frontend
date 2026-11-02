@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import "./SplashScreen.css";
 
 export default function SplashScreen({ onFinish }) {
   const [fadeOut, setFadeOut] = useState(false);

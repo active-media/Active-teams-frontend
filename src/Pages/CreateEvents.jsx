@@ -18,7 +18,7 @@ import {
   Autocomplete,
   CircularProgress,
 } from "@mui/material";
-import { useContext } from "react"; // if not already
+import { useContext } from "react";
 import { AuthContext } from "../contexts/AuthContext"
 import LocationOnIcon from "@mui/icons-material/LocationOn";
 import PersonIcon from "@mui/icons-material/Person";
@@ -38,7 +38,6 @@ function generateUUID() {
   });
 }
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-// Geoapify
 const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
 const GEOAPIFY_COUNTRY_CODE = (
   import.meta.env.VITE_GEOAPIFY_COUNTRY_CODE || "za"
@@ -68,10 +67,33 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   const navigate = useNavigate();
   const { id: paramEventID } = useParams();
   const [autoPopulatedFields, setAutoPopulatedFields] = useState(new Set());
-  const [eventId, setEventId] = useState(paramEventID ? paramEventID : null)
+  
+  // Determine eventId from route param, query param, or passed event object
+  const getInitialEventId = () => {
+    // 1. Check route param (/edit-event/:id)
+    if (paramEventID) return paramEventID;
+    
+    // 2. Check query param (?eventId=...)
+    const queryParams = new URLSearchParams(window.location.search);
+    const queryEventId = queryParams.get("eventId");
+    if (queryEventId) return queryEventId;
+    
+    // 3. Check if selectedEventTypeObj contains full event data (not just event type)
+    // Event type objects have name, description, isTicketed, etc.
+    // Full event objects have eventName, date, location, etc.
+    if (selectedEventTypeObj && selectedEventTypeObj.eventName) {
+      return selectedEventTypeObj._id || selectedEventTypeObj.id;
+    }
+    
+    return null;
+  };
+  
+  const [eventId, setEventId] = useState(getInitialEventId());
+  const [sessionId, setSessionId] = useState(null);
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
   const [isSearchingPeople, setIsSearchingPeople] = useState(false);
+  const [peopleSearchError, setPeopleSearchError] = useState("");
   const [eventTypeFlags, setEventTypeFlags] = useState({
     isGlobal: false,
     isTicketed: false,
@@ -79,7 +101,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   });
   const {
     isGlobal: isGlobalEvent,
-    isTicketed: isTicketedEvent,
+    // isTicketed: isTicketedEvent,
     hasPersonSteps,
   } = eventTypeFlags;
   const { getAllHierarchyLevels } = useOrgConfig();
@@ -87,8 +109,10 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [peopleData, setPeopleData] = useState([]);
   const [priceTiers, setPriceTiers] = useState([]);
-
-  const isSelectingFromDropdown = useRef(false);
+  const [isTicketedEvent,setIsTicketedEvent] = useState(false);
+  console.log('CURRENT EVENT TYPE:', selectedEventType, eventTypeFlags);
+  
+  const isSelectingFromDropdown = useRef(false); 
 
   const isAdmin = user?.role === "admin";
   console.log("view role", isAdmin);
@@ -172,7 +196,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
     let isActive = true;
     const controller = new AbortController();
 
-    const timer = setTimeout(async () => {
+    setTimeout(async () => {
       try {
         setLocationLoading(true);
         setLocationError("");
@@ -243,32 +267,41 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   ];
 
   useEffect(() => {
-    console.log("CreateEvents - Props received:", {
+    console.log("CreateEvents - Props received:",eventTypes.find((et) => et.name === formData.eventType), {
       selectedEventTypeObj,
       selectedEventType,
       eventTypes: eventTypes.map((et) => ({
         name: et.name,
-        isGlobal: et.isGlobal,
-        isTicketed: et.isTicketed,
-        hasPersonSteps: et.hasPersonSteps,
+        isGlobal: et.is_global,
+        isTicketed: et.is_ticketed,
+        hasPersonSteps: et.has_person_steps,
       })),
     });
-    const hierarchyLevels = getAllHierarchyLevels();
+    setIsTicketedEvent(eventTypes.find((et) => et.name === formData.eventType)?.is_ticketed || false);
     const determineEventType = () => {
       if (selectedEventTypeObj) {
+        const objName = selectedEventTypeObj.name ;
+        const matchedFromList = eventTypes.find((et) => {
+          const etName = et.name;
+          return (
+            // etName.toLowerCase() === objName.toLowerCase() ||
+            et.event_type_id === selectedEventTypeObj.event_type_id
+          );
+        });
+        const source = matchedFromList || selectedEventTypeObj;
+        console.log("Using event type source:", matchedFromList ? "eventTypes list" : "selectedEventTypeObj", source);
         return {
           eventType:
-            selectedEventTypeObj.name || selectedEventTypeObj.displayName || "",
-          isGlobal: !!selectedEventTypeObj.isGlobal,
-          isTicketed: !!selectedEventTypeObj.isTicketed,
-          hasPersonSteps: !!selectedEventTypeObj.hasPersonSteps,
+            objName,
+          isGlobal: !!source.is_global,
+          isTicketed: !!source.is_ticketed,
+          hasPersonSteps: !!source.has_person_steps,
         };
       }
       if (selectedEventType) {
-        console.log("Looking for event type:", selectedEventType);
         if (selectedEventType === "all" || selectedEventType.toUpperCase() === "ALL CELLS") {
           return {
-            eventType: "CELLS",
+            eventType: "Cells",
             isGlobal: false,
             isTicketed: false,
             hasPersonSteps: true,
@@ -286,7 +319,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
           );
         });
         if (foundEventType) {
-          console.log("Found event type:", foundEventType);
           return {
             eventType:
               foundEventType.name ||
@@ -297,7 +329,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
             hasPersonSteps: !!foundEventType.hasPersonSteps,
           };
         } else {
-          console.log("Event type not found, using defaults");
           const isCellsType = selectedEventType.toUpperCase() === "CELLS";
           return {
             eventType: selectedEventType,
@@ -318,13 +349,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
     const { eventType, isGlobal, isTicketed, hasPersonSteps } =
       determineEventType();
 
-    console.log("Final event type settings:", {
-      eventType,
-      isGlobal,
-      isTicketed,
-      hasPersonSteps,
-    });
-
     setEventTypeFlags({
       isGlobal,
       isTicketed,
@@ -343,27 +367,6 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   }, [selectedEventTypeObj, selectedEventType, eventTypes]);
 
   useEffect(() => {
-    console.log("Leader fields debug:", {
-      hasPersonSteps,
-      isGlobalEvent,
-      shouldShowLeaderFields: hasPersonSteps && !isGlobalEvent,
-      formData: {
-        leader1: formData.leader1,
-        leader12: formData.leader12,
-      },
-    });
-  }, [hasPersonSteps, isGlobalEvent, formData.leader1, formData.leader12]);
-
-  useEffect(() => {
-    console.log("Price tier debug:", {
-      isTicketedEvent,
-      isGlobalEvent,
-      shouldShowPriceTiers: isTicketedEvent && !isGlobalEvent,
-      priceTiersCount: priceTiers.length,
-    });
-  }, [isTicketedEvent, isGlobalEvent, priceTiers]);
-
-  useEffect(() => {
     if (isTicketedEvent && priceTiers.length === 0) {
       setPriceTiers([
         {
@@ -376,32 +379,30 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
       ]);
     }
   }, [isTicketedEvent]);
-
+const peopleSearchRequestRef = useRef(0);
 const fetchPeople = async (q) => {
-  console.log("fetchPeople called with:", q);
   if (!q?.trim() || q.trim().length < 2) {
     setPeopleData([]);
     return;
   }
 
+  const requestId = ++peopleSearchRequestRef.current;
   try {
     setIsSearchingPeople(true);
-    console.log("Hitting URL:", `${BACKEND_URL}/people/search-fast?query=${encodeURIComponent(q.trim())}&limit=25`);
+    setPeopleSearchError("");
 
     const res = await authFetch(
       `${BACKEND_URL}/people/search-fast?query=${encodeURIComponent(q.trim())}&limit=25`
     );
-
-    console.log("Response status:", res.status);
+    if (!res.ok) {
+      throw new Error(`People search failed (${res.status})`);
+    }
     const data = await res.json();
-    console.log("Raw API response:", data);
-    console.log("Results count:", data?.results?.length);
-
     const people = data?.results || [];
     const formatted = people.map((p) => ({
       id:            p._id,
       fullName:      p.FullName || `${p.Name || ""} ${p.Surname || ""}`.trim(),
-      email:         p.Email || "",
+      email:         p.Email || p.email || "",
       leader1:       p["Leader @1"] || p.leader1 || "",
       leader12:      p["Leader @12"] || p.leader12 || "",
       leader144:     p["Leader @144"] || p.leader144 || "",
@@ -410,34 +411,62 @@ const fetchPeople = async (q) => {
       isDifferentOrg: false,
     }));
 
-    console.log("Formatted people:", formatted);
-    console.log("Setting peopleData to:", formatted.length, "items");
-    setPeopleData(formatted);
+    if (requestId === peopleSearchRequestRef.current) {
+      setPeopleData(formatted);
+      setPeopleSearchError("");
+    }
   } catch (err) {
     console.error("fetchPeople error:", err);
-    setPeopleData([]);
+    if (requestId === peopleSearchRequestRef.current) {
+      setPeopleData([]);
+      setPeopleSearchError("Could not search people. Check your connection and try again.");
+    }
   } finally {
-    setIsSearchingPeople(false);
+    if (requestId === peopleSearchRequestRef.current) {
+      setIsSearchingPeople(false);
+    }
   }
 };
 
   useEffect(() => {
-    const queryString = window.location.search
-    const queries = new URLSearchParams(queryString)
-    if (selectedEventTypeObj.isTicketed === true) {
-      console.log("Event ID", queries.get("eventId"))
-      setEventId(queries.get("eventId"))
-    }
-  }, [])
+  // Update eventId from query param or passed event object
+  const queryParams = new URLSearchParams(window.location.search);
+  const queryEventId = queryParams.get("eventId");
+  const querySessionId = queryParams.get("sessionId");
+  
+  // If selectedEventTypeObj has full event data (eventName), use its ID
+  const hasFullEventData = selectedEventTypeObj && selectedEventTypeObj.eventName;
+  const propEventId = hasFullEventData ? (selectedEventTypeObj._id || selectedEventTypeObj.id) : null;
+  console.log("Event obj",selectedEventTypeObj, "query param eventId", queryEventId, "propEventId", propEventId, "current eventId", eventId);
+  const newEventId = queryEventId || propEventId;
+  if (newEventId && newEventId !== eventId) {
+    setEventId(newEventId);
+  }
+  if (querySessionId) {
+    setSessionId(querySessionId);
+  }
+}, [selectedEventTypeObj])
   useEffect(() => {
-    console.log("dd", eventId)
     if (!eventId) return;
+    
+    // Check if we already have the full event data in selectedEventTypeObj
+    const hasFullEventData = selectedEventTypeObj && selectedEventTypeObj.eventName && 
+      (selectedEventTypeObj._id === eventId || selectedEventTypeObj.id === eventId);
+    
     const fetchEventData = async () => {
       try {
-        const response = await axios.get(`${BACKEND_URL}/events/${eventId}`);
-        const data = response.data;
-
-        console.log("Fetched event data:", data);
+        let data;
+        
+        if (hasFullEventData) {
+          // Use the passed event data directly
+          data = selectedEventTypeObj;
+          console.log("Using passed event data:", data);
+        } else {
+          // Fetch from server
+          const response = await axios.get(`${BACKEND_URL}/events/${eventId}`);
+          data = response.data;
+          console.log("Fetched event data:", data);
+        }
 
         if (data.date) {
           const dt = new Date(data.date);
@@ -459,26 +488,23 @@ const fetchPeople = async (q) => {
         if (data.isTicketed !== undefined) {
           setEventTypeFlags((prev) => ({
             ...prev,
-            isTicketed: !!data.isTicketed,
+            isTicketed: !!data.is_ticketed,
           }));
         }
 
-        if (data.isTicketed) {
-          console.log(
-            "Setting price tiers for ticketed event:",
-            data.priceTiers,
-          );
+        if (data.is_ticketed) {
           if (
             data.priceTiers &&
             Array.isArray(data.priceTiers) &&
             data.priceTiers.length > 0
           ) {
             const formattedPriceTiers = data.priceTiers.map((tier) => ({
-              name: tier.name || "",
+              tier_id: tier.tier_id || tier.id || "",
+              name: tier.name || tier.tier_name,
               price: tier.price || "",
-              ageGroup: tier.ageGroup || "",
-              memberType: tier.memberType || "",
-              paymentMethod: tier.paymentMethod || "",
+              ageGroup: tier.age_group || "",
+              memberType: tier.member_type || "",
+              paymentMethod: tier.payment_method || "",
             }));
             setPriceTiers(formattedPriceTiers);
           } else {
@@ -505,7 +531,7 @@ const fetchPeople = async (q) => {
     };
 
     fetchEventData();
-  }, [eventId]);
+  }, [eventId, selectedEventTypeObj]);
 
   const handleChange = (field, value) => {
     setFormData((prev) => {
@@ -516,6 +542,9 @@ const fetchPeople = async (q) => {
       return {
         ...prev,
         [field]: value,
+        ...(field === "eventLeader" && !eventId
+          ? { eventLeaderEmail: "" }
+          : {}),
       };
     });
   };
@@ -581,6 +610,14 @@ const fetchPeople = async (q) => {
     if (!formData.location) newErrors.location = "Location is required";
     if (!formData.eventLeader)
       newErrors.eventLeader = "Event leader is required";
+    else if (!eventId && !formData.eventLeaderEmail?.trim())
+      newErrors.eventLeader =
+        "Select an event leader with an email address from the suggestions";
+    else if (
+      !eventId &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.eventLeaderEmail.trim())
+    )
+      newErrors.eventLeader = "The selected event leader must have a valid email address";
     if (!formData.description)
       newErrors.description = "Description is required";
     if (!formData.date) newErrors.date = "Date is required";
@@ -673,7 +710,7 @@ const fetchPeople = async (q) => {
         eventTypeToSend === "all" ||
         eventTypeToSend.toLowerCase() === "all cells"
       ) {
-        eventTypeToSend = "CELLS";
+        eventTypeToSend = "Cells";
       }
 
       if (!eventTypeToSend) {
@@ -681,8 +718,6 @@ const fetchPeople = async (q) => {
         setIsSubmitting(false);
         return;
       }
-
-      console.log("Creating event with type:", eventTypeToSend);
 
       let dayValue = "";
 
@@ -693,10 +728,13 @@ const fetchPeople = async (q) => {
       } else {
         dayValue = "Recurring";
       }
-
+      
+      const eventTypeName = eventTypes.find((t) => t.name === formData.eventType)?.name || 'cells'
+      console.log("event types here",eventTypes,formData.eventType)
       const payload = {
         UUID: generateUUID(),
-        eventTypeName: formData.eventType,
+        session_id: sessionId || null,
+        eventTypeName: eventTypeName,
         eventName: formData.eventName,
         isTicketed: !!isTicketedEvent,
         isGlobal: !!isGlobalEvent,
@@ -705,7 +743,7 @@ const fetchPeople = async (q) => {
         location: formData.location,
         eventLeader: formData.eventLeader,
         eventLeaderName: formData.eventLeader,
-        eventLeaderEmail: formData.eventLeaderEmail || "",
+        eventLeaderEmail: formData.eventLeaderEmail?.trim() || "",
         description: formData.description,
         userEmail: user?.email || "",
         recurring_day: formData.recurringDays,
@@ -752,30 +790,25 @@ const fetchPeople = async (q) => {
         payload.leader1 = formData.leader1 || "";
         payload.leader12 = formData.leader12 || "";
       }
+      formData.session_id = sessionId;
+      const response = await authFetch(
+        eventId
+          ? `${BACKEND_URL}/events/${eventId}`
+          : `${BACKEND_URL.replace(/\/$/, "")}/events`,
+        {
+          method: eventId ? "PUT" : "POST",
+          body: JSON.stringify(eventId ? formData : payload),
+        },
+      );
+      const responseData = await response.json().catch(() => ({}));
 
-      console.log("Final Payload:", payload);
-
-      const token = localStorage.getItem("access_token");
-      const headers = {
-        Authorization: token ? `Bearer ${token}` : "",
-        "Content-Type": "application/json",
-      };
-      const response = eventId ?
-        await authFetch(`${BACKEND_URL}/events/${eventId}`, {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(formData)
-        })
-        : await axios.post(
-          `${BACKEND_URL.replace(/\/$/, "")}/events`,
-          payload,
-          { headers },
+      if (!response.ok) {
+        const error = new Error(
+          responseData.detail || `HTTP ${response.status}: ${response.statusText}`,
         );
-
-      console.log("Response:", response.data);
+        error.response = { data: responseData };
+        throw error;
+      }
 
       toast.success(
         eventId ? "Event updated successfully!" : "Event created successfully!",
@@ -1008,6 +1041,7 @@ const fetchPeople = async (q) => {
 
   return (
     <Box sx={containerStyle}>
+      
       <Card
         sx={{
           ...cardStyle,
@@ -1074,7 +1108,7 @@ const fetchPeople = async (q) => {
                   if (selectedObj) {
                     setEventTypeFlags({
                       isGlobal: !!selectedObj.isGlobal,
-                      isTicketed: !!selectedObj.isTicketed,
+                      isTicketed: !!selectedObj.is_ticketed,
                       hasPersonSteps: !!selectedObj.hasPersonSteps,
                     });
                   }
@@ -1210,6 +1244,7 @@ const fetchPeople = async (q) => {
                     <TextField
                       label="Age Group *"
                       value={tier.ageGroup}
+                      // select
                       onChange={(e) =>
                         handlePriceTierChange(index, "ageGroup", e.target.value)
                       }
@@ -1219,6 +1254,9 @@ const fetchPeople = async (q) => {
                       error={!!errors[`tier_${index}_ageGroup`]}
                       helperText={errors[`tier_${index}_ageGroup`]}
                     />
+                      {/* <MenuItem value="under12">under12</MenuItem>
+                      <MenuItem value="over12">over12</MenuItem>
+                    </TextField> */}
 
                     <TextField
                       label="Member Type *"
@@ -1457,6 +1495,8 @@ const fetchPeople = async (q) => {
                     setAutoPopulatedFields(new Set());
                   }
                   if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+                  peopleSearchRequestRef.current += 1;
+                  setPeopleSearchError("");
                   if (value.trim().length >= 2) {
                     searchDebounceRef.current = setTimeout(() => {
                       fetchPeople(value);
@@ -1483,6 +1523,7 @@ const fetchPeople = async (q) => {
                 error={!!errors.eventLeader}
                 helperText={
                   errors.eventLeader ||
+                  peopleSearchError ||
                   (isSearchingPeople
                     ? "Searching..."
                     : "Type at least 2 characters to search")
@@ -1583,6 +1624,33 @@ const fetchPeople = async (q) => {
                   ))}
                 </Box>
               )}
+
+              {!isSearchingPeople &&
+                !peopleSearchError &&
+                formData.eventLeader.trim().length >= 2 &&
+                peopleData.length === 0 && (
+                  <Box
+                    role="status"
+                    sx={{
+                      position: "absolute",
+                      top: "100%",
+                      left: 0,
+                      right: 0,
+                      zIndex: 20000,
+                      p: 1.5,
+                      mt: 0.5,
+                      border: "1px solid",
+                      borderColor: "divider",
+                      borderRadius: 1,
+                      bgcolor: "background.paper",
+                      boxShadow: 2,
+                    }}
+                  >
+                    <Typography variant="body2" color="text.secondary">
+                      No matching people found in your organization.
+                    </Typography>
+                  </Box>
+                )}
             </Box>
 
             {hasPersonSteps && !isGlobalEvent && (

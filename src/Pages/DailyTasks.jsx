@@ -6,6 +6,39 @@ import "react-toastify/dist/ReactToastify.css";
 import { AuthContext } from "../contexts/AuthContext";
 import { useTaskUpdate } from "../contexts/TaskUpdateContext";
 const CACHE_DURATION = 30 * 60 * 1000;
+const normalizePerson = (raw) => {
+  const fullName = (raw.FullName || raw.fullName || "").toString().trim();
+  const nameParts = fullName ? fullName.split(/\s+/) : [];
+  const name = (raw.Name || raw.name || nameParts[0] || "")
+    .toString()
+    .trim();
+  const surname = (raw.Surname || raw.surname || nameParts.slice(1).join(" "))
+    .toString()
+    .trim();
+
+  return {
+    _id: (raw._id || raw.id || "").toString(),
+    name,
+    surname,
+    email: (raw.Email || raw.email || "").toString().trim(),
+    phone: (raw.Number || raw.phone || raw.Phone || "").toString().trim(),
+    fullNameLower: `${name} ${surname}`.toLowerCase().trim(),
+  };
+};
+
+const getRawCachedPeople = () => {
+  const cache = window.globalPeopleCache;
+  return Array.isArray(cache)
+    ? cache
+    : Array.isArray(cache?.data)
+      ? cache.data
+      : [];
+};
+
+const getCachedPeople = () => getRawCachedPeople().map(normalizePerson);
+
+const hasCachedPeople = () => getRawCachedPeople().length > 0;
+
 function Modal({ isOpen, onClose, children, isDarkMode }) {
   if (!isOpen) return null;
   return (
@@ -135,7 +168,7 @@ export default function DailyTasks() {
   const [searchResults, setSearchResults] = useState([]);
   const [assignedResults, setAssignedResults] = useState([]);
   const [submitting, setSubmitting] = useState(false);
-  const [allPeople, setAllPeople] = useState(window.globalPeopleCache || []);
+  const [allPeople, setAllPeople] = useState(getCachedPeople);
   const isFetchingRef = useRef(false);
   const peopleFetchPromiseRef = useRef(null);
   const fetchPeopleDebounceRef = useRef(null);
@@ -513,12 +546,12 @@ export default function DailyTasks() {
           const res = await authFetch(`${API_URL}/cache/people/status`);
           if (!res?.ok) return;
           const status = await res.json();
+          const cacheStatus = status?.cache || {};
 
-          const isComplete = status?.is_complete ?? false;
-          const progress = status?.cache?.load_progress ?? 0;
+          const isComplete =
+            status?.is_complete === true || cacheStatus.is_loading === false;
 
-          // Fetch latest partial data if progressing
-          if (progress > 0) {
+          if (isComplete) {
             const dataRes = await authFetch(`${API_URL}/cache/people`);
             if (dataRes?.ok) {
               const data = await dataRes.json();
@@ -530,10 +563,16 @@ export default function DailyTasks() {
                 setAllPeople(mapped);
               }
             }
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+            setIsLoadingPeople(false);
+            if (cacheStatus.last_error) {
+              toast.error(`People cache failed to load: ${cacheStatus.last_error}`);
+            }
+            return;
           }
 
-          // Done — stop polling, hide banner
-          if (isComplete || attempts >= MAX_ATTEMPTS) {
+          if (attempts >= MAX_ATTEMPTS) {
             clearInterval(pollIntervalRef.current);
             pollIntervalRef.current = null;
             setIsLoadingPeople(false);
@@ -565,45 +604,32 @@ export default function DailyTasks() {
   const fetchAllPeople = useCallback(
     async (forceRefresh = false) => {
       const now = Date.now();
+      const cache = window.globalPeopleCache;
+      const cachedPeople = getCachedPeople();
+      const cacheTimestamp = window.globalCacheTimestamp || cache?.timestamp;
+      const cacheDuration = cache?.expiry || CACHE_DURATION;
 
       // Cache still valid — use it
       if (
         !forceRefresh &&
-        window.globalPeopleCache?.length > 0 &&
-        window.globalCacheTimestamp &&
-        now - window.globalCacheTimestamp < CACHE_DURATION
+        cachedPeople.length > 0 &&
+        cacheTimestamp &&
+        now - cacheTimestamp < cacheDuration
       ) {
-        setAllPeople(window.globalPeopleCache);
-        return window.globalPeopleCache;
+        setAllPeople(cachedPeople);
+        return cachedPeople;
       }
 
       if (isFetchingRef.current && peopleFetchPromiseRef.current) {
         return await peopleFetchPromiseRef.current;
       }
-      if (isFetchingRef.current) return window.globalPeopleCache || [];
+      if (isFetchingRef.current) return cachedPeople;
 
       isFetchingRef.current = true;
       setIsLoadingPeople(true);
 
       peopleFetchPromiseRef.current = (async () => {
         try {
-          const mapPerson = (raw) => {
-            const name = (raw.Name || raw.name || "").toString().trim();
-            const surname = (raw.Surname || raw.surname || "")
-              .toString()
-              .trim();
-            return {
-              _id: (raw._id || raw.id || "").toString(),
-              name,
-              surname,
-              email: (raw.Email || raw.email || "").toString().trim(),
-              phone: (raw.Number || raw.phone || raw.Phone || "")
-                .toString()
-                .trim(),
-              fullNameLower: `${name} ${surname}`.toLowerCase().trim(),
-            };
-          };
-
           // Single request to /cache/people
           const res = await authFetch(`${API_URL}/cache/people`);
           if (!res?.ok) throw new Error("Failed to fetch people cache");
@@ -614,14 +640,14 @@ export default function DailyTasks() {
 
           // Load whatever we have immediately
           if (rawPeople.length > 0) {
-            const mapped = rawPeople.map(mapPerson);
+            const mapped = rawPeople.map(normalizePerson);
             window.globalPeopleCache = mapped;
             window.globalCacheTimestamp = Date.now();
             setAllPeople(mapped);
 
             // If backend is still loading, poll until complete
             if (!isComplete) {
-              pollUntilCacheComplete(mapPerson);
+              pollUntilCacheComplete(normalizePerson);
             } else {
               setIsLoadingPeople(false);
             }
@@ -630,12 +656,12 @@ export default function DailyTasks() {
           }
 
           // Cache empty on backend — poll for it
-          pollUntilCacheComplete(mapPerson);
+          pollUntilCacheComplete(normalizePerson);
           return [];
         } catch (err) {
           console.error("Fetch people error:", err);
           setIsLoadingPeople(false);
-          return window.globalPeopleCache || [];
+          return getCachedPeople();
         } finally {
           isFetchingRef.current = false;
           peopleFetchPromiseRef.current = null;
@@ -649,16 +675,14 @@ export default function DailyTasks() {
 
   useEffect(() => {
     if (!user) return;
-    if (window.globalPeopleCache?.length > 0 && allPeople.length === 0) {
-      setAllPeople(window.globalPeopleCache);
+    const cachedPeople = getCachedPeople();
+    if (cachedPeople.length > 0 && allPeople.length === 0) {
+      setAllPeople(cachedPeople);
     }
-    if (
-      (!window.globalPeopleCache || window.globalPeopleCache.length === 0) &&
-      !isFetchingRef.current
-    ) {
+    if (cachedPeople.length === 0 && !isFetchingRef.current) {
       fetchAllPeople(false).catch(() => {});
     }
-  }, [user, fetchAllPeople]);
+  }, [user, fetchAllPeople, allPeople.length]);
 
   // === SEARCH PEOPLE FUNCTION (exactly as you requested, but safer) ===
   const searchPeople = useCallback((peopleList, searchValue) => {
@@ -686,10 +710,8 @@ export default function DailyTasks() {
 
       try {
         // Cache ready — search instantly, no network
-        const localSource =
-          window.globalPeopleCache?.length > 0
-            ? window.globalPeopleCache
-            : allPeople;
+        const cachedPeople = getCachedPeople();
+        const localSource = cachedPeople.length > 0 ? cachedPeople : allPeople;
 
         if (localSource.length > 0) {
           const results = searchPeople(localSource, q);
@@ -734,10 +756,8 @@ export default function DailyTasks() {
         return;
       }
 
-      const localSource =
-        window.globalPeopleCache?.length > 0
-          ? window.globalPeopleCache
-          : allPeople;
+      const cachedPeople = getCachedPeople();
+      const localSource = cachedPeople.length > 0 ? cachedPeople : allPeople;
 
       if (localSource.length > 0) {
         const results = searchPeople(localSource, q.trim());
@@ -767,10 +787,8 @@ export default function DailyTasks() {
       }
 
       // Cache ready — instant local search
-      const localSource =
-        window.globalPeopleCache?.length > 0
-          ? window.globalPeopleCache
-          : allPeople;
+      const cachedPeople = getCachedPeople();
+      const localSource = cachedPeople.length > 0 ? cachedPeople : allPeople;
 
       if (localSource.length > 0) {
         const quick = searchPeople(localSource, value);
@@ -881,8 +899,7 @@ export default function DailyTasks() {
     setSelectedTask({});
 
     if (
-      (!window.globalPeopleCache || window.globalPeopleCache.length === 0) &&
-      !isFetchingRef.current
+      getCachedPeople().length === 0 && !isFetchingRef.current
     ) {
       toast.info("Loading people…", {
         toastId: PEOPLE_TOAST_ID,
@@ -904,7 +921,6 @@ export default function DailyTasks() {
   };
 
   const handleChange = (e) => {
-    const { name, value } = e.target;
     setTaskData({ ...taskData, [e.target.name]: e.target.value });
   };
 
@@ -915,9 +931,27 @@ export default function DailyTasks() {
         selectedTask?.is_consolidation_task;
 
       if (isConsolidationTask) {
-        updatedData.name = selectedTask.leader_name || selectedTask.name;
-        updatedData.leader_name = selectedTask.leader_name;
-        updatedData.leader_assigned = selectedTask.leader_assigned;
+        const leaderName =
+          updatedData.leader_name ||
+          updatedData.name ||
+          updatedData.assignedTo ||
+          selectedTask.leader_name ||
+          selectedTask.name ||
+          "";
+        const leaderAssigned =
+          updatedData.leader_assigned ||
+          updatedData.assignedfor ||
+          updatedData.assigned_to_email ||
+          selectedTask.leader_assigned ||
+          "";
+
+        updatedData.name = leaderName;
+        updatedData.leader_name = leaderName;
+        updatedData.leader_assigned = leaderAssigned;
+        updatedData.assignedfor = updatedData.assignedfor || leaderAssigned;
+        updatedData.assigned_to_email =
+          updatedData.assigned_to_email || leaderAssigned;
+        updatedData.assignedTo = leaderName;
       }
 
       if (updatedData.status?.toLowerCase() === "completed") {
@@ -940,13 +974,19 @@ export default function DailyTasks() {
                 ...data.updatedTask,
                 date: data.updatedTask.followup_date,
                 ...(isConsolidationTask && {
-                  leader_name: selectedTask.leader_name,
-                  leader_assigned: selectedTask.leader_assigned,
+                  leader_name: updatedData.leader_name || selectedTask.leader_name || "",
+                  leader_assigned:
+                    updatedData.leader_assigned || selectedTask.leader_assigned || "",
+                  assignedTo: updatedData.assignedTo || updatedData.leader_name || "",
+                  assignedfor: updatedData.assignedfor || "",
+                  assigned_to_email: updatedData.assigned_to_email || "",
                 }),
               }
             : t,
         ),
       );
+
+      await fetchUserTasks();
       handleClose();
     } catch (err) {
       console.error("Error updating task:", err.message);
@@ -996,8 +1036,17 @@ export default function DailyTasks() {
       },
       recipientDisplay: task.contacted_person?.name || "",
       assignedTo:
-        task.assignedTo || (user ? `${user.name} ${user.surname}` : ""),
-      assignedEmail: task.assignedfor || user?.email || "",
+        task.assignedTo ||
+        task.leader_name ||
+        task.leader_assigned ||
+        task.name ||
+        (user ? `${user.name} ${user.surname}` : ""),
+      assignedEmail:
+        task.assignedfor ||
+        task.assigned_to_email ||
+        task.leader_assigned ||
+        user?.email ||
+        "",
       dueDate: formatDateTime(task.date || task.followup_date),
       status: task.status,
       taskStage: task.status,
@@ -1020,12 +1069,37 @@ export default function DailyTasks() {
       const isConsolidationTask =
         selectedTask?.taskType === "consolidation" ||
         selectedTask?.is_consolidation_task;
+      const fallbackAssigneeName =
+        taskData.assignedTo || (user ? `${user.name} ${user.surname}` : "");
+      const fallbackAssigneeEmail = taskData.assignedEmail || user?.email || "";
+
+      let assigneeName = fallbackAssigneeName.trim();
+      let assigneeEmail = fallbackAssigneeEmail.trim();
+
+      if (!assigneeEmail && assigneeName) {
+        const matchedPerson = allPeople.find((person) => {
+          const fullName = `${person.name || ""} ${person.surname || ""}`.trim().toLowerCase();
+          const searchValue = assigneeName.toLowerCase();
+          return (
+            fullName === searchValue ||
+            fullName.includes(searchValue) ||
+            (person.email || "").toLowerCase() === searchValue
+          );
+        });
+        assigneeEmail = matchedPerson?.email || "";
+      }
+
+      if (!assigneeName) {
+        assigneeName = user ? `${user.name || ""} ${user.surname || ""}`.trim() : "";
+      }
+      if (!assigneeEmail) {
+        assigneeEmail = user?.email || "";
+      }
 
       const taskPayload = {
         memberID: user.id,
-        name: isConsolidationTask
-          ? taskData.assignedTo
-          : taskData.assignedTo || (user ? `${user.name} ${user.surname}` : ""),
+        name: assigneeName,
+        assignedTo: assigneeName,
         taskType:
           taskTypes.find(
             (t) => String(t._id || t.id) === String(taskData.taskType),
@@ -1044,17 +1118,15 @@ export default function DailyTasks() {
         followup_date: new Date(taskData.dueDate).toISOString(),
         status: taskData.taskStage || "Open",
         type: formType || "call",
-        assignedfor: taskData.assignedEmail || user.email,
-        assigned_to_email: taskData.assignedEmail || user.email,
+        assignedfor: assigneeEmail,
+        assigned_to_email: assigneeEmail,
         created_by_email: user.email,
         created_by_name: `${user.name} ${user.surname}`.trim(),
       };
 
       if (isConsolidationTask) {
-        taskPayload.leader_name =
-          selectedTask.leader_name || taskData.assignedTo;
-        taskPayload.leader_assigned =
-          selectedTask.leader_assigned || taskData.assignedTo;
+        taskPayload.leader_name = assigneeName;
+        taskPayload.leader_assigned = assigneeEmail || assigneeName;
         taskPayload.is_consolidation_task = true;
       }
 
@@ -1095,6 +1167,7 @@ export default function DailyTasks() {
     const isNewPerson = task.is_new_person_task;
 
     if (!isConsolidation && !isNewPerson) return null;
+    if (task.source_display === "Manual") return null;
 
     // Get the service date from the task - try multiple field names
     const serviceDate = task.decision_date || task.created_at || task.date;
@@ -1197,9 +1270,6 @@ export default function DailyTasks() {
     : (followupDate || fallbackDate);
 
   if (!dateToCheck) return false;
-
-  const getStart = getStartOfWeek;
-  const getEnd = getEndOfWeek;
 
   switch (dateRange) {
     case "today":
@@ -1433,9 +1503,7 @@ export default function DailyTasks() {
   }, [updateCount, fetchUserTasks]);
 
   // Whether people are still being loaded for the first time
-  const peopleNotLoadedYet =
-    (!window.globalPeopleCache || window.globalPeopleCache.length === 0) &&
-    allPeople.length === 0;
+  const peopleNotLoadedYet = !hasCachedPeople() && allPeople.length === 0;
 
   return (
     <div
@@ -2438,20 +2506,9 @@ export default function DailyTasks() {
                   assignedTo: value,
                   assignedEmail: "",
                 });
-                if (
-                  !(
-                    selectedTask?.taskType === "consolidation" ||
-                    selectedTask?.is_consolidation_task
-                  )
-                ) {
-                  fetchAssigned(value);
-                }
+                fetchAssigned(value);
               }}
               autoComplete="off"
-              disabled={
-                selectedTask?.taskType === "consolidation" ||
-                selectedTask?.is_consolidation_task
-              }
               required
               style={{
                 width: "100%",
@@ -2462,24 +2519,11 @@ export default function DailyTasks() {
                 backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
                 color: isDarkMode ? "#fff" : "#1a1a24",
                 outline: "none",
-                cursor:
-                  selectedTask?.taskType === "consolidation" ||
-                  selectedTask?.is_consolidation_task
-                    ? "not-allowed"
-                    : "text",
+                cursor: "text",
               }}
-              placeholder={
-                selectedTask?.taskType === "consolidation" ||
-                selectedTask?.is_consolidation_task
-                  ? "Leader name (read-only)"
-                  : "Search and select assignee..."
-              }
+              placeholder="Search and select assignee..."
             />
-            {assignedResults.length > 0 &&
-              !(
-                selectedTask?.taskType === "consolidation" ||
-                selectedTask?.is_consolidation_task
-              ) && (
+            {assignedResults.length > 0 && (
                 <ul
                   style={{
                     position: "absolute",

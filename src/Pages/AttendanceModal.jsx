@@ -8,6 +8,14 @@ import {
 } from "react";
 import { toast } from "react-toastify";
 import {
+  shouldSyncServiceCheckIn,
+  presetHeadcountValue,
+  resolveDownloadHeadcount,
+  numericFieldSum,
+  computeTicketSubtotals,
+  pickDownloadPeople,
+} from "../utils/attendanceLogic";
+import {
   ArrowLeft,
   UserPlus,
   Search,
@@ -20,6 +28,8 @@ import { CircularProgress, Box, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { AuthContext } from "../contexts/AuthContext";
 import { useOrgConfig } from "../contexts/OrgConfigContext";
+import {supabase} from '../services/supabase-client'
+
 const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
 const GEOAPIFY_COUNTRY_CODE = (
   import.meta.env.VITE_GEOAPIFY_COUNTRY_CODE || "za"
@@ -249,7 +259,7 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
   }, [inviterSearchInput, peopleList]);
 
   const handleInviterSelect = (person) => {
-   console.log("Selected inviter:", person.fullName);
+    console.log("Selected inviter:", person.fullName);
 
     setFormData((prev) => ({ ...prev, invitedBy: person.fullName }));
     setInviterSearchInput(person.fullName);
@@ -281,6 +291,24 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
 
   const handleSubmit = async (finalLeaderInfo) => {
     try {
+      const norm = (s) => (s || "").toString().trim().toLowerCase();
+      const dupFull = `${norm(formData.name)} ${norm(formData.surname)}`.trim();
+      const dupEmail = norm(formData.email);
+      const dupPhone = norm(formData.mobile || "").replace(/[^\d+]/g, "");
+      const existingDup = (peopleList || []).find((p) => {
+        const pEmail = norm(p.email);
+        if (dupEmail && pEmail && dupEmail === pEmail) return true;
+        const pFull = norm(`${p.name || ""} ${p.surname || ""}`.trim());
+        const pPhone = norm(p.phone || "").replace(/[^\d+]/g, "");
+        return dupFull && pFull && dupFull === pFull && dupPhone && pPhone && dupPhone === pPhone;
+      });
+      if (existingDup) {
+        toast.error(
+          `A person with this info already exists (${existingDup.email || existingDup.Email || existingDup.fullName || ""}). Search and select them instead of creating a duplicate.`,
+        );
+        return;
+      }
+
       const payload = {
         invitedBy: formData.invitedBy,
         name: formData.name,
@@ -307,6 +335,7 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
         },
         body: JSON.stringify(payload),
       });
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || "Failed to create person");
@@ -315,7 +344,10 @@ const AddPersonToEvents = ({ isOpen, onClose }) => {
       const result = await response.json();
       console.log("Person created:", result);
       toast.success("Person created successfully!");
-      await authFetch(`${BACKEND_URL}/cache/people/refresh`, { method: "POST" });
+
+      await authFetch(`${BACKEND_URL}/cache/people/refresh`, {
+        method: "POST",
+      });
       handleClose();
     } catch (error) {
       console.error("Error creating person:", error);
@@ -961,7 +993,6 @@ const LeaderSelectionModal = ({
   onBack,
   onSubmit,
   preloadedPeople = [],
-  autoFilledLeaders,
 }) => {
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
@@ -992,6 +1023,7 @@ const LeaderSelectionModal = ({
   });
 
   const [, setLoadingLeaders] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
 
@@ -1125,14 +1157,19 @@ const LeaderSelectionModal = ({
   };
   console.log("leadership set", handleLeaderSelect);
 
-  const handleSubmitLeaders = () => {
+  const handleSubmitLeaders = async () => {
+    setIsSubmitting(true);
     const finalLeaderInfo = {
       leader1: leaderData.leader1 || "",
       leader12: leaderData.leader12 || "",
       leader144: leaderData.leader144 || "",
       leader1728: "",
     };
-    onSubmit(finalLeaderInfo);
+    try {
+      await onSubmit(finalLeaderInfo);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const leaderLabels = {
@@ -1300,13 +1337,11 @@ const LeaderSelectionModal = ({
                 <input
                   value={leaderSearches[field]}
                   onChange={(e) => {
-                    // ADD THIS
                     const val = e.target.value;
                     setLeaderSearches((prev) => ({ ...prev, [field]: val }));
                     setLeaderData((prev) => ({ ...prev, [field]: val }));
                   }}
                   onFocus={() =>
-                    // ADD THIS
                     setShowDropdowns((prev) => ({ ...prev, [field]: true }))
                   }
                   onBlur={() =>
@@ -1373,10 +1408,16 @@ const LeaderSelectionModal = ({
           </button>
           <button
             type="button"
-            style={styles.submitBtn}
+            style={{
+              ...styles.submitBtn,
+              opacity: isSubmitting ? 0.65 : 1,
+              cursor: isSubmitting ? "not-allowed" : "pointer",
+              pointerEvents: isSubmitting ? "none" : "auto",
+            }}
             onClick={handleSubmitLeaders}
+            disabled={isSubmitting}
           >
-            Create Person
+            {isSubmitting ? "Creating Person..." : "Create Person"}
           </button>
         </div>
       </div>
@@ -1403,7 +1444,20 @@ const AttendanceModal = ({
   isActiveTeams,
 }) => {
   const { authFetch } = useContext(AuthContext);
-  const { getHierarchyLabel } = useOrgConfig();
+  const { getAllHierarchyLevels } = useOrgConfig();
+  const leaderFieldLabel = (field) => {
+    const entry = (getAllHierarchyLevels() || []).find(
+      (h) => h && h.field === field,
+    );
+    return (
+      entry?.label ||
+      (field === "leader12"
+        ? "Leader at 12"
+        : field === "leader144"
+          ? "Leader at 144"
+          : field)
+    );
+  };
   const [searchName, setSearchName] = useState("");
   const [activeTab, setActiveTab] = useState(0);
   const [checkedIn, setCheckedIn] = useState({});
@@ -1415,6 +1469,9 @@ const AttendanceModal = ({
   const [people, setPeople] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const isFutureSession = event?.date
+    ? new Date(event.date) > new Date()
+    : false;
   const [associateSearch, setAssociateSearch] = useState("");
   const [isLoadingPeople, setIsLoadingPeople] = useState(false);
   const [showAddPersonModal, setShowAddPersonModal] = useState(false);
@@ -1427,16 +1484,68 @@ const AttendanceModal = ({
     [],
   );
   const [preloadedPeople, setPreloadedPeople] = useState([]);
+  const [peoplePage, setPeoplePage] = useState(1);
+  const [peopleHasMore, setPeopleHasMore] = useState(false);
+  const [peopleTotal, setPeopleTotal] = useState(0);
+  const [isLoadingMorePeople, setIsLoadingMorePeople] = useState(false);
+
+  // ─── NEW: flag to prevent duplicate consolidation calls if Save is clicked twice ───
+  const [consolidationsCreated, setConsolidationsCreated] = useState(false);
+  const ticketSaveTimers = useRef({});
+  const pendingTicketSaveIds = useRef(new Set());
+  const persistentAttendeesRef = useRef([]);
+  const headcountSaveTimerRef = useRef(null);
+  const headcountEditedRef = useRef(false);
+  const persistHeadcount = useCallback(
+    (value) => {
+      const parsed = parseInt(value, 10);
+      const headcount = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+      if (headcountSaveTimerRef.current)
+        clearTimeout(headcountSaveTimerRef.current);
+      headcountSaveTimerRef.current = setTimeout(async () => {
+        headcountSaveTimerRef.current = null;
+        const token = localStorage.getItem("token");
+        const eventId = getAttendanceEventId(event);
+        if (!eventId || eventId === "undefined") return;
+        try {
+          const res = await authFetch(
+            `${BACKEND_URL}/events/${eventId}/headcount`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ headcount }),
+            },
+          );
+          if (!res.ok) throw new Error(`Headcount save failed: ${res.status}`);
+          console.log("Headcount auto-saved:", headcount);
+        } catch (err) {
+          console.error("Failed to auto-save headcount:", err);
+        }
+      }, 600);
+    },
+    [event],
+  );
+
+  const handleHeadcountChange = (e) => {
+    headcountEditedRef.current = true;
+    setManualHeadcount(e.target.value);
+    persistHeadcount(e.target.value);
+  };
+
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
-  
-  // Ensure isTicketed and priceTiers are properly accessed from the event object
-  const isTicketedEvent = event?.isTicketed === true || event?.isTicketed === "true" || false;
-  const eventPriceTiers = (
-    event?.priceTiers || 
+  console.log('full event:', event);
+  const isTicketedEvent =  event.isTicketed;
+  // Only sync to Service Check-In for events that actually appear there:
+  // ticketed events and global events (services). Never cells, training, etc.
+  const syncsServiceCheckIn = shouldSyncServiceCheckIn(event);
+  const eventPriceTiers =
+    event?.priceTiers ||
     event?.formData?.priceTiers ||
     event?.price_tiers ||
-    []
-  );
+    [];
 
   const theme = useTheme();
 
@@ -1456,21 +1565,247 @@ const AttendanceModal = ({
     },
   });
 
+  // ─── NEW: Helper to resolve which leader gets the consolidation task ───
+  // Uses leader144 if available, falls back to leader12
+  const resolveAssignedTo = (person) => {
+    const leader144 = person.leader144?.trim() || "";
+    const leader12 = person.leader12?.trim() || "";
+    if (leader144 && leader144 !== leader12) {
+      return leader144;
+    }
+    if (leader12) {
+      return leader12;
+    }
+    return null;
+  };
+
+  const getAttendanceEventId = (eventObject) => {
+    if (!eventObject) return "";
+
+    const rawId = eventObject._id || eventObject.id || "";
+    if (!rawId) return "";
+
+    const [baseId, ...suffixParts] = rawId.split("_");
+    const suffix = suffixParts.join("_");
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+    if (suffix && dateRegex.test(suffix)) {
+      return rawId;
+    }
+
+    const originalEventId = eventObject.original_event_id || baseId;
+    const dateSource =
+      eventObject.date ||
+      eventObject.event_date ||
+      eventObject.event_date_exact ||
+      eventObject.event_date_iso ||
+      "";
+    const cleanDate = String(dateSource).split("T")[0].split(" ")[0];
+
+    return originalEventId && cleanDate
+      ? `${originalEventId}_${cleanDate}`
+      : originalEventId || rawId;
+  };
+
+  const getBaseEventId = (eventObject) => {
+    const attendanceId = getAttendanceEventId(eventObject);
+    if (!attendanceId) return "";
+    const [baseId] = attendanceId.split("_");
+    return (eventObject?.original_event_id || baseId) || "";
+  };
+
+  const getHighestAvailableLeader = (person) => {
+    if (!person)
+      return { leader: "No Leader Assigned", level: 0, hasLeader: false };
+
+    const leaders = [];
+    if (Array.isArray(person.leaders) && person.leaders.length > 0) {
+      person.leaders.forEach((l) => {
+        if (l?.level != null && l?.name) {
+          leaders.push({ level: l.level, name: l.name });
+        }
+      });
+    }
+
+    // Also consider flat leader fields if the structured array is empty
+    if (leaders.length === 0) {
+      if (person.leader144 && person.leader144.trim())
+        leaders.push({ level: 144, name: person.leader144.trim() });
+      if (person.leader12 && person.leader12.trim())
+        leaders.push({ level: 12, name: person.leader12.trim() });
+      if (person.leader1 && person.leader1.trim())
+        leaders.push({ level: 1, name: person.leader1.trim() });
+    }
+
+    if (leaders.length === 0) {
+      return { leader: "No Leader Assigned", level: 0, hasLeader: false };
+    }
+
+    leaders.sort((a, b) => b.level - a.level);
+    return {
+      leader: leaders[0].name,
+      level: leaders[0].level,
+      hasLeader: true,
+    };
+  };
+
+  // ─── NEW: Resolve a leader's email from the person's structured leaders array ───
+  // Mirrors the ServiceCheckIn resolveLeaderEmail helper
+  const resolveLeaderEmail = (leaderName, person) => {
+    if (!leaderName || !person) return "";
+
+    if (Array.isArray(person.leaders)) {
+      const found = person.leaders.find(
+        (l) =>
+          (l.name || "").trim().toLowerCase() ===
+          leaderName.trim().toLowerCase(),
+      );
+      if (found?.email) {
+        return (found.email || "").trim().toLowerCase();
+      }
+    }
+    return "";
+  };
+
+  // Create a follow-up task for a leader when a new person is added via cell
+  const createCellConsolidationTaskForLeader = async ({
+    leaderName,
+    leaderEmail,
+    person,
+    eventId,
+  }) => {
+    try {
+      if (!leaderEmail) {
+        console.warn(
+          "No leader email found — cell consolidation task not created.",
+        );
+        toast.warning(
+          "No leader email found. Consolidation task may not be visible to leader.",
+        );
+        return;
+      }
+
+      const normalizedEmail = (leaderEmail || "").trim().toLowerCase();
+      const todayDate = new Date().toISOString().split("T")[0];
+
+      // Set due date to 24 hours from now — same as ServiceCheckIn
+      const dueDate = new Date();
+      dueDate.setHours(dueDate.getHours() + 24);
+
+      const taskPayload = {
+        memberID: currentUser?.id || "",
+        name: leaderName,
+        taskType: "Cell Consolidation",
+        contacted_person: {
+          name: `${person.Name || person.name || ""} ${person.Surname || person.surname || ""}`.trim(),
+          phone: person.Number || person.phone || "",
+          email: person.Email || person.email || "",
+        },
+        followup_date: dueDate.toISOString(),
+        status: "Open",
+        type: "Cell Consolidation",
+        assignedfor: normalizedEmail,
+        assigned_to_email: normalizedEmail,
+        created_by_email: (currentUser?.email || "").trim().toLowerCase(),
+        created_by_name:
+          `${currentUser?.name || ""} ${currentUser?.surname || ""}`.trim(),
+        event_id: eventId,
+        is_new_person_task: true,
+        decision_date: todayDate,
+        source: "cell_consolidation",
+      };
+
+      console.log("CELL CONSOLIDATION TASK PAYLOAD:", taskPayload);
+
+      const res = await authFetch(`${BACKEND_URL}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(taskPayload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          data.message || "Failed to create cell consolidation task",
+        );
+      }
+
+      console.log("Cell consolidation task created successfully!");
+      return data;
+    } catch (err) {
+      console.error("Error creating cell consolidation task:", err.message);
+      throw err;
+    }
+  };
+
+  // ─── NEW: Fire POST /consolidations for a single person ───
+  const createCellConsolidation = async ({ person, decisionType, eventId, session_id }) => {
+    //logic to get assigned person's details:
+    const assignedTo = resolveAssignedTo(person) || event?.eventLeaderName
+
+    if (!assignedTo) {
+      console.warn(
+        `No leader found for ${person.fullName} — assigning consolidation to event leader`,
+      );
+      
+
+    }
+
+    const nameParts = (person.fullName || "").trim().split(" ");
+    const personName = nameParts[0] || "";
+    const personSurname = nameParts.slice(1).join(" ") || "";
+    console.log("LOOK HERE!",event)
+    const payload = {
+      person_name: person.name || personName,
+      person_surname: person.surname || personSurname,
+      person_email: person.email || "",
+      person_phone: person.phone || "",
+      decision_type: decisionType, // "first_time" or "recommitment"
+      decision_date: new Date().toISOString().split("T")[0],
+      assigned_to: assignedTo,
+      assigned_to_email: "",
+      event_id: eventId || "",
+      source: "cell_consolidation",
+      leaders: [person.leader12, person.leader144].filter(
+        (l) => l && l.trim() !== "",
+      ),
+      notes: "",
+      person_id: person.person_id || person.id,
+      session_id: session_id || "",
+      event_leader_name: event.eventLeaderName,
+      event_leader_email: event.eventLeaderEmail
+    };
+
+    const response = await authFetch(`${BACKEND_URL}/consolidations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `HTTP ${response.status}`);
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("attendanceUpdated", {
+        detail: {
+          eventId: getBaseEventId(event),
+          personId: person.id,
+        },
+      }),
+    );
+    return { success: true, name: person.fullName };
+  };
+
   const calculateFinancials = (personId) => {
     const ticketInfo = attendeeTicketInfo[personId] || {};
-    if (
-      ticketInfo.paid !== undefined &&
-      ticketInfo.owing !== undefined &&
-      ticketInfo.change !== undefined
-    ) {
-      return {
-        paid: ticketInfo.paid,
-        owing: ticketInfo.owing,
-        change: ticketInfo.change,
-      };
-    }
-    const price = ticketInfo.price || 0;
-    const paidAmount = ticketInfo.paidAmount || 0;
+    const toNumber = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const price = toNumber(ticketInfo.price);
+    const paidAmount = toNumber(ticketInfo.paidAmount);
 
     if (paidAmount >= price) {
       return {
@@ -1493,6 +1828,109 @@ const AttendanceModal = ({
     }
   };
 
+  const syncServiceCheckIn = async (person, isCheckedIn) => {
+    if (!syncsServiceCheckIn) return;
+
+    const syncEventId = getAttendanceEventId(event);
+    if (!syncEventId || !person?.id) return;
+
+    const personData = {
+      id: person.id,
+      name: person.name || person.fullName || "",
+      surname: person.surname || "",
+      fullName: person.fullName || person.name || "",
+      email: person.email || "",
+      phone: person.phone || "",
+      number: person.phone || "",
+      leader12: person.leader12 || "",
+      leader144: person.leader144 || "",
+    };
+
+    if (isCheckedIn) {
+      const res = await authFetch(`${BACKEND_URL}/service-checkin/checkin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event_id: syncEventId,
+          person_data: personData,
+          type: "attendee",
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const message = String(body?.message || body?.error || "").toLowerCase();
+        if (!message.includes("already")) {
+          // Non-blocking: keep the local/attendance state consistent even if the
+          // door sync rejects this person (e.g. "already" variants, id format).
+          console.warn(
+            `Check-in sync to Service Check-In failed (${res.status}):`,
+            message,
+          );
+        }
+      }
+    } else {
+      const res = await authFetch(`${BACKEND_URL}/service-checkin/remove`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event_id: syncEventId,
+          person_id: person.id,
+          type: "attendees",
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.warn(
+          `Check-in remove sync failed (${res.status}):`,
+          String(body?.message || body?.error || ""),
+        );
+      }
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("attendanceUpdated", {
+        detail: {
+          eventId: syncEventId,
+          attendanceEventId: syncEventId,
+        },
+      }),
+    );
+  };
+
+  const persistTicketInfoDebounced = (person, nextTicket) => {
+    if (!person?.id) return;
+    pendingTicketSaveIds.current.add(person.id);
+    if (ticketSaveTimers.current[person.id])
+      clearTimeout(ticketSaveTimers.current[person.id]);
+    ticketSaveTimers.current[person.id] = setTimeout(() => {
+      ticketSaveTimers.current[person.id] = null;
+      const token = localStorage.getItem("token");
+      authFetch(`${BACKEND_URL}/update_attendee_price_tier_info`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          person_id: person.id,
+          event_id: event.event_id,
+          priceName: nextTicket.priceName,
+          price: nextTicket.price,
+          ageGroup: nextTicket.ageGroup,
+          paymentMethod: nextTicket.paymentMethod,
+          paid: nextTicket.paid || 0,
+        }),
+      })
+        .catch((err) => {
+          console.error("Failed to update attendee price tier info:", err);
+          toast.error("Failed to update attendee price tier info");
+        })
+        .finally(() => {
+          pendingTicketSaveIds.current.delete(person.id);
+        });
+    }, 600);
+  };
+
   const clearGlobalPeopleCache = () => {
     try {
       if (typeof window !== "undefined") {
@@ -1513,7 +1951,6 @@ const AttendanceModal = ({
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
-      // Clear local cache to force reload on next search
       delete window.globalPeopleCache;
       console.log("People cache refreshed successfully");
     } catch (err) {
@@ -1707,32 +2144,47 @@ const AttendanceModal = ({
         },
       });
 
-      if (headcount > 0) {
-        setManualHeadcount(headcount.toString());
-      } else {
-        setManualHeadcount("0");
-      }
+      // Headcount keeps a previously saved value, otherwise stays at zero —
+      // it must never default to the number of people checked in.
+      const presetHeadcount = presetHeadcountValue(headcount);
+      setManualHeadcount(presetHeadcount);
+      headcountEditedRef.current = false;
       window.__lastLoadedAttendance = weekAttendance;
     } catch (error) {
       console.error("Error loading event statistics:", error);
     }
   };
+
   const loadPersistentAttendees = async (eventId) => {
+    
     if (!eventId || eventId === "undefined") {
       console.error("Invalid eventId:", eventId);
       return;
     }
 
-    const actualEventId = eventId.includes("_")
-      ? eventId.split("_")[0]
-      : eventId;
-
     try {
       const token = localStorage.getItem("token");
 
+      // 1. Build the query string dynamically
+      const queryParams = new URLSearchParams({
+        event_name: event.eventName,
+        session_id: event.session_id,
+        event_leader: event.eventLeaderName,
+        leader_at_12: event.leader12,
+        event_type: event.eventType
+      }).toString();
+    
+      const event_id= event.event_id;
+      console.log("PAYLOAD?",event)
+
+      // 2. Append it to your endpoint URL
       const response = await authFetch(
-        `${BACKEND_URL}/events/${eventId}/persistent-attendees`,
-        { headers: { Authorization: `Bearer ${token}` } },
+        `${BACKEND_URL}/events/${event_id}/persistent-attendees?${queryParams}`,
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`,
+          }
+        }
       );
 
       if (!response.ok) {
@@ -1742,29 +2194,74 @@ const AttendanceModal = ({
 
       const data = await response.json();
 
+      console.log("THE EVENT",event)
+
       const persistentList = data.persistent_attendees || [];
-      const checkedInList = data.checked_in_attendees || [];
+      const checkedInList = data.attendees || [];
+      // console.log("PERSISTENT LIST:", persistentList);
+      // console.log("CHECKED-IN LIST:", checkedInList);
 
       setPersistentCommonAttendees(persistentList);
 
-      const isCompleted =
-        data.attendance_status === "complete" ||
-        data.attendance_status === "did_not_meet";
+      const isCompleted = true
+        event.status === "complete" ||
+        event.status === "did_not_meet";
+
+      const attendanceEventId = getAttendanceEventId(event) || eventId;
+
+      // Door check-ins only matter for events that actually sync with Service
+      // Check-In (global services, ticketed events). Cells / training never
+      // query it, so their check-in state stays a fresh, self-contained roster.
+      let liveCheckedInList = [];
+      let liveResponseOk = false;
+      if (syncsServiceCheckIn) {
+        const liveResponse = await authFetch(
+          `${BACKEND_URL}/service-checkin/real-time-data?event_id=${encodeURIComponent(attendanceEventId)}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (liveResponse.ok) {
+          liveResponseOk = true;
+          const liveData = await liveResponse.json();
+          liveCheckedInList = [
+            ...(liveData.present_attendees || []),
+            ...(liveData.new_people || []),
+          ];
+        }
+      }
+
+      // An event that was never captured (no status yet / "incomplete") should
+      // open as a fresh instance: nobody starts checked in. Previously saved
+      // checked_in_attendees are only restored once the record is captured.
+      const status = String(data.attendance_status || "").toLowerCase();
+      const isCaptured =
+        status === "complete" ||
+        status === "did_not_meet" ||
+        status === "closed";
+        // const checkedInList = liveResponseOk
+        //   ? liveCheckedInList
+        //   : isCaptured
+        //     ? data.checked_in_attendees || []
+        //     : [];
+
+      setPersistentCommonAttendees(persistentList);
+
       const newCheckedIn = {};
       persistentList.forEach((att) => {
         if (att.id) newCheckedIn[att.id] = false;
       });
-      if (isCompleted && data.attendance_status !== "did_not_meet") {
+
+      if (isCompleted && event.status !== "did_not_meet") {
         checkedInList.forEach((att) => {
           if (att.id) newCheckedIn[att.id] = true;
         });
       }
+      
       setCheckedIn(newCheckedIn);
 
       const newDecisions = {};
       const newDecisionTypes = {};
 
-      if (isCompleted && data.attendance_status !== "did_not_meet") {
+      if (isCompleted && event.status !== "did_not_meet") {
         checkedInList.forEach((att) => {
           if (att.id && att.decision) {
             newDecisions[att.id] = true;
@@ -1776,8 +2273,6 @@ const AttendanceModal = ({
       setDecisions(newDecisions);
       setDecisionTypes(newDecisionTypes);
 
-      // Always initialize ticket info for both ticketed and non-ticketed events
-      // This ensures we're ready if the ticketed flag changes
       const newTicketInfo = {};
 
       persistentList.forEach((att) => {
@@ -1787,7 +2282,8 @@ const AttendanceModal = ({
             price: att.price ?? att.Price ?? 0,
             ageGroup: att.ageGroup || att.AgeGroup || "",
             paymentMethod: att.paymentMethod || att.PaymentMethod || "Cash",
-            paidAmount: att.paidAmount ?? att.PaidAmount ?? att.paid ?? att.Paid ?? 0,
+            paidAmount:
+              att.paidAmount ?? att.PaidAmount ?? att.paid ?? att.Paid ?? 0,
             paid: att.paid ?? att.Paid ?? 0,
             owing: att.owing ?? att.Owing ?? 0,
             change: att.change ?? att.Change ?? 0,
@@ -1795,46 +2291,87 @@ const AttendanceModal = ({
         }
       });
 
-      if (isCompleted && data.attendance_status !== "did_not_meet") {
-        checkedInList.forEach((att) => {
-          if (att.id) {
-            newTicketInfo[att.id] = {
-              ...newTicketInfo[att.id],
-              priceName:
-                att.priceName ?? att.PriceName ?? newTicketInfo[att.id]?.priceName ?? "",
-              price: att.price ?? att.Price ?? newTicketInfo[att.id]?.price ?? 0,
-              ageGroup: att.ageGroup ?? att.AgeGroup ?? newTicketInfo[att.id]?.ageGroup ?? "",
-              paymentMethod:
-                att.paymentMethod ?? att.PaymentMethod ??
-                newTicketInfo[att.id]?.paymentMethod ?? "Cash",
-              paidAmount:
-                att.paidAmount ?? att.PaidAmount ??
-                att.paid ?? att.Paid ??
-                newTicketInfo[att.id]?.paidAmount ?? 0,
-              paid: att.paid ?? att.Paid ?? newTicketInfo[att.id]?.paid ?? 0,
-              owing: att.owing ?? att.Owing ?? newTicketInfo[att.id]?.owing ?? 0,
-              change: att.change ?? att.Change ?? newTicketInfo[att.id]?.change ?? 0,
-            };
-          }
-        });
-      }
+      checkedInList.forEach((att) => {
+        const id = att.id || att._id || att.person_id;
+        if (id) {
+          newTicketInfo[id] = {
+            ...newTicketInfo[id],
+            priceName:
+              att.priceName ??
+              att.PriceName ??
+              newTicketInfo[id]?.priceName ??
+              "",
+            price: att.price ?? att.Price ?? newTicketInfo[id]?.price ?? 0,
+            ageGroup:
+              att.ageGroup ??
+              att.AgeGroup ??
+              newTicketInfo[id]?.ageGroup ??
+              "",
+            paymentMethod:
+              att.paymentMethod ??
+              att.PaymentMethod ??
+              newTicketInfo[id]?.paymentMethod ??
+              "Cash",
+            paidAmount:
+              att.paidAmount ??
+              att.PaidAmount ??
+              att.paid ??
+              att.Paid ??
+              newTicketInfo[id]?.paidAmount ??
+              0,
+            paid: att.paid ?? att.Paid ?? newTicketInfo[id]?.paid ?? 0,
+            owing: att.owing ?? att.Owing ?? newTicketInfo[id]?.owing ?? 0,
+            change: att.change ?? att.Change ?? newTicketInfo[id]?.change ?? 0,
+          };
+        }
+      });
 
-      setAttendeeTicketInfo(newTicketInfo);
+      setAttendeeTicketInfo((current = {}) => {
+        const merged = { ...newTicketInfo };
+        pendingTicketSaveIds.current.forEach((personId) => {
+          if (current[personId]) merged[personId] = current[personId];
+        });
+        return merged;
+      });
+
+      const userEditingHeadcount = headcountEditedRef.current;
 
       if (data.attendance_status === "did_not_meet") {
         setDidNotMeet(true);
-        setManualHeadcount("0");
-      } else if (isCompleted && data.total_headcounts > 0) {
+        if (!userEditingHeadcount) {
+          setManualHeadcount("0");
+          headcountEditedRef.current = false;
+        }
+      } else if (data.total_headcounts > 0) {
         setDidNotMeet(false);
         setManualHeadcount(data.total_headcounts.toString());
       } else {
         setDidNotMeet(false);
-        setManualHeadcount("0");
+        if (!userEditingHeadcount) {
+          setManualHeadcount("0");
+          headcountEditedRef.current = false;
+        }
       }
     } catch (error) {
       console.error("Error loading persistent attendees:", error);
     }
   };
+
+  useEffect(() => {
+    if (!isOpen || !event) return;
+    const eventId = getAttendanceEventId(event);
+    const baseEventId = getBaseEventId(event);
+    const handleAttendanceUpdated = (updatedEvent) => {
+      const detail = updatedEvent.detail || {};
+      const matchesBase = baseEventId && detail.eventId === baseEventId;
+      const matchesComposite = eventId && detail.attendanceEventId === eventId;
+      if (!matchesBase && !matchesComposite && detail.eventId !== eventId) return;
+      loadPersistentAttendees(eventId);
+    };
+    window.addEventListener("attendanceUpdated", handleAttendanceUpdated);
+    return () =>
+      window.removeEventListener("attendanceUpdated", handleAttendanceUpdated);
+  }, [isOpen, event]);
 
   const loadPreloadedPeople = async (forceRefresh = false) => {
     const now = Date.now();
@@ -1862,8 +2399,7 @@ const AttendanceModal = ({
     try {
       const token = localStorage.getItem("access_token");
       const headers = { Authorization: `Bearer ${token}` };
-      // Fetch all people without limit (or with a very high limit)
-      const res = await authFetch(`${BACKEND_URL}/people?perPage=5000`, {
+      const res = await authFetch(`${BACKEND_URL}/people/paginated?page=1&perPage=100`, {
         headers,
       });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -1880,7 +2416,6 @@ const AttendanceModal = ({
         const leader144 = person["Leader @144"] || person.leader144 || "";
         const leader1728 = person["Leader @1728"] || person.leader1728 || "";
 
-        // Include leader names in searchText for better search results
         return {
           id: person._id,
           fullName: fullName,
@@ -1950,65 +2485,74 @@ const AttendanceModal = ({
       setDecisionTypes({});
       setAttendeeTicketInfo({});
       setManualHeadcount("0");
+      headcountEditedRef.current = false;
       setDidNotMeet(false);
       setPersistentCommonAttendees([]);
       setCheckedIn({});
+      // ─── NEW: reset consolidation flag when modal opens for a new event ───
+      setConsolidationsCreated(false);
 
       loadPersistentAttendees(eventId);
     }
   }, [isOpen, event?._id, event?.id, event?.date]);
 
+  useEffect(() => {
+    persistentAttendeesRef.current = persistentCommonAttendees;
+  }, [persistentCommonAttendees]);
+
   const fetchPeople = useCallback(
-    (q) => {
-      const query = (q || "").trim().toLowerCase();
+    (q, page = 1, append = false) => {
+      const query = (q || "").trim();
 
-      if (!query) {
-        const source =
-          preloadedPeople.length > 0
-            ? preloadedPeople
-            : window.globalPeopleCache?.data || [];
-        setPeople(source.slice(0, 50));
-        setIsSearching(false);
-        return;
+      if (page === 1) {
+        setIsSearching(true);
+      } else {
+        setIsLoadingMorePeople(true);
       }
 
-      // First try to search from cached data (which has leader fields)
-      const cachedData = preloadedPeople.length > 0
-        ? preloadedPeople
-        : window.globalPeopleCache?.data || [];
+      const params = new URLSearchParams({
+        page: String(page),
+        perPage: "50",
+      });
+      if (query) params.set("name", query);
 
-      if (cachedData.length > 0) {
-        const cachedResults = cachedData.filter((p) =>
-          (p.searchText || "").includes(query)
-        ).slice(0, 100);
-
-        if (cachedResults.length > 0) {
-          setPeople(cachedResults);
-          setIsSearching(false);
-          return;
-        }
-      }
-      setIsSearching(true);
-      authFetch(
-        `${BACKEND_URL}/people?name=${encodeURIComponent(q)}&perPage=200`,
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-          },
+      authFetch(`${BACKEND_URL}/people/paginated?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
         },
-      )
+      })
         .then((res) => res.json())
         .then((data) => {
-          const arr = data.results || data.people || [];
+          const arr = data.results || [];
           const formatted = arr.map((p) => {
-            // Handle multiple field name variations for leaders
-            const leader1 = p["Leader @1"] || p["Leader at 1"] || p["Leader @ 1"] || p.leader1 || "";
-            const leader12 = p["Leader @12"] || p["Leader at 12"] || p["Leader @ 12"] || p.leader12 || "";
-            const leader144 = p["Leader @144"] || p["Leader at 144"] || p["Leader @ 144"] || p.leader144 || "";
-            const leader1728 = p["Leader @1728"] || p["Leader at 1728"] || p["Leader @ 1728"] || p.leader1728 || "";
+            const leader1 =
+              p["Leader @1"] ||
+              p["Leader at 1"] ||
+              p["Leader @ 1"] ||
+              p.leader1 ||
+              "";
+            const leader12 =
+              p["Leader @12"] ||
+              p["Leader at 12"] ||
+              p["Leader @ 12"] ||
+              p.leader12 ||
+              "";
+            const leader144 =
+              p["Leader @144"] ||
+              p["Leader at 144"] ||
+              p["Leader @ 144"] ||
+              p.leader144 ||
+              "";
+            const leader1728 =
+              p["Leader @1728"] ||
+              p["Leader at 1728"] ||
+              p["Leader @ 1728"] ||
+              p.leader1728 ||
+              "";
 
             return {
               id: p._id,
+              person_id:p.person_id,
               fullName: `${p.Name || ""} ${p.Surname || ""}`.trim(),
               email: p.Email || "",
               leader1: leader1,
@@ -2021,13 +2565,33 @@ const AttendanceModal = ({
                 `${p.Name || ""} ${p.Surname || ""} ${p.Email || ""} ${leader1} ${leader12} ${leader144} ${leader1728}`.toLowerCase(),
             };
           });
-          setPeople(formatted);
+          setPeople((prev) => (append ? [...prev, ...formatted] : formatted));
+          setPeoplePage(page);
+          setPeopleHasMore(Boolean(data.hasMore));
+          setPeopleTotal(data.total || 0);
         })
-        .catch(() => setPeople([]))
-        .finally(() => setIsSearching(false));
+        .catch(() => {
+          if (!append) setPeople([]);
+        })
+        .finally(() => {
+          setIsSearching(false);
+          setIsLoadingMorePeople(false);
+        });
     },
-    [preloadedPeople, authFetch, BACKEND_URL],
+    [authFetch, BACKEND_URL],
   );
+
+  const loadMorePeople = useCallback(() => {
+    if (isLoadingMorePeople || isSearching || !peopleHasMore) return;
+    fetchPeople(associateSearch, peoplePage + 1, true);
+  }, [
+    associateSearch,
+    peoplePage,
+    peopleHasMore,
+    isLoadingMorePeople,
+    isSearching,
+    fetchPeople,
+  ]);
 
   useEffect(() => {
     setIsSearching(true);
@@ -2048,18 +2612,7 @@ const AttendanceModal = ({
         `${BACKEND_URL}/events/cell/${cellId}/common-attendees`,
         { headers },
       );
-      const data = await res.json();
-      const attendeesArray = data.common_attendees || [];
-
-      const formatted = attendeesArray.map((p) => ({
-        id: p._id,
-        fullName:
-          `${p.Name || p.name || ""} ${p.Surname || p.surname || ""}`.trim(),
-        email: p.Email || p.email || "",
-        leader12: p["Leader @12"] || p.leader12 || "",
-        leader144: p["Leader @144"] || p.leader144 || "",
-        phone: p.Number || p.Phone || p.phone || "",
-      }));
+      await res.json();
     } catch (err) {
       console.error("Failed to fetch common attendees:", err);
     }
@@ -2091,78 +2644,83 @@ const AttendanceModal = ({
     window.addEventListener("resize", checkScreenSize);
     return () => window.removeEventListener("resize", checkScreenSize);
   }, []);
+
   useEffect(() => {
-  if (isOpen) {
-    const loadPeople = async () => {
-      const now = Date.now();
-      const CACHE_DURATION = 5 * 60 * 1000;
+    if (isOpen) {
+      const loadPeople = async () => {
+        const now = Date.now();
+        const CACHE_DURATION = 5 * 60 * 1000;
 
-      if (
-        window.globalPeopleCache?.data?.length > 0 &&
-        now - window.globalPeopleCache.timestamp < CACHE_DURATION
-      ) {
-        console.log("Using cached people data in AttendanceModal");
-        setPreloadedPeople(window.globalPeopleCache.data);
-        setPeople(window.globalPeopleCache.data.slice(0, 50));
-      } else {
-        console.log("Cache empty or expired, loading fresh data");
-        setIsLoadingPeople(true);
-        try {
-          const token = localStorage.getItem("access_token");
-          const headers = { Authorization: `Bearer ${token}` };
-          
-          // CHANGED: Use new endpoint that returns ALL people with complete fields
-          const res = await authFetch(`${BACKEND_URL}/people/all-with-fields?perPage=200`, {
-            headers,
-          });
-          
-          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-          const data = await res.json();
+        if (
+          window.globalPeopleCache?.data?.length > 0 &&
+          now - window.globalPeopleCache.timestamp < CACHE_DURATION
+        ) {
+          console.log("Using cached people data in AttendanceModal");
+          setPreloadedPeople(window.globalPeopleCache.data);
+          setPeople(window.globalPeopleCache.data.slice(0, 50));
+        } else {
+          console.log("Cache empty or expired, loading fresh data");
+          setIsLoadingPeople(true);
+          try {
+            const token = localStorage.getItem("access_token");
+            const headers = { Authorization: `Bearer ${token}` };
 
-          const peopleArray = data.results || data.people || [];
+            const res = await authFetch(
+              `${BACKEND_URL}/people/paginated?page=1&perPage=200`,
+              {
+                headers,
+              },
+            );
 
-          const formatted = peopleArray.map((person) => {
-            const fullName =
-              `${person.Name || ""} ${person.Surname || ""}`.trim();
-            const leader1 = person["Leader @1"] || person.leader1 || "";
-            const leader12 = person["Leader @12"] || person.leader12 || "";
-            const leader144 = person["Leader @144"] || person.leader144 || "";
-            const leader1728 =
-              person["Leader @1728"] || person.leader1728 || "";
+            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+            const data = await res.json();
 
-            return {
-              id: person._id,
-              fullName: fullName,
-              email: person.Email || "",
-              leader1: leader1,
-              leader12: leader12,
-              leader144: leader144,
-              leader1728: leader1728,
-              phone: person.Number || person.Phone || "",
-              invitedBy: person.InvitedBy || "",
-              searchText:
-                `${person.Name || ""} ${person.Surname || ""} ${person.Email || ""}`.toLowerCase(),
+            const peopleArray = data.results || data.people || [];
+            setPeopleHasMore(Boolean(data.hasMore));
+            setPeopleTotal(data.total || 0);
+
+            const formatted = peopleArray.map((person) => {
+              const fullName =
+                `${person.Name || ""} ${person.Surname || ""}`.trim();
+              const leader1 = person["Leader @1"] || person.leader1 || "";
+              const leader12 = person["Leader @12"] || person.leader12 || "";
+              const leader144 = person["Leader @144"] || person.leader144 || "";
+              const leader1728 =
+                person["Leader @1728"] || person.leader1728 || "";
+
+              return {
+                id: person._id,
+                fullName: fullName,
+                email: person.Email || "",
+                leader1: leader1,
+                leader12: leader12,
+                leader144: leader144,
+                leader1728: leader1728,
+                phone: person.Number || person.Phone || "",
+                invitedBy: person.InvitedBy || "",
+                searchText:
+                  `${person.Name || ""} ${person.Surname || ""} ${person.Email || ""}`.toLowerCase(),
+              };
+            });
+
+            window.globalPeopleCache = {
+              data: formatted,
+              timestamp: now,
+              expiry: CACHE_DURATION,
             };
-          });
-
-          window.globalPeopleCache = {
-            data: formatted,
-            timestamp: now,
-            expiry: CACHE_DURATION,
-          };
-          setPreloadedPeople(formatted);
-          setPeople(formatted.slice(0, 50));
-        } catch (err) {
-          console.error("Error pre-loading people:", err);
-        } finally {
-          setIsLoadingPeople(false);
+            setPreloadedPeople(formatted);
+            setPeople(formatted.slice(0, 50));
+          } catch (err) {
+            console.error("Error pre-loading people:", err);
+          } finally {
+            setIsLoadingPeople(false);
+          }
         }
-      }
-    };
+      };
 
-    loadPeople();
-  }
-}, [isOpen, authFetch, BACKEND_URL]);
+      loadPeople();
+    }
+  }, [isOpen, authFetch, BACKEND_URL]);
 
   useEffect(() => {
     if (activeTab !== 1) return;
@@ -2182,7 +2740,7 @@ const AttendanceModal = ({
     }
   }, [activeTab, preloadedPeople.length]);
 
-  const handleCheckIn = (id) => {
+  const handleCheckIn = async (id) => {
     setCheckedIn((prev) => {
       const isNowChecked = !prev[id];
       const newState = { ...prev, [id]: isNowChecked };
@@ -2199,30 +2757,54 @@ const AttendanceModal = ({
       return newState;
     });
     const isNowChecked = !checkedIn[id];
-    if (isNowChecked) {
-      if (isTicketedEvent) {
-        setAttendeeTicketInfo((prevTicket) => {
-          if (!prevTicket[id] || !prevTicket[id].priceName) {
-            const person = getAllCommonAttendees().find((p) => p.id === id);
-            if (person && person.priceName) {
-              return {
-                ...prevTicket,
-                [id]: {
-                  priceName: person.priceName,
-                  price: person.price || 0,
-                  ageGroup: person.ageGroup || "",
-                  paymentMethod: person.paymentMethod || "Cash",
-                  paidAmount: person.paidAmount || 0,
-                },
-              };
-            }
-          }
-          return prevTicket;
-        });
+
+    // Determine the person object from common attendees
+    const person = getAllCommonAttendees().find((p) => p.id === id) || {
+      id,
+      fullName: id,
+    };
+
+    try {
+      const token = localStorage.getItem("access_token");
+     
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      // Use the /events/check_in endpoint to add/remove the individual person
+      const response = await authFetch(
+        `${BACKEND_URL}/update_check_in_status`,
+        {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({
+            event_id: event?.event_id || event?.id || "",
+            session_id: event?.session_id,
+            event_type: event?.eventType || event?.event_type_name || "Cells",
+            ...person,
+            checked_in: isNowChecked,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `Check-in ${isNowChecked ? "failed" : "removed"} error`);
       }
-      toast.success("Person checked in for this week");
-    } else {
-      toast.warning("Person unchecked for this week");
+
+      const result = await response.json();
+      console.log("Check-in result:", result);
+
+      // Update local state based on response
+      if (isNowChecked) {
+        toast.success(result.message || "Person checked in for this week");
+      } else {
+        toast.warning(result.message || "Person unchecked for this week");
+      }
+    } catch (error) {
+      console.error("Failed to check-in/out person:", error);
+      toast.error(error.message || "Failed to check-in/out person");
     }
   };
 
@@ -2232,10 +2814,16 @@ const AttendanceModal = ({
     setOpenDecisionDropdown(null);
   };
 
-  const saveAllAttendees = async (attendees, ticketInfoOverride = null) => {
+  const saveAllAttendees = async (
+    attendees,
+    ticketInfoOverride = null,
+    skipRefresh = false,
+    checkedInOverride = null,
+  ) => {
     if (!event) return false;
 
-    let eventId = event.original_event_id || event._id || event.id;
+    let eventId = event?.event_id
+    // let eventId = getAttendanceEventId(event);
 
     if (!eventId || eventId === "undefined") {
       console.error(
@@ -2278,15 +2866,29 @@ const AttendanceModal = ({
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ persistent_attendees: enriched }),
+          body: JSON.stringify({
+            persistent_attendees: enriched,
+            ...(checkedInOverride !== null && {
+              checked_in_attendees: checkedInOverride,
+            }),
+            "event_type": event?.event_type_name || "cells"
+          }),
         },
       );
       if (!response.ok) {
         throw new Error(`Save failed: ${response.status}`);
       }
+      if (!skipRefresh) {
+        window.dispatchEvent(
+          new CustomEvent("attendanceUpdated", {
+            detail: {
+              eventId: getBaseEventId(event),
+              attendanceEventId: eventId,
+            },
+          }),
+        );
+      }
       console.log(`Saved ${enriched.length} attendees to database`);
-      // Refresh cache after saving attendees
-      await refreshGlobalPeopleCache();
       return true;
     } catch (error) {
       console.error("Failed to save:", error);
@@ -2304,16 +2906,37 @@ const AttendanceModal = ({
       toast.info(`${person.fullName} is already in attendees list`);
       return;
     }
+
+    //temp solution:
+      const queryParams = new URLSearchParams({
+        email: person.email,
+        full_name: person.fullName
+      }).toString();
+
+     const token = localStorage.getItem("token"); 
+     const response = await authFetch(
+        `${BACKEND_URL}/get_person_uuid?${queryParams}`,
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`,
+          }
+        }
+      );
+
+      const data = await response.json();
+   
     
+    console.log("PERSON ID",data)
     const personWithLeaders = {
-      id: person.id,
-      fullName: person.fullName,
+      id: data,
+      person_id:data,
+      full_name: person.fullName,
       email: person.email,
       leader12: person.leader12 || "",
       leader144: person.leader144 || "",
       phone: person.phone || "",
-      invitedBy: person.invitedBy || "",
-      uniqueKey: `${person.id}_${Date.now()}`,
+      // invitedBy: person.invitedBy || "",
+      // uniqueKey: `${person.id}_${Date.now()}`,
       ...(isTicketedEvent && {
         priceName: "",
         price: 0,
@@ -2324,10 +2947,10 @@ const AttendanceModal = ({
     };
 
     const updatedAttendees = [...persistentCommonAttendees, personWithLeaders];
+    console.log("NEW ASSOCIATE", personWithLeaders);
     setPersistentCommonAttendees(updatedAttendees);
     setCheckedIn((prev) => ({ ...prev, [person.id]: false }));
 
-    // Initialize ticket info for new person if ticketed event
     if (isTicketedEvent) {
       setAttendeeTicketInfo((prev) => ({
         ...prev,
@@ -2345,10 +2968,36 @@ const AttendanceModal = ({
     }
 
     toast.success(`${person.fullName} added to attendees list`);
-    saveAllAttendees(updatedAttendees, attendeeTicketInfo).catch((error) => {
-      console.error("Background save failed:", error);
+    try {
+      const payload = {
+        "associate": true,
+        "attendee":personWithLeaders,
+        "session_id": event?.session_id,
+        "event_name": event?.event_name,
+        "event_type": event?.eventType || "cells"
+      }
+ 
+      const response = await authFetch(
+          `${BACKEND_URL}/events/${event?.event_id}/persistent-attendees`,
+          { method: "PUT",
+            headers: { 
+              Authorization: `Bearer ${token}`,
+              // "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+          }
+        );
+        if (!response.ok){
+          toast.error("Failed to save to database, but person is added locally");
+        }
+    }catch(e){
       toast.error("Failed to save to database, but person is added locally");
-    });
+    }
+    // save new associated person
+    // saveAllAttendees([personWithLeaders], attendeeTicketInfo).catch((error) => {
+    //   console.error("Background save failed:", error);
+    //   
+    // });
   };
 
   const handleRemoveAttendee = async (personId, personName) => {
@@ -2357,6 +3006,7 @@ const AttendanceModal = ({
         (p) => p.id !== personId,
       );
       setPersistentCommonAttendees(updatedAttendees);
+      console.log("HEReeeE",personId)
 
       setCheckedIn((prev) => {
         const newState = { ...prev };
@@ -2383,14 +3033,34 @@ const AttendanceModal = ({
           return newState;
         });
       }
-
-      const success = await saveAllAttendees(updatedAttendees);
-
-      if (success) {
-        toast.success(`${personName} removed from attendees`);
-      } else {
-        toast.error("Failed to remove attendee from database");
+      toast.success("Removed associated attendee")
+      try {
+      const payload = {
+        "associate": false,
+        "attendee":{"person_id":personId},
+        "session_id": event?.session_id,
+        "event_name": event?.event_name
       }
+      
+      const token = localStorage.getItem("token"); 
+      const response = await authFetch(
+          `${BACKEND_URL}/events/${event?.event_id}/persistent-attendees`,
+          { method: "PUT",
+            headers: { 
+              Authorization: `Bearer ${token}`,
+              // "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+          }
+        );
+        if (!response.ok){
+          toast.error("Failed to save to database, but person is added locally");
+        }
+    }catch(e){
+      console.error("Failed to remove associate",e)
+      toast.error("Failed to save to database, but person is added locally");
+    }
+
     } catch (error) {
       console.error("Error removing attendee:", error);
       toast.error("Error removing attendee");
@@ -2410,14 +3080,15 @@ const AttendanceModal = ({
     }
 
     const combinedMap = new Map();
-
+    
     persistent.forEach((att) => {
       if (att && att.id) {
         const attendeeId = att.id;
         if (attendeeId && !combinedMap.has(attendeeId)) {
           combinedMap.set(attendeeId, {
             id: attendeeId,
-            fullName: att.fullName || att.name || "Unknown Person",
+            person_id: att.person_id || "",
+            fullName: att.fullName || att.full_name || "Unknown Person",
             email: att.email || "",
             leader12: att.leader12 || "",
             leader144: att.leader144 || "",
@@ -2465,6 +3136,7 @@ const AttendanceModal = ({
     (id) => checkedIn[id],
   ).length;
   console.log("Attendees checked in:", attendeesCount);
+
   const decisionsCount = Object.keys(decisions).filter(
     (id) => decisions[id],
   ).length;
@@ -2478,11 +3150,30 @@ const AttendanceModal = ({
   ).length;
   console.log("Re-commitment decisions count:", reCommitmentCount);
 
-  const filteredCommonAttendees = getAllCommonAttendees().filter(
-    (person) =>
-      person.fullName.toLowerCase().includes(searchName.toLowerCase()) ||
-      person.email.toLowerCase().includes(searchName.toLowerCase()),
-  );
+  const [filteredCommonAttendees, setFilteredCommonAttendees] = useState([])
+  useEffect(()=>{
+     const filtered = getAllCommonAttendees().filter(
+      (person) =>
+        person.fullName.toLowerCase().includes(searchName.toLowerCase()) ||
+        person.email.toLowerCase().includes(searchName.toLowerCase()),
+    );
+   
+    setFilteredCommonAttendees(filtered);
+  },[persistentCommonAttendees])
+
+  const subtotals = isTicketedEvent
+    ? computeTicketSubtotals(filteredCommonAttendees, (person) => {
+        const savedTicket = attendeeTicketInfo[person.id] || {};
+        return {
+          price:
+            savedTicket?.price != null && savedTicket?.price !== ""
+              ? savedTicket.price
+              : person.price,
+          paidAmount: savedTicket?.paidAmount ?? person.paidAmount ?? 0,
+        };
+      })
+    : null;
+
   const handleSave = async () => {
     if (isSaving) return;
     setIsSaving(true);
@@ -2490,10 +3181,9 @@ const AttendanceModal = ({
     const attendeesList = Object.keys(checkedIn).filter((id) => checkedIn[id]);
     const finalHeadcount = manualHeadcount ? parseInt(manualHeadcount) : 0;
 
-    let eventId = event.original_event_id || event._id || event?._id;
-    if (eventId && eventId.includes("_")) {
-      eventId = eventId.split("_")[0];
-    }
+    // const eventId = getAttendanceEventId(event);
+    const eventId = event?.event_id;
+    
 
     if (!eventId) {
       toast.error("Event ID is missing, cannot submit attendance.");
@@ -2509,7 +3199,6 @@ const AttendanceModal = ({
 
           const ticketInfo = attendeeTicketInfo[id] || person;
 
-          // Calculate financials
           const price = ticketInfo.price || 0;
           const paid = ticketInfo.paidAmount || 0;
           let owing = 0;
@@ -2525,7 +3214,7 @@ const AttendanceModal = ({
             owing = price;
             change = 0;
           }
-
+          
           const attendee = {
             id: person.id,
             name: person.fullName || "",
@@ -2558,6 +3247,7 @@ const AttendanceModal = ({
       const shouldMarkAsDidNotMeet =
         didNotMeet && attendeesList.length === 0 && finalHeadcount === 0;
       const payload = {
+        event_id: eventId,
         attendees: shouldMarkAsDidNotMeet ? [] : selectedAttendees,
         persistent_attendees: persistentCommonAttendees.map((p) => {
           const ticketOverride = isTicketedEvent
@@ -2607,10 +3297,15 @@ const AttendanceModal = ({
         leaderEmail: currentUser?.email || "",
         leaderName:
           `${currentUser?.name || ""} ${currentUser?.surname || ""}`.trim(),
+        leader12: event?.leader12 || "",
         did_not_meet: shouldMarkAsDidNotMeet,
         isTicketed: isTicketedEvent,
         week: get_current_week_identifier(),
         headcount: finalHeadcount,
+        session_id: event?.session_id || "",
+        event_id: event?.event_id || "",
+        event_name: event?.eventName || "",
+        event_type: event?.eventType || event?.event_type_name || "Cells",
       };
 
       console.log("Saving payload:", payload);
@@ -2627,7 +3322,7 @@ const AttendanceModal = ({
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              // Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(payload),
           },
@@ -2642,8 +3337,99 @@ const AttendanceModal = ({
       }
 
       if (result && result.success) {
+        // ─── NEW: Fire consolidation tasks for each person who made a decision ───
+        // Only fire if we haven't already done so (prevents double-fire on double-click)
+        if (!consolidationsCreated) {
+          setConsolidationsCreated(true);
+
+          const decisionMakers = selectedAttendees.filter(
+            (attendee) => decisions[attendee.id] === true,
+          );
+
+          if (decisionMakers.length > 0) {
+            const consolidationResults = await Promise.allSettled(
+              decisionMakers.map(async (attendee) => {
+                // Map frontend decision type to backend expected values
+                const rawType = decisionTypes[attendee.id];
+                const decisionType =
+                  rawType === "first-time" ? "first_time" : "recommitment";
+
+                // 1. Create the consolidation record
+                const consolidationResult = await createCellConsolidation({
+                  person: attendee,
+                  decisionType,
+                  eventId: event?.event_id || "",
+                  session_id: event?.session_id || ""
+                });
+
+                // 2. Also create the due-date follow-up task (mirrors ServiceCheckIn logic)
+                try {
+                  const leaderInfo = getHighestAvailableLeader(attendee);
+                  if (leaderInfo.hasLeader) {
+                    const resolvedLeaderEmail = resolveLeaderEmail(
+                      leaderInfo.leader,
+                      attendee,
+                    );
+                    if (resolvedLeaderEmail) {
+                      await createCellConsolidationTaskForLeader({
+                        leaderName: leaderInfo.leader,
+                        leaderEmail: resolvedLeaderEmail,
+                        person: attendee,
+                        eventId,
+                      });
+                    }
+                  }
+                } catch (taskErr) {
+                  // Don't block the overall result if only the task fails
+                  console.error(
+                    `Due-date task failed for ${attendee.fullName}:`,
+                    taskErr,
+                  );
+                }
+
+                return consolidationResult;
+              }),
+            );
+
+            // Count outcomes
+            const succeeded = consolidationResults.filter(
+              (r) => r.status === "fulfilled" && r.value?.success,
+            ).length;
+            const skipped = consolidationResults.filter(
+              (r) => r.status === "fulfilled" && r.value?.skipped,
+            );
+            const failed = consolidationResults.filter(
+              (r) => r.status === "rejected",
+            );
+
+            // Log any failures
+            failed.forEach((r, i) => {
+              console.error(`Consolidation task ${i} failed:`, r.reason);
+            });
+
+            // Notify skipped (no leader assigned)
+            skipped.forEach((r) => {
+              toast.warning(
+                `Could not create consolidation for ${r.value.name} — no leader assigned`,
+              );
+            });
+
+            if (succeeded > 0) {
+              toast.success(
+                `${succeeded} consolidation task${succeeded > 1 ? "s" : ""} created for leader${succeeded > 1 ? "s" : ""}`,
+              );
+            }
+
+            if (failed.length > 0) {
+              toast.warning(
+                "Attendance saved, but some consolidation tasks could not be created",
+              );
+            }
+          }
+        }
+        // ─── END NEW ───
+
         setIsSaving(false);
-        // Refresh cache after saving attendance
         await refreshGlobalPeopleCache();
         if (typeof onClose === "function") onClose();
         if (typeof onAttendanceSubmitted === "function") {
@@ -2665,16 +3451,29 @@ const AttendanceModal = ({
     }
   };
 
-  const downloadAttendanceData = () => {
+  const downloadAttendanceData = (everyone = false) => {  
     try {
       const allPeople = getAllCommonAttendees();
-      const checkedInAttendees = Object.keys(checkedIn)
-        .filter((id) => checkedIn[id])
+      const checkedInIds = Object.keys(checkedIn).filter((id) => checkedIn[id]);
+      const finalHeadcountExport = resolveDownloadHeadcount(
+        manualHeadcount,
+        checkedInIds.length,
+      );
+
+      // Default: only people actually checked in are exported. With
+      // `everyone: true` every associated person is included (checked-in
+      // people plus paid no-shows / registrants) so the money still counts.
+      const exportIds = pickDownloadPeople(allPeople, checkedInIds, {
+        includeEveryone: everyone,
+      }).map((p) => p.id);
+
+      const rowsToExport = exportIds
         .map((id) => {
           const person = allPeople.find((p) => p && p.id === id);
           if (!person) return null;
 
           const financials = isTicketedEvent ? calculateFinancials(id) : null;
+          const isCheckedIn = !!checkedIn[id];
 
           return {
             "Event Name": event?.eventName || "N/A",
@@ -2685,9 +3484,16 @@ const AttendanceModal = ({
             "Leader @144": person.leader144 || "N/A",
             Phone: person.phone || "N/A",
             Decision: decisionTypes[id] || "N/A",
-            Status: didNotMeet ? "Did Not Meet" : "Complete",
+            Status: didNotMeet
+              ? "Did Not Meet"
+              : isCheckedIn
+                ? "Complete"
+                : "Not Checked In",
+            // Headcount is filled once per export below — it's an
+            // event-level figure, not a per-person field.
+            Headcount: "",
             ...(isTicketedEvent && {
-              "Price Name":
+              "Price Tier":
                 attendeeTicketInfo[id]?.priceName || person.priceName || "N/A",
               "Price (R)":
                 attendeeTicketInfo[id]?.price || person.price || "N/A",
@@ -2705,7 +3511,7 @@ const AttendanceModal = ({
         })
         .filter((att) => att !== null);
 
-      if (checkedInAttendees.length === 0 && didNotMeet) {
+      if (rowsToExport.length === 0 && didNotMeet) {
         buildXlsFromRows(
           [
             {
@@ -2718,8 +3524,9 @@ const AttendanceModal = ({
               Phone: "",
               Decision: "",
               Status: "Did Not Meet",
+              Headcount: finalHeadcountExport,
               ...(isTicketedEvent && {
-                "Price Name": "N/A",
+                "Price Tier": "N/A",
                 "Price (R)": "N/A",
                 "Age Group": "N/A",
                 "Payment Method": "N/A",
@@ -2734,18 +3541,54 @@ const AttendanceModal = ({
         return;
       }
 
-      if (checkedInAttendees.length === 0) {
+      if (rowsToExport.length === 0) {
         toast.info("No attendance data to download");
         return;
       }
 
+      if (!isTicketedEvent && rowsToExport.length > 0) {
+        // Non-ticketed events have no totals row: the headcount lives on the
+        // first row so it appears exactly once per export.
+        rowsToExport[0].Headcount = finalHeadcountExport;
+      }
+
+      if (isTicketedEvent) {
+        const totalPrice = numericFieldSum(rowsToExport, "Price (R)");
+        const totalPaid = numericFieldSum(rowsToExport, "Paid (R)");
+        const totalOwing = numericFieldSum(rowsToExport, "Owing (R)");
+        const totalChange = numericFieldSum(rowsToExport, "Change (R)");
+
+        rowsToExport.push({
+          // Leading cells left blank: a visible space before the total amounts.
+          "Event Name": "",
+          "Event Date": "",
+          Name: "TOTAL",
+          Email: "",
+          "Leader @12": "",
+          "Leader @144": "",
+          Phone: "",
+          Decision: "",
+          Status: "",
+          Headcount: finalHeadcountExport,
+          "Price Tier": "",
+          "Price (R)": totalPrice.toFixed(2),
+          "Age Group": "",
+          "Payment Method": "",
+          "Paid (R)": totalPaid.toFixed(2),
+          "Owing (R)": totalOwing.toFixed(2),
+          "Change (R)": totalChange.toFixed(2),
+        });
+      }
+
       buildXlsFromRows(
-        checkedInAttendees,
-        `attendance_${(event?.eventName || "event").replace(/\s/g, "_")}_${didNotMeet ? "did_not_meet" : "complete"}`,
+        rowsToExport,
+        `${everyone ? "everyone" : "attendance"}_${(event?.eventName || "event").replace(/\s/g, "_")}_${didNotMeet ? "did_not_meet" : "complete"}`,
       );
 
       toast.success(
-        `Downloaded ${checkedInAttendees.length} attendance records`,
+        everyone
+          ? `Downloaded ${rowsToExport.length} associated people`
+          : `Downloaded ${rowsToExport.length} attendance records`,
       );
     } catch (err) {
       console.error("Download failed:", err);
@@ -2765,14 +3608,20 @@ const AttendanceModal = ({
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
 
-    const headers = Object.keys(rows[0]);
+    // Ensure header row includes all possible keys from all rows so columns
+    // like Paid/Owing/Change/Decision appear even if the first row lacks them.
+    const headerSet = rows.reduce((set, r) => {
+      Object.keys(r || {}).forEach((k) => set.add(k));
+      return set;
+    }, new Set());
+    const headers = Array.from(headerSet);
 
-    let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>table{border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;}th{background-color:#a3aca3ff;color:white;font-weight:bold;padding:12px 8px;text-align:center;border:1px solid #ddd;font-size:11pt;white-space:nowrap;}td{padding:8px;border:1px solid #ddd;font-size:10pt;text-align:left;}tr:nth-child(even){background-color:#f2f2f2;}</style></head><body><table border="1"><thead>`;
+    let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>table{border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;}th{background-color:#a3aca3ff;color:white;font-weight:bold;padding:12px 8px;text-align:center;border:1px solid #ddd;font-size:11pt;white-space:nowrap;}td{padding:8px;border:1px solid #ddd;font-size:10pt;text-align:left;}tr:nth-child(even){background-color:#f2f2f2;}</style></head><body><table border="1"><thead><tr>`;
 
     headers.forEach((h) => {
       html += `<th>${escapeHtml(h)}</th>`;
     });
-    html += `</thead><tbody>`;
+    html += `</tr></thead><tbody>`;
     rows.forEach((row) => {
       html += `<tr>`;
       headers.forEach((h) => {
@@ -2809,12 +3658,10 @@ const AttendanceModal = ({
     setCheckedIn({});
     setDecisions({});
     setManualHeadcount("");
+    headcountEditedRef.current = false;
     setAttendeeTicketInfo({});
 
-    let eventId = event.original_event_id || event._id || event?._id;
-    if (eventId && eventId.includes("_")) {
-      eventId = eventId.split("_")[0];
-    }
+    const eventId = getAttendanceEventId(event);
 
     if (!eventId) {
       setIsSaving(false);
@@ -2823,6 +3670,7 @@ const AttendanceModal = ({
 
     try {
       const payload = {
+        event_id: eventId,
         attendees: [],
         persistent_attendees: persistentCommonAttendees.map((p) => {
           const ticketOverride = isTicketedEvent
@@ -2848,12 +3696,15 @@ const AttendanceModal = ({
             }),
           };
         }),
-        leaderEmail: currentUser?.email || "",
-        leaderName:
-          `${currentUser?.name || ""} ${currentUser?.surname || ""}`.trim(),
-        did_not_meet: true,
+        leaderEmail:event?.eventLeaderEmail || "",
+        leaderName: event?.eventLeaderName,    
+        leader12: event?.leader12,
+        session_id:event?.session_id,
+         did_not_meet: true,
         isTicketed: isTicketedEvent,
         week: get_current_week_identifier(),
+        event_type: event?.eventType || event?.event_type_name || "Cells",
+        event_name: event?.eventName
       };
 
       let result;
@@ -2868,7 +3719,7 @@ const AttendanceModal = ({
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              // Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(payload),
           },
@@ -2903,7 +3754,8 @@ const AttendanceModal = ({
     setShowDidNotMeetConfirm(false);
   };
 
-  const handlePersonAdded = (newPerson) => {
+  // ─── NEW: handlePersonAdded — fires consolidation record + due-date task after new person is created ───
+  const handlePersonAdded = async (newPerson) => {
     console.log("New person added:", newPerson);
 
     // Refresh backend cache and clear local cache
@@ -2917,7 +3769,92 @@ const AttendanceModal = ({
     }
     setShowAddPersonModal(false);
     toast.success(`${newPerson.Name} ${newPerson.Surname} added successfully!`);
+
+    // Build person object from the created person response
+    const createdPerson = {
+      fullName:
+        `${newPerson.Name || newPerson.name || ""} ${newPerson.Surname || newPerson.surname || ""}`.trim(),
+      email: newPerson.Email || newPerson.email || "",
+      phone: newPerson.Number || newPerson.phone || "",
+      // Correct field mapping from POST /people response
+      leader12: newPerson["Leader @12"] || newPerson.leader12 || "",
+      leader144: newPerson["Leader @144"] || newPerson.leader144 || "",
+      leader1: newPerson["Leader @1"] || newPerson.leader1 || "",
+      // Pass through the leaders array if returned, for resolveLeaderEmail
+      leaders: newPerson.leaders || [],
+      // Pass through raw fields for createCellConsolidationTaskForLeader
+      Name: newPerson.Name || newPerson.name || "",
+      Surname: newPerson.Surname || newPerson.surname || "",
+      Email: newPerson.Email || newPerson.email || "",
+      Number: newPerson.Number || newPerson.phone || "",
+    };
+
+    // Resolve the event ID for the consolidation record
+    let eventId = event?.original_event_id || event?._id || event?.id || "";
+    if (eventId && eventId.includes("_")) {
+      eventId = eventId.split("_")[0];
+    }
+
+    // Check if there is a leader to assign to before attempting either call
+    const assignedTo = resolveAssignedTo(createdPerson);
+
+    if (!assignedTo) {
+      toast.warning(
+        `Person created but no consolidation task was made — no leader assigned`,
+      );
+      return;
+    }
+
+    // 1. Fire POST /consolidations to create the consolidation record
+    try {
+      await createCellConsolidation({
+        person: createdPerson,
+        decisionType: "first_time",
+        eventId,
+        session_id: event?.session_id || ""
+      });
+      toast.success(`Consolidation task created for ${createdPerson.fullName}`);
+    } catch (err) {
+      console.error(
+        "Failed to create consolidation record for new person:",
+        err,
+      );
+      toast.warning(
+        `${createdPerson.fullName} was added but the consolidation record could not be created`,
+      );
+    }
+
+    // 2. Also fire the due-date follow-up task (same as ServiceCheckIn new person logic)
+    // Uses the highest available leader and resolves their email for task assignment
+    try {
+      const leaderInfo = getHighestAvailableLeader(createdPerson);
+      if (leaderInfo.hasLeader) {
+        const resolvedLeaderEmail = resolveLeaderEmail(
+          leaderInfo.leader,
+          createdPerson,
+        );
+        if (resolvedLeaderEmail) {
+          await createCellConsolidationTaskForLeader({
+            leaderName: leaderInfo.leader,
+            leaderEmail: resolvedLeaderEmail,
+            person: createdPerson,
+            eventId,
+          });
+        } else {
+          console.warn(
+            "Leader found but no email resolvable — skipping due-date task",
+          );
+        }
+      }
+    } catch (taskErr) {
+      // Do not block — consolidation record was already created; only the task failed
+      console.error(
+        "Failed to create cell consolidation due-date task:",
+        taskErr,
+      );
+    }
   };
+  // ─── END NEW ───
 
   console.log("Event object:", event);
   console.log("Price tiers:", event?.priceTiers);
@@ -3000,8 +3937,11 @@ const AttendanceModal = ({
             style={{
               ...styles.radioButton,
               ...(isCheckedIn ? styles.radioButtonChecked : {}),
+              cursor: isFutureSession ? "not-allowed" : "pointer",
             }}
             onClick={() => handleCheckIn(person.id)}
+            disabled={isFutureSession}
+            title={isFutureSession ? "Can't check in until the session happens" : undefined}
           >
             {isCheckedIn && <span style={styles.radioButtonInner}>✓</span>}
           </button>
@@ -3084,6 +4024,7 @@ const AttendanceModal = ({
       display: "flex",
       flexDirection: "column",
       boxSizing: "border-box",
+      overflow: "hidden",
       border: `1px solid ${theme.palette.divider}`,
       color: theme.palette.text.primary,
     },
@@ -3107,9 +4048,23 @@ const AttendanceModal = ({
       gap: 12,
       flexWrap: "wrap",
     },
+    subtitle: {
+      margin: "4px 0 0",
+      fontSize: 13,
+      color: theme.palette.text.secondary,
+    },
     ticketBadge: {
       background: theme.palette.warning.main,
       color: theme.palette.warning.contrastText || "#000",
+      padding: "4px 12px",
+      borderRadius: 12,
+      fontSize: 12,
+      fontWeight: 600,
+      textTransform: "uppercase",
+    },
+    cellConsolidationBadge: {
+      background: theme.palette.success.main,
+      color: theme.palette.success.contrastText || "#2d6bbd",
       padding: "4px 12px",
       borderRadius: 12,
       fontSize: 12,
@@ -3299,8 +4254,6 @@ const AttendanceModal = ({
       fontSize: 13,
       color: theme.palette.text.primary,
       borderBottom: `1px solid ${theme.palette.divider}`,
-      "&:hover": { background: theme.palette.action.hover },
-      "&:last-child": { borderBottom: "none" },
     },
     paymentMethodSelect: {
       padding: "6px 8px",
@@ -3328,16 +4281,16 @@ const AttendanceModal = ({
       flexWrap: "wrap",
     },
     statBox: {
-      flex: "1 1 calc(25% - 15px)",
+      flex: "1 1 200px",
       background: theme.palette.background.default,
       padding: "clamp(12px, 2vw, 18px)",
       borderRadius: 8,
       textAlign: "center",
       position: "relative",
-      minWidth: 120,
+      minWidth: 0,
     },
     statBoxInput: {
-      flex: "1 1 calc(25% - 15px)",
+      flex: "1 1 200px",
       background: theme.palette.background.default,
       padding: "clamp(12px, 2vw, 18px)",
       borderRadius: 8,
@@ -3347,7 +4300,7 @@ const AttendanceModal = ({
       flexDirection: "column",
       alignItems: "center",
       justifyContent: "center",
-      minWidth: 120,
+      minWidth: 0,
     },
     headcountInput: {
       fontSize: "clamp(20px, 3.5vw, 32px)",
@@ -3373,6 +4326,41 @@ const AttendanceModal = ({
       color: theme.palette.text.secondary,
       textTransform: "uppercase",
       fontWeight: 600,
+    },
+    subtotalRow: {
+      background: "rgba(128, 128, 128, 0.08)",
+      borderTop: `2px solid ${theme.palette.divider}`,
+    },
+    subtotalLabel: {
+      fontWeight: 700,
+      fontSize: 13,
+      textTransform: "uppercase",
+      letterSpacing: "0.5px",
+      color: theme.palette.text.primary,
+    },
+    subtotalCell: {
+      padding: "8px 12px",
+      fontWeight: 700,
+      fontSize: 13,
+    },
+    subtotalAmount: {
+      fontWeight: 700,
+      color: theme.palette.text.primary,
+    },
+    mobileSubtotal: {
+      marginTop: 12,
+      padding: "12px 16px",
+      borderRadius: 8,
+      background: "rgba(128, 128, 128, 0.08)",
+      border: `1px solid ${theme.palette.divider}`,
+    },
+    mobileSubtotalLine: {
+      display: "flex",
+      justifyContent: "space-between",
+      fontSize: 13,
+      fontWeight: 700,
+      marginTop: 4,
+      color: theme.palette.text.secondary,
     },
     decisionBreakdown: {
       fontSize: 14,
@@ -3554,10 +4542,6 @@ const AttendanceModal = ({
       justifyContent: "center",
       margin: "0 auto",
       transition: "all 0.2s",
-      "&:hover": {
-        background: theme.palette.error.light,
-        color: theme.palette.error.contrastText,
-      },
     },
     inputGroup: { position: "relative" },
     financialHighlight: {
@@ -3585,11 +4569,14 @@ const AttendanceModal = ({
         <div style={styles.modal}>
           <div style={styles.header}>
             <h2 style={styles.title}>
-              ATTENDANCE
+              Attendance
               {isTicketedEvent && (
                 <span style={styles.ticketBadge}>Ticketed Event</span>
               )}
             </h2>
+            <p style={styles.subtitle}>
+              {event?.eventName || "Event"} {event?.date ? `· ${event.date}` : ""}
+            </p>
             <button
               style={styles.addPersonBtn}
               onClick={() => setShowAddPersonModal(true)}
@@ -3617,7 +4604,7 @@ const AttendanceModal = ({
                   }}
                   onClick={() => setActiveTab(0)}
                 >
-                  CAPTURE ATTENDEES
+                  Capture attendance
                 </button>
                 <button
                   style={{
@@ -3626,7 +4613,7 @@ const AttendanceModal = ({
                   }}
                   onClick={() => setActiveTab(1)}
                 >
-                  ASSOCIATE PERSON
+                  Add people
                 </button>
               </>
             )}
@@ -3661,6 +4648,35 @@ const AttendanceModal = ({
                 {isMobile ? (
                   <div>
                     {filteredCommonAttendees.map(renderMobileAttendeeCard)}
+                    {isTicketedEvent && subtotals && (
+                      <div style={styles.mobileSubtotal}>
+                        <span style={styles.subtotalLabel}>Total</span>
+                        <div style={styles.mobileSubtotalLine}>
+                          <span>Price</span>
+                          <span style={styles.subtotalAmount}>
+                            R{subtotals.totalPrice.toFixed(2)}
+                          </span>
+                        </div>
+                        <div style={styles.mobileSubtotalLine}>
+                          <span>Paid</span>
+                          <span style={styles.subtotalAmount}>
+                            R{subtotals.totalPaid.toFixed(2)}
+                          </span>
+                        </div>
+                        <div style={styles.mobileSubtotalLine}>
+                          <span>Owing</span>
+                          <span style={styles.subtotalAmount}>
+                            R{subtotals.totalOwing.toFixed(2)}
+                          </span>
+                        </div>
+                        <div style={styles.mobileSubtotalLine}>
+                          <span>Change</span>
+                          <span style={styles.subtotalAmount}>
+                            R{subtotals.totalChange.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div style={styles.tableContainer}>
@@ -3673,10 +4689,10 @@ const AttendanceModal = ({
                           {isActiveTeams ? (
                             <>
                               <th style={styles.th}>
-                                Attendees {getHierarchyLabel(2)}
+                                Attendees {leaderFieldLabel("leader12")}
                               </th>
                               <th style={styles.th}>
-                                Attendees {getHierarchyLabel(3)}
+                                Attendees {leaderFieldLabel("leader144")}
                               </th>
                             </>
                           ) : (
@@ -3685,7 +4701,7 @@ const AttendanceModal = ({
                           <th style={styles.th}>Attendees Number</th>
                           {isTicketedEvent && (
                             <>
-                              <th style={styles.th}>Price Name</th>
+                              <th style={styles.th}>Price Tier</th>
                               <th style={styles.th}>Price (R)</th>
                               <th style={styles.th}>Age Group</th>
                               <th style={styles.th}>Payment Method</th>
@@ -3737,7 +4753,7 @@ const AttendanceModal = ({
                           const financials = isTicketedEvent
                             ? calculateFinancials(person.id)
                             : null;
-                          const nameParts = (person.fullName || "").split(" ");
+                          const nameParts = (person.fullName || person.full_name || "").split(" ");
                           const firstName = nameParts[0] || "";
                           const lastName = nameParts.slice(1).join(" ") || "";
 
@@ -3806,22 +4822,37 @@ const AttendanceModal = ({
                                                     styles.priceTierMenuItem
                                                   }
                                                   onClick={() => {
+                                                    const nextTicket = {
+                                                      ...(attendeeTicketInfo[
+                                                        person.id
+                                                      ] || {}),
+                                                      priceName: tier.name,
+                                                      price: tier.price,
+                                                      ageGroup: tier.ageGroup,
+                                                      paymentMethod:
+                                                        tier.paymentMethod ||
+                                                        "Cash",
+                                                    };
                                                     setAttendeeTicketInfo(
                                                       (prev) => ({
                                                         ...prev,
                                                         [person.id]: {
-                                                          priceName: tier.name,
+                                                          ...(prev[person.id] ||
+                                                            {}),
+                                                          priceName:
+                                                            tier.name,
                                                           price: tier.price,
                                                           ageGroup:
                                                             tier.ageGroup,
                                                           paymentMethod:
                                                             tier.paymentMethod ||
                                                             "Cash",
-                                                          paidAmount:
-                                                            prev[person.id]
-                                                              ?.paidAmount || 0,
                                                         },
                                                       }),
+                                                    );
+                                                    persistTicketInfoDebounced(
+                                                      person,
+                                                      nextTicket,
                                                     );
                                                     setOpenPriceTierDropdown(
                                                       null,
@@ -3899,7 +4930,7 @@ const AttendanceModal = ({
                                               prev[person.id]?.priceName ||
                                               ticketInfo.priceName,
                                             price:
-                                              prev[person.id]?.price ||
+                                              prev[person.id]?.price ??
                                               ticketInfo.price,
                                             ageGroup:
                                               prev[person.id]?.ageGroup ||
@@ -3909,6 +4940,14 @@ const AttendanceModal = ({
                                               ticketInfo.paymentMethod,
                                           },
                                         }));
+                                        persistTicketInfoDebounced(person, {
+                                          priceName: ticketInfo.priceName,
+                                          price: ticketInfo.price ?? 0,
+                                          ageGroup: ticketInfo.ageGroup,
+                                          paymentMethod:
+                                            ticketInfo.paymentMethod || "Cash",
+                                          paid: value,
+                                        });
                                       }}
                                       style={styles.paidInput}
                                       placeholder="0"
@@ -3948,8 +4987,11 @@ const AttendanceModal = ({
                                     ...(checkedIn[person.id]
                                       ? styles.radioButtonChecked
                                       : {}),
+                                      cursor: isFutureSession ? "not-allowed" : "pointer",
                                   }}
+                                  disabled={isFutureSession}
                                   onClick={() => handleCheckIn(person.id)}
+                                  title={isFutureSession ? "Can't check in until the session happens" : undefined}
                                 >
                                   {checkedIn[person.id] && (
                                     <span style={styles.radioButtonInner}>
@@ -4046,6 +5088,37 @@ const AttendanceModal = ({
                             </tr>
                           );
                         })}
+                        {isTicketedEvent && subtotals && (
+                          <tr style={styles.subtotalRow}>
+                            <td colSpan={isActiveTeams ? 6 : 5}>
+                              <span style={styles.subtotalLabel}>Subtotal</span>
+                            </td>
+                            <td style={styles.subtotalCell} />
+                            <td style={styles.subtotalCell}>
+                              <span style={styles.subtotalAmount}>
+                                R{subtotals.totalPrice.toFixed(2)}
+                              </span>
+                            </td>
+                            <td style={styles.subtotalCell} />
+                            <td style={styles.subtotalCell} />
+                            <td style={styles.subtotalCell}>
+                              <span style={styles.subtotalAmount}>
+                                R{subtotals.totalPaid.toFixed(2)}
+                              </span>
+                            </td>
+                            <td style={styles.subtotalCell}>
+                              <span style={styles.subtotalAmount}>
+                                R{subtotals.totalOwing.toFixed(2)}
+                              </span>
+                            </td>
+                            <td style={styles.subtotalCell}>
+                              <span style={styles.subtotalAmount}>
+                                R{subtotals.totalChange.toFixed(2)}
+                              </span>
+                            </td>
+                            <td colSpan={2} />
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -4059,7 +5132,7 @@ const AttendanceModal = ({
                         color: theme.palette.info.main,
                       }}
                     >
-                      {persistentCommonAttendees.length}
+                      {filteredCommonAttendees.length}
                     </div>
                     <div style={styles.statLabel}>Associated People</div>
                   </div>
@@ -4076,6 +5149,17 @@ const AttendanceModal = ({
                       }
                     </div>
                     <div style={styles.statLabel}>Attendees</div>
+                  </div>
+                  <div style={styles.statBoxInput}>
+                    <input
+                      type="number"
+                      min="0"
+                      value={manualHeadcount}
+                      onChange={handleHeadcountChange}
+                      style={styles.headcountInput}
+                      aria-label="Headcount"
+                    />
+                    <div style={styles.statLabel}>Headcount</div>
                   </div>
                   {!isTicketedEvent && (
                     <div style={styles.statBox}>
@@ -4169,7 +5253,7 @@ const AttendanceModal = ({
                                         color: theme.palette.text.secondary,
                                       }}
                                     >
-                                      {getHierarchyLabel(2)}:{" "}
+                                      {leaderFieldLabel("leader12")}:{" "}
                                       {person.leader12 || "—"}
                                     </div>
                                     <div
@@ -4178,7 +5262,7 @@ const AttendanceModal = ({
                                         color: theme.palette.text.secondary,
                                       }}
                                     >
-                                      {getHierarchyLabel(3)}:{" "}
+                                      {leaderFieldLabel("leader144")}:{" "}
                                       {person.leader144 || "—"}
                                     </div>
                                   </>
@@ -4237,10 +5321,10 @@ const AttendanceModal = ({
                           {isActiveTeams ? (
                             <>
                               <th style={styles.th}>
-                                {getHierarchyLabel(2) || "Leader @12"}
+                                {leaderFieldLabel("leader12")}
                               </th>
                               <th style={styles.th}>
-                                {getHierarchyLabel(3) || "Leader @144"}
+                                {leaderFieldLabel("leader144")}
                               </th>
                             </>
                           ) : (
@@ -4294,25 +5378,11 @@ const AttendanceModal = ({
                               No people found
                             </td>
                           </tr>
-                        ) : people.length === 0 &&
-                          associateSearch.trim() === "" ? (
-                          <tr>
-                            <td
-                              colSpan="7"
-                              style={{
-                                ...styles.td,
-                                textAlign: "center",
-                                color: theme.palette.text.secondary,
-                              }}
-                            >
-                              No people found
-                            </td>
-                          </tr>
                         ) : (
                           people.map((person) => {
                             const isAlreadyAdded =
                               persistentCommonAttendees.some(
-                                (p) => p.id === person.id,
+                                (p) => p.id === person.person_id,
                               );
                             const nameParts = (person.fullName || "").split(
                               " ",
@@ -4375,13 +5445,52 @@ const AttendanceModal = ({
                     </table>
                   </div>
                 )}
+
+                {peopleHasMore && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "12px 0",
+                    }}
+                  >
+                    <button
+                      onClick={loadMorePeople}
+                      disabled={isLoadingMorePeople}
+                      style={{
+                        padding: "10px 20px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: "#6366f1",
+                        color: "#fff",
+                        cursor: isLoadingMorePeople
+                          ? "not-allowed"
+                          : "pointer",
+                        opacity: isLoadingMorePeople ? 0.6 : 1,
+                        fontSize: 14,
+                        fontWeight: 500,
+                      }}
+                    >
+                      {isLoadingMorePeople ? "Loading..." : "Load more"}
+                    </button>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: theme.palette.text.secondary }}
+                    >
+                      Showing {people.length}
+                      {peopleTotal > 0 ? ` of ${peopleTotal}` : ""}
+                    </Typography>
+                  </div>
+                )}
               </>
             )}
           </div>
 
           <div style={styles.footer}>
             <button style={styles.closeBtn} onClick={onClose}>
-              CLOSE
+              Close
             </button>
 
             <button
@@ -4416,7 +5525,42 @@ const AttendanceModal = ({
                 <polyline points="7 10 12 15 17 10" />
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
-              DOWNLOAD DATA
+              Download attendance
+            </button>
+            <button
+              onClick={() => downloadAttendanceData(true)}
+              style={{
+                background: "#7b1fa2",
+                color: "#fff",
+                border: "none",
+                padding: "12px 20px",
+                borderRadius: 6,
+                cursor: "pointer",
+                fontSize: 16,
+                fontWeight: 500,
+                flex: isMobile ? "1 1 100%" : "none",
+                minWidth: 120,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+              }}
+              title="Download all associated people (checked in + paid no-shows)"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              Download Everyone
             </button>
 
             <div
@@ -4428,22 +5572,28 @@ const AttendanceModal = ({
               }}
             >
               <button
-                style={styles.didNotMeetBtn}
+                style={{
+                  ...styles.didNotMeetBtn,
+                  opacity: isSaving ? 0.7 : 1,
+                  cursor: isSaving || isFutureSession ? "not-allowed" : "pointer",
+                }}
                 onClick={handleDidNotMeet}
-                disabled={isSaving}
+                disabled={isSaving || isFutureSession}
+                title={isFutureSession ? "Can't save until the session happens" : undefined}
               >
-                {isSaving ? "SAVING..." : "DID NOT MEET"}
+                {isSaving ? "Saving..." : "Mark as did not meet"}
               </button>
               <button
                 style={{
                   ...styles.saveBtn,
                   opacity: isSaving ? 0.7 : 1,
-                  cursor: isSaving ? "not-allowed" : "pointer",
+                  cursor: isSaving || isFutureSession ? "not-allowed" : "pointer",
                 }}
                 onClick={handleSave}
-                disabled={isSaving}
+                disabled={isSaving || isFutureSession}
+                title={isFutureSession ? "Can't save until the session happens" : undefined}
               >
-                {isSaving ? "SAVING..." : "SAVE"}
+                {isSaving ? "Saving..." : "Save attendance"}
               </button>
             </div>
           </div>

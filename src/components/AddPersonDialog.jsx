@@ -1,14 +1,14 @@
-import { useEffect, useState, useCallback, useMemo, useContext, useRef } from "react";
+import { useEffect, useState, useMemo, useContext, useRef } from "react";
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, Button, Typography, useTheme, MenuItem,
-  Box, Alert, Collapse, CircularProgress,
+  Box, Alert, CircularProgress, Grid,
 } from "@mui/material";
-import { Groups as LeaderIcon } from "@mui/icons-material";
 import { LoadingButton } from "@mui/lab";
 import { toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { AuthContext } from "../contexts/AuthContext";
+import { getTokens, DISPLAY, BODY, inputSx, outlinedBtnSx, primaryBtnSx } from "../theme/checkinTokens";
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
@@ -16,16 +16,26 @@ const CACHE_DURATION = 30 * 60 * 1000;
 
 const initialFormState = {
   name: "", surname: "", dob: "", address: "", email: "",
-  number: "", gender: "", invitedBy: "", leader1: "", leader12: "",
-  leader144: "", stage: "Win",
+  number: "", gender: "", invitedBy: "", invitedById: "",
+  leader1: "", leader1Id: "",
+  leader12: "", leader12Id: "",
+  leader144: "", leader144Id: "",
+  stage: "Win",
 };
 
-const uniformInputSx = {
-  "& .MuiOutlinedInput-root": { height: "50px", borderRadius: "15px" },
-  "& .MuiOutlinedInput-input": { fontSize: "0.95rem", padding: "10px 10px" },
-  "& .MuiInputLabel-root": { fontSize: "0.95rem" },
-  "& .MuiSelect-select": { fontSize: "0.95rem", padding: "10px 10px" },
-};
+const uniformInputSx = (t) => ({
+  "& .MuiOutlinedInput-root": {
+    height: 44,
+    borderRadius: "12px",
+    bgcolor: t.fieldBg,
+    "& fieldset": { borderColor: t.line, borderWidth: 1.5 },
+    "&:hover fieldset": { borderColor: t.accent },
+    "&.Mui-focused fieldset": { borderColor: t.accent, borderWidth: 1.5 },
+  },
+  "& .MuiOutlinedInput-input": { fontSize: "0.95rem", padding: "10px 10px", fontFamily: BODY },
+  "& .MuiSelect-select": { fontSize: "0.95rem", padding: "10px 10px", fontFamily: BODY },
+  "& .MuiFormHelperText-root": { fontSize: "0.75rem", color: "#d32f2f" },
+});
 
 // ── Module-level store — lives outside React, never causes re-renders ─────────
 const peopleStore = {
@@ -41,6 +51,7 @@ const mapPerson = (raw) => {
   const fullName = `${name} ${surname}`.trim();
   const email   = (raw.Email   || raw.email   || "").toString().trim();
   const phone   = (raw.Number  || raw.phone   || raw.Phone || "").toString().trim();
+  const personId = (raw.person_id || raw.personId || raw.PersonId || raw._id || raw.id || "").toString();
 
   let leader1   = raw["Leader @1"]   || raw["leader @1"]   || raw.leader1   || raw["Leader at 1"]   || "";
   let leader12  = raw["Leader @12"]  || raw["leader @12"]  || raw.leader12  || raw["Leader at 12"]  || "";
@@ -57,6 +68,7 @@ const mapPerson = (raw) => {
 
   return {
     _id: (raw._id || raw.id || "").toString(),
+    person_id: personId,
     name, surname, email, phone, fullName,
     fullNameLower: fullName.toLowerCase(),
     searchText: `${fullName} ${email} ${phone}`.toLowerCase(),
@@ -110,10 +122,24 @@ function extractLeaders(person) {
   };
 }
 
+function normalizeLeaderChain({ leader1, leader12, leader144 }) {
+  const normalized = [leader1, leader12, leader144]
+    .filter(Boolean)
+    .map((name) => name.trim())
+    .filter((name, index, arr) => arr.indexOf(name) === index);
+
+  return {
+    leader1: normalized[0] || "",
+    leader12: normalized[1] || "",
+    leader144: normalized[2] || "",
+  };
+}
+
 // ─── PeopleSearchField ────────────────────────────────────────────────────────
-function PeopleSearchField({ label, value, onChange, disabled, error, required }) {
+function PeopleSearchField({ label, value, onChange, disabled, error }) {
   const theme  = useTheme();
   const isDark = theme.palette.mode === "dark";
+  const tokens = getTokens(isDark);
 
   const [inputVal, setInputVal] = useState(value || "");
   const [results,  setResults]  = useState([]);
@@ -157,16 +183,16 @@ function PeopleSearchField({ label, value, onChange, disabled, error, required }
   };
 
   const fieldId = `psf-${label.replace(/\s+/g, "-").toLowerCase()}`;
-  const border      = error ? "#d32f2f" : (isDark ? "rgba(255,255,255,0.23)" : "rgba(0,0,0,0.23)");
-  const hoverBorder = error ? "#d32f2f" : (isDark ? "rgba(255,255,255,0.4)"  : "rgba(0,0,0,0.4)");
-  const focusBorder = error ? "#d32f2f" : theme.palette.primary.main;
+  const border      = error ? "#d32f2f" : tokens.line;
+  const hoverBorder = error ? "#d32f2f" : tokens.accent;
+  const focusBorder = error ? "#d32f2f" : tokens.accent;
 
   let displayBorder = border;
   if (isFocused) displayBorder = focusBorder;
   else if (isHovering && !disabled) displayBorder = hoverBorder;
 
   return (
-    <Box ref={wrapRef} sx={{ position: "relative", mt: "16px", mb: "8px" }}>
+    <Box ref={wrapRef} sx={{ position: "relative", mb: 1.5 }}>
       <Box sx={{ position: "relative" }}>
         <input
           id={fieldId}
@@ -188,12 +214,12 @@ function PeopleSearchField({ label, value, onChange, disabled, error, required }
           onBlur={() => setIsFocused(false)}
           onKeyDown={(e) => { if (e.key === "Escape") setShowDrop(false); }}
           style={{
-            width: "100%", height: "50px", padding: "10px 14px",
-            fontSize: "0.95rem", borderRadius: "15px",
+            width: "100%", height: "44px", padding: "10px 14px",
+            fontSize: "0.95rem", borderRadius: "12px",
             border: `1px solid ${displayBorder}`,
-            background: "transparent",
-            color: theme.palette.text.primary, outline: "none",
-            boxSizing: "border-box", fontFamily: "inherit",
+            background: tokens.fieldBg,
+            color: tokens.ink, outline: "none",
+            boxSizing: "border-box", fontFamily: BODY,
             cursor: disabled ? "not-allowed" : "text",
             transition: "border-color 0.2s ease",
           }}
@@ -201,7 +227,7 @@ function PeopleSearchField({ label, value, onChange, disabled, error, required }
       </Box>
 
       {error && (
-        <Typography sx={{ fontSize: "0.75rem", color: "#d32f2f", mt: "3px", ml: "14px" }}>{error}</Typography>
+        <Typography sx={{ fontSize: "0.75rem", color: "#d32f2f", mt: "3px", ml: "2px" }}>{error}</Typography>
       )}
       {!peopleStore.ready && (
         <Box sx={{ display: "flex", alignItems: "center", gap: "6px", mt: "4px", ml: "14px" }}>
@@ -215,9 +241,9 @@ function PeopleSearchField({ label, value, onChange, disabled, error, required }
       {showDrop && (
         <Box sx={{
           position: "absolute", top: "100%", left: 0, right: 0, mt: "4px",
-          bgcolor: theme.palette.background.paper,
-          border: `1px solid ${theme.palette.divider}`,
-          borderRadius: "8px", boxShadow: "0 6px 24px rgba(0,0,0,0.18)",
+          bgcolor: tokens.cardBg,
+          border: `1px solid ${tokens.line}`,
+          borderRadius: "12px",
           zIndex: 9999, maxHeight: "240px", overflowY: "auto",
         }}>
           {results.length > 0 ? results.map((person, idx) => (
@@ -257,6 +283,7 @@ function PeopleSearchField({ label, value, onChange, disabled, error, required }
 function AddressSearchField({ value, onChange, error, disabled }) {
   const theme  = useTheme();
   const isDark = theme.palette.mode === "dark";
+  const tokens = getTokens(isDark);
 
   const [inputVal,    setInputVal]    = useState(value || "");
   const [suggestions, setSuggestions] = useState([]);
@@ -287,37 +314,37 @@ function AddressSearchField({ value, onChange, error, disabled }) {
     return () => document.removeEventListener("mousedown", h);
   }, []);
 
-  const border      = error ? "#d32f2f" : (isDark ? "rgba(255,255,255,0.23)" : "rgba(0,0,0,0.23)");
-  const hoverBorder = error ? "#d32f2f" : (isDark ? "rgba(255,255,255,0.4)"  : "rgba(0,0,0,0.4)");
-  const focusBorder = error ? "#d32f2f" : theme.palette.primary.main;
+  const border      = error ? "#d32f2f" : tokens.line;
+  const hoverBorder = error ? "#d32f2f" : tokens.accent;
+  const focusBorder = error ? "#d32f2f" : tokens.accent;
 
   let displayBorder = border;
   if (isFocused) displayBorder = focusBorder;
   else if (isHovering && !disabled) displayBorder = hoverBorder;
 
   return (
-    <Box ref={wrapRef} sx={{ position: "relative", mt: "16px", mb: "8px" }}>
+    <Box ref={wrapRef} sx={{ position: "relative", mb: 1.5 }}>
       <Box sx={{ position: "relative" }}>
         <input
           type="text" value={inputVal} disabled={disabled}
-          autoComplete="off" placeholder="Home Address *"
+          autoComplete="off" placeholder="Home address"
           onChange={(e) => { setInputVal(e.target.value); onChange(e.target.value); setShowDrop(false); }}
           onMouseEnter={() => !disabled && setIsHovering(true)}
           onMouseLeave={() => setIsHovering(false)}
           onFocus={() => { setIsFocused(true); if (suggestions.length) setShowDrop(true); }}
           onBlur={() => setIsFocused(false)}
           style={{
-            width: "100%", height: "50px", padding: "10px 14px",
-            fontSize: "0.95rem", borderRadius: "15px",
+            width: "100%", height: "44px", padding: "10px 14px",
+            fontSize: "0.95rem", borderRadius: "12px",
             border: `1px solid ${displayBorder}`,
-            background: "transparent",
-            color: theme.palette.text.primary, outline: "none",
-            boxSizing: "border-box", fontFamily: "inherit",
+            background: tokens.fieldBg,
+            color: tokens.ink, outline: "none",
+            boxSizing: "border-box", fontFamily: BODY,
             transition: "border-color 0.2s ease",
           }}
         />
       </Box>
-      {error  && <Typography sx={{ fontSize: "0.75rem", color: "#d32f2f", mt: "3px", ml: "14px" }}>{error}</Typography>}
+      {error  && <Typography sx={{ fontSize: "0.75rem", color: "#d32f2f", mt: "3px", ml: "2px" }}>{error}</Typography>}
       {loading && (
         <Box sx={{ display: "flex", alignItems: "center", gap: "6px", mt: "4px", ml: "14px" }}>
           <CircularProgress size={11} />
@@ -328,9 +355,9 @@ function AddressSearchField({ value, onChange, error, disabled }) {
       {showDrop && suggestions.length > 0 && (
         <Box sx={{
           position: "absolute", top: "100%", left: 0, right: 0, mt: "4px",
-          bgcolor: theme.palette.background.paper,
-          border: `1px solid ${theme.palette.divider}`,
-          borderRadius: "8px", boxShadow: "0 6px 24px rgba(0,0,0,0.18)",
+          bgcolor: tokens.cardBg,
+          border: `1px solid ${tokens.line}`,
+          borderRadius: "12px",
           zIndex: 9999, maxHeight: "220px", overflowY: "auto",
         }}>
           {suggestions.map((addr, idx) => (
@@ -356,9 +383,11 @@ function AddressSearchField({ value, onChange, error, disabled }) {
 export default function AddPersonDialog({
   open, onClose, onSave, formData, setFormData,
   isEdit = false, personId = null, editingPersonObject = null,
+  currentSessionId = null,
 }) {
-  const theme = useTheme();
   const { authFetch, user } = useContext(AuthContext);
+  const theme = useTheme();
+  const tokens = getTokens(theme.palette.mode === "dark");
 
   const [errors,           setErrors]           = useState({});
   const [isSubmitting,     setIsSubmitting]      = useState(false);
@@ -497,15 +526,54 @@ export default function AddPersonDialog({
     if (!validate() || isSubmitting) return;
     setIsSubmitting(true);
     try {
+      if (!isEdit) {
+        const norm = (s) => (s || "").toString().trim().toLowerCase();
+        const dupFull = `${norm(formData.name)} ${norm(formData.surname)}`.trim();
+        const dupEmail = norm(formData.email);
+        const dupPhone = digitsOnly(formData.number || "");
+        const existingDup = peopleStore.list.find((p) => {
+          const pEmail = norm(p.email);
+          if (dupEmail && pEmail && dupEmail === pEmail) return true;
+          const pFull = p.fullNameLower || `${norm(p.name)} ${norm(p.surname)}`.trim();
+          const pPhone = digitsOnly(p.phone || "");
+          return dupFull && pFull && dupFull === pFull && dupPhone && pPhone && dupPhone === pPhone;
+        });
+        if (existingDup) {
+          toast.warning(
+            `A person with this email or name already exists (${existingDup.fullName || existingDup.email}). Search and select the existing person instead of creating a duplicate.`,
+          );
+          return;
+        }
+      }
+
+      const normalizedLeaders = normalizeLeaderChain({
+        leader1: formData.leader1,
+        leader12: formData.leader12,
+        leader144: formData.leader144,
+      });
+
       const payload = {
         invitedBy: formData.invitedBy || "",
+        invitedById: formData.invitedById || "",
         name: formData.name, surname: formData.surname,
         gender: formData.gender, email: formData.email,
         number: formData.number, phone: formData.number,
         dob: formData.dob ? formData.dob.replace(/-/g, "/") : "",
         address: formData.address,
-        leaders: [formData.leader1 || "", formData.leader12 || "", formData.leader144 || "", ""],
-        leader1: formData.leader1 || "", leader12: formData.leader12 || "", leader144: formData.leader144 || "",
+        leaders: [
+          normalizedLeaders.leader1,
+          normalizedLeaders.leader12,
+          normalizedLeaders.leader144,
+          "",
+        ],
+        leader1: normalizedLeaders.leader1,
+        leader1Id: formData.leader1Id || "",
+        leader12: normalizedLeaders.leader12,
+        leader12Id: formData.leader12Id || "",
+        leader144: normalizedLeaders.leader144,
+        leader144Id: formData.leader144Id || "",
+        // leaderId is what your backend's create_person endpoint checks first
+        leaderId: formData.leader1Id || formData.invitedById || "",
         stage: formData.stage || "Win",
       };
 
@@ -541,6 +609,39 @@ export default function AddPersonDialog({
           const data = await response.json();
           const created = data.person || data;
           peopleStore.ready = false;
+
+          if (currentSessionId) {
+            try {
+              const generatedPersonId = created?._id || created?.id || created?.person_id || "";
+              const newPersonConsolidation = {
+                person_name: payload.name,
+                person_surname: payload.surname,
+                person_email: payload.email,
+                person_phone: payload.number,
+                person_id: generatedPersonId,
+                decision_type: "first_time",
+                decision_date: new Date().toISOString().split("T")[0],
+                assigned_to: normalizedLeaders.leader1 || payload.leader1 || "",
+                assigned_to_email: "",
+                leaders: [normalizedLeaders.leader1, normalizedLeaders.leader12, normalizedLeaders.leader144].filter(Boolean),
+                event_id: "" ,
+                source: "service_consolidation",
+                session_id: currentSessionId,
+                notes: "New person added during registration",
+                task_type: "New person",
+                event_leader_name: user?.name ? `${user.name} ${user.surname || ""}`.trim() : "",
+                event_leader_email: user?.email || "",
+              };
+              await authFetch(`${BASE_URL}/consolidations`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(newPersonConsolidation),
+              });
+            } catch (consolidationErr) {
+              console.warn("New-person consolidation creation failed:", consolidationErr);
+            }
+          }
+
           onSave({
             ...data,
             person: {
@@ -581,20 +682,26 @@ export default function AddPersonDialog({
       setFormData((p) => ({ ...p, [name]: val }));
       setErrors((p) => ({ ...p, [name]: "" }));
     };
+    const required = !!options.required;
     return (
-      <TextField
-        margin="normal" fullWidth label={label} name={name}
-        type={type || "text"} select={select} disabled={isSubmitting}
-        value={currentValue} onChange={onChange}
-        error={!!errors[name]} helperText={errors[name]}
-        InputLabelProps={{ shrink: type === "date" || Boolean(currentValue) }}
-        inputProps={name === "number" ? { inputMode: "tel" } : undefined}
-        sx={uniformInputSx}
-      >
-        {select && selectOptions.map((opt) => (
-          <MenuItem key={opt} value={opt} sx={{ fontSize: "0.95rem" }}>{opt}</MenuItem>
-        ))}
-      </TextField>
+      <Box sx={{ mb: 1.5 }}>
+        <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>
+          {label}{required ? " *" : ""}
+        </Typography>
+        <TextField
+          fullWidth name={name}
+          type={type || "text"} select={select} disabled={isSubmitting}
+          value={currentValue} onChange={onChange}
+          error={!!errors[name]} helperText={errors[name] || " "}
+          InputLabelProps={{ shrink: type === "date" || Boolean(currentValue) }}
+          inputProps={name === "number" ? { inputMode: "tel" } : undefined}
+          sx={uniformInputSx(tokens)}
+        >
+          {select && selectOptions.map((opt) => (
+            <MenuItem key={opt} value={opt} sx={{ fontSize: "0.95rem" }}>{opt}</MenuItem>
+          ))}
+        </TextField>
+      </Box>
     );
   };
 
@@ -602,132 +709,213 @@ export default function AddPersonDialog({
     <Dialog
       open={open} onClose={handleClose} maxWidth="md" fullWidth
       disableEscapeKeyDown={isSubmitting}
-      PaperProps={{ sx: { borderRadius: 3, m: 2, maxHeight: "90vh" } }}
+      PaperProps={{
+        sx: {
+          borderRadius: "18px",
+          bgcolor: tokens.cardBg,
+          border: `1px solid ${tokens.line}`,
+          backgroundImage: "none",
+          m: 2,
+          maxHeight: "90vh",
+        },
+      }}
     >
-      <DialogTitle sx={{ pb: 1 }}>
-        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <Typography variant="h5" component="div">
-            {isEdit ? "Update Person" : "Add New Person"}
+      <DialogTitle sx={{ p: "16px 20px", borderBottom: `1px solid ${tokens.line}` }}>
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
+          <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "1.25rem" }}>
+            {isEdit ? "Update person" : "Add new person"}
           </Typography>
           {!peopleReady && (
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <CircularProgress size={16} />
-              <Typography variant="caption" color="text.secondary">Loading people…</Typography>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: tokens.mute }}>
+              <CircularProgress size={16} sx={{ color: tokens.mute }} />
+              <Typography sx={{ fontFamily: BODY, fontSize: "0.75rem", color: tokens.mute }}>Loading people…</Typography>
             </Box>
           )}
         </Box>
       </DialogTitle>
 
-      <DialogContent dividers>
+      <DialogContent sx={{ p: "8px 20px 16px", overflowY: "auto" }}>
         {Object.keys(errors).length > 0 && (
-          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setErrors({})}>
+          <Alert severity="error" sx={{ mb: 2, borderRadius: "12px" }} onClose={() => setErrors({})}>
             Please fill in all required fields
           </Alert>
         )}
 
-        <Box>
-          {renderTextField("name", "First Name *", { required: true })}
-          {renderTextField("surname", "Last Name *", { required: true })}
-          {renderTextField("dob", "Date of Birth *", { type: "date", required: true })}
+        <Grid container spacing={2} sx={{ mt: 0 }}>
+          <Grid item xs={12} md={6}>
+            <Box sx={{ mb: 0.5 }}>
+              <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>About</Typography>
+            </Box>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                {renderTextField("name", "First name", { required: true })}
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                {renderTextField("surname", "Last name", { required: true })}
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                {renderTextField("dob", "Date of birth", { type: "date", required: true })}
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                {renderTextField("gender", "Gender", { select: true, selectOptions: ["Male", "Female"], required: true })}
+              </Grid>
+            </Grid>
+          </Grid>
 
-          <PeopleSearchField
-            label="Invited By"
-            value={formData.invitedBy}
-            onChange={(val, person) => {
-              setFormData((p) => {
-                const update = { ...p, invitedBy: val };
-                if (person) {
-                  // Build ancestor chain root-first from inviter's own leaders
-                  const ancestors = [
-                    person.leader1,
-                    person.leader12,
-                    person.leader144,
-                  ].filter(Boolean);
+          <Grid item xs={12} md={6}>
+            <Box sx={{ mb: 0.5 }}>
+              <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>Contact</Typography>
+            </Box>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                {renderTextField("email", "Email address", { type: "email", required: true })}
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                {renderTextField("number", "Phone number", { required: true })}
+              </Grid>
+              <Grid item xs={12}>
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>Home address *</Typography>
+                  <AddressSearchField
+                    value={formData.address}
+                    onChange={(val) => { setFormData((p) => ({ ...p, address: val })); setErrors((p) => ({ ...p, address: "" })); }}
+                    error={errors.address}
+                    disabled={isSubmitting}
+                  />
+                </Box>
+              </Grid>
+            </Grid>
+          </Grid>
 
-                  // Only add inviter to chain if fewer than 3 levels above them
-                  // If already 3 deep, inviter is just invitedBy — leaders come from their chain as-is
-                  if (ancestors.length < 3) {
-                    ancestors.push(person.fullName);
-                  }
-
-                  // leader1  = root (always index 0)
-                  // leader12 = second-to-last
-                  // leader144 = last (only when 3 entries exist)
-                  //
-                  // [Gavin, Sasha]            → l1=Gavin, l12=Sasha,   l144=""
-                  // [Gavin, Thabo, Blessing]  → l1=Gavin, l12=Thabo,   l144=Blessing
-                  // [Gavin, Thabo, Blessing] (inviter already has 3) → same, inviter not appended
-                  update.leader1   = ancestors[0] || "";
-                  update.leader12  = ancestors.length >= 2 ? ancestors[ancestors.length - 2] : "";
-                  update.leader144 = ancestors.length >= 3 ? ancestors[ancestors.length - 1] : "";
-                } else {
-                  update.leader1   = "";
-                  update.leader12  = "";
-                  update.leader144 = "";
-                }
-                return update;
-              });
-              setErrors((p) => ({ ...p, invitedBy: "", leader1: "", leader12: "", leader144: "" }));
-            }}
-            disabled={isSubmitting}
-            error={errors.invitedBy}
-          />
-
-          <AddressSearchField
-            value={formData.address}
-            onChange={(val) => { setFormData((p) => ({ ...p, address: val })); setErrors((p) => ({ ...p, address: "" })); }}
-            error={errors.address}
-            disabled={isSubmitting}
-          />
-
-          {renderTextField("email", "Email Address *", { type: "email", required: true })}
-          {renderTextField("number", "Phone Number *", { required: true })}
-          {renderTextField("gender", "Gender *", { select: true, selectOptions: ["Male", "Female"], required: true })}
-
-          <Box sx={{ mt: 1 }}>
-            <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 0.5 }}>Leadership</Typography>
-            <PeopleSearchField
-              label="Leader @1"
-              value={formData.leader1}
-              onChange={(val) => { setFormData((p) => ({ ...p, leader1: val })); setErrors((p) => ({ ...p, leader1: "" })); }}
-              disabled={isSubmitting || !canEditLeaders}
-              error={errors.leader1}
-              required
-            />
-          </Box>
-
-          <Collapse in={showLeaderFields}>
-            <Box>
+          <Grid item xs={12} md={6}>
+            <Box sx={{ mb: 0.5 }}>
+              <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>Church</Typography>
+            </Box>
+            <Box sx={{ mb: 1.5 }}>
+              <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>Invited by</Typography>
               <PeopleSearchField
-                label="Leader @12"
-                value={formData.leader12}
-                onChange={(val) => setFormData((p) => ({ ...p, leader12: val }))}
-                disabled={isSubmitting || !canEditLeaders}
-              />
-              <PeopleSearchField
-                label="Leader @144"
-                value={formData.leader144}
-                onChange={(val) => setFormData((p) => ({ ...p, leader144: val }))}
-                disabled={isSubmitting || !canEditLeaders}
+                label="Invited by"
+                value={formData.invitedBy}
+                onChange={(val, person) => {
+                  setFormData((p) => {
+                    const update = { ...p, invitedBy: val };
+                    if (person) {
+                      update.invitedById = person._id || "";
+
+                      const ancestors = [
+                        { name: person.leader1, id: person.leader1Id },
+                        { name: person.leader12, id: person.leader12Id },
+                        { name: person.leader144, id: person.leader144Id },
+                      ].filter((a) => a.name && a.name.trim());
+
+                      const inviterName = person.fullName?.trim();
+                      const inviterId = person._id || "";
+                      if (
+                        inviterName &&
+                        ancestors.length < 3 &&
+                        ancestors[ancestors.length - 1]?.name !== inviterName
+                      ) {
+                        ancestors.push({ name: inviterName, id: inviterId });
+                      }
+
+                      const seen = new Set();
+                      const uniqueAncestors = ancestors.filter((a) => {
+                        if (seen.has(a.name)) return false;
+                        seen.add(a.name);
+                        return true;
+                      });
+
+                      update.leader1 = uniqueAncestors[0]?.name || "";
+                      update.leader1Id = uniqueAncestors[0]?.id || "";
+                      update.leader12 = uniqueAncestors[1]?.name || "";
+                      update.leader12Id = uniqueAncestors[1]?.id || "";
+                      update.leader144 = uniqueAncestors[2]?.name || "";
+                      update.leader144Id = uniqueAncestors[2]?.id || "";
+                    } else {
+                      update.invitedById = "";
+                      update.leader1 = "";
+                      update.leader1Id = "";
+                      update.leader12 = "";
+                      update.leader12Id = "";
+                      update.leader144 = "";
+                      update.leader144Id = "";
+                    }
+                    return update;
+                  });
+                  setErrors((p) => ({ ...p, invitedBy: "", leader1: "", leader12: "", leader144: "" }));
+                }}
+                disabled={isSubmitting}
+                error={errors.invitedBy}
               />
             </Box>
-          </Collapse>
+          </Grid>
 
-          <Box sx={{ mt: 1, textAlign: "center" }}>
-            <Button onClick={() => setShowLeaderFields((v) => !v)} startIcon={<LeaderIcon />} variant="outlined" color="primary" size="small">
-              {showLeaderFields ? "Hide Additional Leaders" : "Add Additional Leaders"}
-            </Button>
-          </Box>
-        </Box>
+          <Grid item xs={12} md={6}>
+            <Box sx={{ mb: 0.5 }}>
+              <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>Leadership</Typography>
+              <Typography sx={{ fontSize: "0.75rem", color: tokens.mute, mb: 1 }}>Filled in from who invited them</Typography>
+            </Box>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={4}>
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>Leader @1 *</Typography>
+                  <PeopleSearchField
+                    label="Leader @1"
+                    value={formData.leader1}
+                    onChange={(val, person) => {
+                      setFormData((p) => ({ ...p, leader1: val, leader1Id: person?._id || "" }));
+                      setErrors((p) => ({ ...p, leader1: "" }));
+                    }}
+                    disabled={isSubmitting || !canEditLeaders}
+                    error={errors.leader1}
+                    required
+                  />
+                </Box>
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>Leader @12</Typography>
+                  <PeopleSearchField
+                    label="Leader @12"
+                    value={formData.leader12}
+                    onChange={(val, person) =>
+                      setFormData((p) => ({ ...p, leader12: val, leader12Id: person?._id || "" }))
+                    }
+                    disabled={isSubmitting || !canEditLeaders}
+                  />
+                </Box>
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: tokens.ink, fontSize: "0.95rem", mb: 0.75 }}>Leader @144</Typography>
+                  <PeopleSearchField
+                    label="Leader @144"
+                    value={formData.leader144}
+                    onChange={(val, person) =>
+                      setFormData((p) => ({ ...p, leader144: val, leader144Id: person?._id || "" }))
+                    }
+                    disabled={isSubmitting || !canEditLeaders}
+                  />
+                </Box>
+              </Grid>
+            </Grid>
+          </Grid>
+        </Grid>
       </DialogContent>
 
-      <DialogActions sx={{ p: 2 }}>
-        <Button onClick={handleClose} color="inherit" disabled={isSubmitting}>Cancel</Button>
+      <DialogActions sx={{ p: "12px 20px", borderTop: `1px solid ${tokens.line}`, gap: 1 }}>
+        <Typography sx={{ mr: "auto", fontSize: "0.8125rem", color: tokens.mute, fontFamily: BODY }}>
+          {isEdit && !hasChanges ? "Change something to enable Update" : "Fill in every field marked *"}
+        </Typography>
+        <Button onClick={handleClose} disabled={isSubmitting} sx={{ ...outlinedBtnSx(tokens), minWidth: 96 }}>
+          Cancel
+        </Button>
         <LoadingButton
-          onClick={handleSaveClick} variant="contained" color="primary"
+          onClick={handleSaveClick}
+          variant="contained"
           loading={isSubmitting}
           disabled={!isFormValid() || (isEdit && !hasChanges)}
-          sx={{ minWidth: 100 }}
+          sx={{ ...primaryBtnSx(tokens), minWidth: 100 }}
         >
           {isEdit ? "Update" : "Save"}
         </LoadingButton>

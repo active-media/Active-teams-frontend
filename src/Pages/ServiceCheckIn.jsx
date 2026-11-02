@@ -1,35 +1,71 @@
-import React, { useState, useEffect, useRef, useContext, useMemo, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useContext,
+  useMemo,
+  useCallback,
+} from "react";
 import {
-  Checkbox, FormControlLabel, Menu, DialogContentText,
-  ListItemIcon, ListItemText,
+  Checkbox,
+  FormControlLabel,
+  Menu,
+  DialogContentText,
+  ListItemIcon,
+  ListItemText,
 } from "@mui/material";
 import {
-  Box, Typography, Paper, Grid, TextField, Button,
-  Table, TableBody, TableCell, TableHead, TableRow,
-  IconButton, useTheme, useMediaQuery, TablePagination,
-  MenuItem, Select, Chip, Card, CardContent, Stack,
-  Divider, Dialog, DialogTitle, DialogContent, DialogActions,
-  Tooltip, Skeleton, Tabs, Tab,
+  Box,
+  Typography,
+  Paper,
+  Grid,
+  TextField,
+  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  IconButton,
+  useTheme,
+  useMediaQuery,
+  TablePagination,
+  MenuItem,
+  Select,
+  Chip,
+  Card,
+  CardContent,
+  Stack,
+  Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Tooltip,
+  Skeleton,
+  Tabs,
+  Tab,
 } from "@mui/material";
-import { DataGrid, GridToolbar } from "@mui/x-data-grid";
+import { DataGrid } from "@mui/x-data-grid";
 import AddPersonDialog from "../components/AddPersonDialog";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
-import GroupIcon from "@mui/icons-material/Group";
-import { PersonAdd as PersonAddIcon } from "@mui/icons-material";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
+import GroupIcon from "@mui/icons-material/Group";
+import PersonAddAltIcon  from "@mui/icons-material/PersonAddAlt";
+import MergeIcon from "@mui/icons-material/Merge";
+import PersonAddIcon from "@mui/icons-material/PersonAdd";
+import CloseIcon from "@mui/icons-material/Close";
+import SaveIcon from "@mui/icons-material/Save";
+import RefreshIcon from "@mui/icons-material/Refresh";
+// "@aldabil/react-scheduler"
 import ConsolidationModal from "../components/ConsolidationModal";
 import EmojiPeopleIcon from "@mui/icons-material/EmojiPeople";
-import PersonAddAltIcon from "@mui/icons-material/PersonAddAlt";
-import MergeIcon from "@mui/icons-material/Merge";
 import EventHistory from "../components/EventHistory";
-import SaveIcon from "@mui/icons-material/Save";
-import CloseIcon from "@mui/icons-material/Close";
-import CheckIcon from "@mui/icons-material/Check";
-import RefreshIcon from "@mui/icons-material/Refresh";
+import { saveToEventHistory } from "../utils/eventhistory";
 import DownloadIcon from "@mui/icons-material/Download";
 import DeleteConfirmationModal from "../components/DeleteConfirmationModal";
 import EventHistoryModal from "../components/EventHistoryModal";
@@ -37,8 +73,42 @@ import { AuthContext } from "../contexts/AuthContext";
 import * as XLSX from "xlsx";
 import { DeleteForever as DeleteForeverIcon } from "@mui/icons-material";
 import { useTaskUpdate } from "../contexts/TaskUpdateContext";
+import {
+  getTokens,
+  inputSx as sharedInputSx,
+  outlinedBtnSx as sharedOutlinedBtnSx,
+  primaryBtnSx as sharedPrimaryBtnSx,
+} from "../theme/checkinTokens";
+import {
+  getEntryId,
+  findPresentEntry,
+  isNewInSet,
+  newIdentitySet,
+  classifyToggleAdd,
+  classifyToggleRemove,
+  newPeopleFromPresent,
+  saDateKey,
+  saTodayKey,
+} from "../utils/serviceCheckinToggle";
+import { at } from "lodash";
+
+const isTodayService = (event) => {
+  if (!event || !event.rawDate && !event.date) return false;
+  const dateString = event.date
+  const today = new Date();
+  
+  // Format today as YYYY-MM-DD in local time
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  const todayString = `${year}-${month}-${day}`;
+  
+  return dateString === todayString;
+};
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}`;
+const DISPLAY = "'Bricolage Grotesque', 'Figtree', system-ui, sans-serif";
+const BODY = "'Figtree', system-ui, sans-serif";
 
 const CACHE_DURATION = 5 * 60 * 1000;
 
@@ -46,10 +116,10 @@ function buildSearchableText(person) {
   const leaderText = Array.isArray(person.leaders)
     ? person.leaders.map((l) => l.name || "").join(" ")
     : [
-      person.leader1 || person["Leader @1"] || "",
-      person.leader12 || person["Leader @12"] || "",
-      person.leader144 || person["Leader @144"] || "",
-    ].join(" ");
+        person.leader1 || person["Leader @1"] || "",
+        person.leader12 || person["Leader @12"] || "",
+        person.leader144 || person["Leader @144"] || "",
+      ].join(" ");
 
   return [
     person.name || person.Name || "",
@@ -61,7 +131,9 @@ function buildSearchableText(person) {
     person.stage || person.Stage || "",
     person.invitedBy || person.InvitedBy || "",
     person.address || person.Address || "",
-  ].join(" ").toLowerCase();
+  ]
+    .join(" ")
+    .toLowerCase();
 }
 
 function matchesSearch(person, terms) {
@@ -77,12 +149,16 @@ function isPriorityPerson(first, last) {
   const fn = (first || "").toLowerCase();
   const sn = (last || "").toLowerCase();
   return PRIORITY_PEOPLE.some(
-    (p) => p.surnameIncludes.some(s => sn.includes(s)) && p.firstNameIncludes.some(f => fn.includes(f))
+    (p) =>
+      p.surnameIncludes.some((s) => sn.includes(s)) &&
+      p.firstNameIncludes.some((f) => fn.includes(f)),
   );
 }
 
 function normalisePerson(p) {
-  let leader1 = "", leader12 = "", leader144 = "";
+  let leader1 = "",
+    leader12 = "",
+    leader144 = "";
 
   if (Array.isArray(p.leaders) && p.leaders.length) {
     for (const l of p.leaders) {
@@ -100,17 +176,24 @@ function normalisePerson(p) {
 
   return {
     _id: p._id,
+    person_id: p.person_id || p.Person_id || p.personId , 
     name, surname,
     email: p.Email || p.email || "",
     phone: p.Number || p.number || p.phone || "",
     number: p.Number || p.number || p.phone || "",
-    leader1, leader12, leader144,
+    leader1,
+    leader12,
+    leader144,
     gender: p.Gender || p.gender || "",
     address: p.Address || p.address || "",
     birthday: p.Birthday || p.birthday || "",
     dob: p.Birthday || p.birthday || "",
     invitedBy: p.InvitedBy || p.invitedBy || "",
     stage: p.Stage || p.stage || "Win",
+    dateCreated:
+      p.DateCreated || p.created_at || p.createdAt || p.CreatedAt || "",
+    created_at:
+      p.created_at || p.DateCreated || p.createdAt || p.CreatedAt || "",
     fullName: p.FullName || `${name} ${surname}`.trim(),
     leaders: p.leaders || [],
     LeaderId: p.LeaderId || p.leaderId || null,
@@ -127,27 +210,51 @@ function s2ab(s) {
 }
 
 const emptyForm = {
-  name: "", surname: "", email: "", phone: "", number: "", gender: "",
-  invitedBy: "", leader1: "", leader12: "", leader144: "",
-  stage: "Win", dob: "", address: "",
+  name: "",
+  surname: "",
+  email: "",
+  phone: "",
+  number: "",
+  gender: "",
+  invitedBy: "",
+  leader1: "",
+  leader12: "",
+  leader144: "",
+  stage: "Win",
+  dob: "",
+  address: "",
 };
 
 const cleanEventId = (id) => id?.split("_")[0] ?? id;
+
+const getCachedPeople = () => {
+  const cache = window.globalPeopleCache;
+  if (Array.isArray(cache)) return cache;
+  if (cache && Array.isArray(cache.data)) return cache.data;
+  return null;
+};
+
+const getCacheTimestamp = () => {
+  const cache = window.globalPeopleCache;
+  if (cache && typeof cache === "object" && cache.timestamp)
+    return cache.timestamp;
+  return window.globalCacheTimestamp;
+};
 
 function ServiceCheckIn() {
   const { authFetch, user } = useContext(AuthContext);
   const { notifyTaskUpdate } = useTaskUpdate();
 
   const [attendees, setAttendees] = useState(() => {
-    const cache = window.globalPeopleCache;
-    const ts = window.globalCacheTimestamp;
-    if (cache && ts && (Date.now() - ts < CACHE_DURATION)) {
+    const cache = getCachedPeople();
+    const ts = getCacheTimestamp();
+    if (cache && ts && Date.now() - ts < CACHE_DURATION) {
       return cache.map(normalisePerson);
     }
     return [];
   });
 
-  const [currentEventId, setCurrentEventId] = useState("");
+  const [currentSessionId, setCurrentSessionId] = useState("");//session_id
   const [eventSearch, setEventSearch] = useState("");
   const [events, setEvents] = useState([]);
   const [search, setSearch] = useState("");
@@ -161,8 +268,10 @@ function ServiceCheckIn() {
   const [consolidationOpen, setConsolidationOpen] = useState(false);
   const [sortModel, setSortModel] = useState([]);
   const [realTimeData, setRealTimeData] = useState(null);
-  const [hasDataLoaded, setHasDataLoaded] = useState(attendees.length > 0);
-  const [isLoadingPeople, setIsLoadingPeople] = useState(attendees.length === 0);
+  const [, setHasDataLoaded] = useState(attendees.length > 0);
+  const [isLoadingPeople, setIsLoadingPeople] = useState(
+    attendees.length === 0,
+  );
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [isClosingEvent, setIsClosingEvent] = useState(false);
@@ -179,10 +288,24 @@ function ServiceCheckIn() {
   const [activeTab, setActiveTab] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [checkInLoading, setCheckInLoading] = useState(new Set());
-  const [deleteConfirmation, setDeleteConfirmation] = useState({ open: false, personId: null, personName: "" });
-  const [eventHistoryModal, setEventHistoryModal] = useState({ open: false, event: null, type: null, data: [] });
+  const [deleteConfirmation, setDeleteConfirmation] = useState({
+    open: false,
+    personId: null,
+    personName: "",
+  });
+  const [eventHistoryModal, setEventHistoryModal] = useState({
+    open: false,
+    event: null,
+    type: null,
+    data: [],
+  });
   const [formData, setFormData] = useState(emptyForm);
-  const [contextMenu, setContextMenu] = useState({ mouseX: null, mouseY: null, data: null, type: null });
+  const [, setContextMenu] = useState({
+    mouseX: null,
+    mouseY: null,
+    data: null,
+    type: null,
+  });
 
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down("xs"));
@@ -191,65 +314,195 @@ function ServiceCheckIn() {
   const isLg = useMediaQuery(theme.breakpoints.down("lg"));
   const isDarkMode = theme.palette.mode === "dark";
 
-  const rv = (xs, sm, md, lg, xl) => {
-    if (isXs) return xs; if (isSm) return sm; if (isMd) return md; if (isLg) return lg; return xl;
+  const accent = theme.palette.primary.main;
+  const ink = isDarkMode ? "#f1f0f8" : "#1c1b2e";
+  const mute = isDarkMode ? "#9a98b0" : "#6c6a80";
+  const line = isDarkMode ? "#2a2a38" : "#e3e1ec";
+  const fieldBg = isDarkMode ? "#1d1d29" : "#f8f7fb";
+  const cardBg = isDarkMode ? "#16161f" : "#ffffff";
+  const pageBg = isDarkMode ? "#0d0d14" : "#f3f2f7";
+  const modalTokens = getTokens(isDarkMode);
+  const serviceDialogTableSx = {
+    "& .MuiTableCell-root": {
+      py: 1.1,
+      fontFamily: BODY,
+      fontSize: "0.8rem",
+      color: modalTokens.ink,
+      borderColor: modalTokens.line,
+    },
+    "& .MuiTableHead .MuiTableCell-root": {
+      bgcolor: modalTokens.fieldBg,
+      color: modalTokens.mute,
+      fontSize: "0.72rem",
+      fontWeight: 700,
+      whiteSpace: "nowrap",
+    },
+    "& .MuiTableBody .MuiTypography-root": {
+      fontFamily: BODY,
+    },
   };
+  const serviceDialogPaginationSx = {
+    color: modalTokens.mute,
+    fontFamily: BODY,
+    "& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows": {
+      color: modalTokens.mute,
+      fontFamily: BODY,
+    },
+    "& .MuiTablePagination-select": { fontFamily: BODY },
+    "& .MuiSvgIcon-root": { color: modalTokens.mute },
+  };
+  const inputSx = {
+    "& .MuiOutlinedInput-root": {
+      bgcolor: cardBg,
+      borderRadius: "12px",
+      fontFamily: BODY,
+      height: 44,
+      "& fieldset": { borderColor: line, borderWidth: 1.5 },
+      "&:hover fieldset": { borderColor: accent },
+      "&.Mui-focused fieldset": { borderColor: accent, borderWidth: 1.5 },
+    },
+  };
+  const outlinedBtnSx = {
+    height: 44,
+    borderRadius: "12px",
+    textTransform: "none",
+    fontWeight: 600,
+    fontFamily: BODY,
+    color: ink,
+    borderColor: line,
+    borderWidth: 1.5,
+    bgcolor: cardBg,
+    "&:hover": { borderColor: accent, borderWidth: 1.5, bgcolor: cardBg },
+  };
+  const iconBtnSx = (disabled) => ({
+    p: isSm ? "4px" : "7px",
+    color: mute,
+    opacity: disabled ? 0.4 : 1,
+    "&:hover": { bgcolor: fieldBg, color: ink },
+  });
+
+  const rv = useCallback(
+    (xs, sm, md, lg, xl) => {
+      if (isXs) return xs;
+      if (isSm) return sm;
+      if (isMd) return md;
+      if (isLg) return lg;
+      return xl;
+    },
+    [isXs, isSm, isMd, isLg],
+  );
 
   const containerPadding = rv(0.5, 1, 2, 3, 3);
   const cardSpacing = rv(0.5, 1, 1.5, 2, 2);
 
   const attendeeMap = useMemo(() => {
     const map = new Map();
-    attendees.forEach(a => map.set(a._id, a));
+    attendees.forEach((a) => map.set(a._id, a));
     return map;
   }, [attendees]);
 
-  const fetchRealTimeEventData = useCallback(async (eventId) => {
-    if (!eventId) return null;
+  const fetchRealTimeEventData = useCallback(async (sessionId) => {
+    if (!sessionId) return null;
     try {
-      const res = await authFetch(`${BASE_URL}/service-checkin/real-time-data?event_id=${eventId}`);
+      const currentEvent = events.find(
+        (entry) =>
+          entry?.session_id == sessionId
+      );
+      const isMenuEvent = menuEvents.includes(currentEvent);
+     
+
+      const eventId = currentEvent?.event_id;
+      const historyUrl = isMenuEvent
+        ? `${BASE_URL}/service-checkin/events-history?session_id=${encodeURIComponent(sessionId)}`
+        : `${BASE_URL}/service-checkin/real-time-data?event_id=${encodeURIComponent(eventId)}`;
+
+      const res = await authFetch(historyUrl);
       if (!res.ok) return null;
-      const data = await res.json();
-      return data.success ? data : null;
+      const payload = await res.json();
+      if (!payload || typeof payload !== "object") return null;
+
+      const attendeesArr = payload.present_attendees ?? payload.attendees ?? [];
+      const newPeopleArr = payload.new_people ?? payload.newPeople ?? [];
+      const consolidationsArr = payload.consolidations ?? payload.consolidatedData ?? [];
+      setPresentCount(payload.present_count);
+      return {
+        ...payload,
+        success: payload.success ?? true,
+        present_attendees: attendeesArr,
+        new_people: newPeopleArr,
+        consolidations: consolidationsArr,
+        present_count:
+          payload.present_count,
+        new_people_count:
+          payload.new_people_count ?? newPeopleArr.length,
+        consolidation_count:
+          payload.consolidation_count ?? consolidationsArr.length,
+      };
     } catch { return null; }
-  }, [authFetch]);
+  }, [authFetch, events]);
 
-  const fetchAllPeople = useCallback(async () => {
-    const cache = window.globalPeopleCache;
-    const ts = window.globalCacheTimestamp;
-    if (cache && ts && (Date.now() - ts < CACHE_DURATION) && window.globalPeopleCacheOrg) {
-      const normalised = cache.map(normalisePerson);
-      setAttendees(normalised);
-      setHasDataLoaded(true);
-      setIsLoadingPeople(false);
-      return normalised;
-    }
+  // Captures made by this browser session. A non-recurring service stores its
+  // attendees in the event's root array while consolidations live in the
+  // date-scoped attendance bucket; the server real-time read can therefore
+  // return a different (empty/stale) attendee list. Until the backend read is
+  // fixed, keep session captures visible across refetches.
+  const sessionCaptured = useRef(new Map());
+  const [sessionNew, setSessionNew] = useState(new Map());
+  useEffect(() => { sessionCaptured.current = new Map(); setSessionNew(new Map()); }, [currentSessionId]);
 
-    setIsLoadingPeople(true);
-    try {
-      const res = await authFetch(`${BASE_URL}/cache/people`);
-      if (!res.ok) throw new Error("Failed to fetch people");
-      const data = await res.json();
-      if (data.success && data.cached_data) {
-        const normalised = data.cached_data.map(normalisePerson);
-        window.globalPeopleCache = data.cached_data;
-        window.globalCacheTimestamp = Date.now();
-        setAttendees(normalised);
-        setHasDataLoaded(true);
-        return normalised;
+  const commitRealTimeData = useCallback((freshData) => {
+    if (!freshData) return;
+    setRealTimeData((prev) => {
+      if (!prev) return freshData;
+      // Reconcile consolidations: a freshly created consolidation is shown
+      // optimistically before the server write is visible on a refetch. Keep
+      // recently-created ids that are missing from the fresh payload so they
+      // don't briefly "disappear"; older ids defer to server truth.
+      const freshCons = freshData.consolidations || [];
+      const prevCons = prev.consolidations || [];
+      const freshIds = new Set(freshCons.map((c) => c.id || c._id));
+      const preserved = prevCons.filter((c) => {
+        if (freshIds.has(c.id || c._id)) return false;
+        const createdMs = c.created_at ? new Date(c.created_at).getTime() : 0;
+        return createdMs > Date.now() - 20000;
+      });
+      let result;
+      if (preserved.length) {
+        const mergedCons = [...freshCons, ...preserved];
+        result = {
+          ...freshData,
+          consolidations: mergedCons,
+          consolidation_count: mergedCons.length,
+        };
+      } else {
+        result = freshData;
       }
-    } catch (err) {
-      toast.error("Failed to load people data. Please refresh.");
-    } finally {
-      setIsLoadingPeople(false);
-    }
-    return [];
-  }, [authFetch]);
+      // Overlay this session's captures so they never drop off the door list
+      // because of the server's date-bucket ambiguity.
+      if (sessionCaptured.current.size > 0) {
+        const present = [...(result.present_attendees || [])];
+        const ids = new Set(present.map((a) => getEntryId(a)));
+        const added = [];
+        sessionCaptured.current.forEach((entry, gid) => {
+          if (gid && !ids.has(gid)) added.push(entry);
+        });
+        if (added.length) {
+          const mergedPresent = [...present, ...added];
+          result = {
+            ...result,
+            present_attendees: mergedPresent,
+            present_count: mergedPresent.length,
+          };
+        }
+      }
+      return result;
+    });
+  }, []);
 
   const transformEvents = useCallback((eventsData, normalisedPeople) => {
     const peopleById = new Map();
     const peopleByEmail = new Map();
-    normalisedPeople.forEach(p => {
+    normalisedPeople.forEach((p) => {
       if (p._id) peopleById.set(p._id, p);
       if (p.email) peopleByEmail.set(p.email.toLowerCase(), p);
     });
@@ -262,7 +515,10 @@ function ServiceCheckIn() {
 
     const mapEntry = (entry, isNew = false) => {
       const id = entry.id || entry._id || entry.person_id;
-      const fp = findPerson(id, entry.email || entry.Email || entry.person_email);
+      const fp = findPerson(
+        id,
+        entry.email || entry.Email || entry.person_email,
+      );
       return {
         ...entry,
         name: entry.name || entry.Name || fp?.name || "",
@@ -279,28 +535,77 @@ function ServiceCheckIn() {
     };
 
     return eventsData
-      .map(event => {
+      .map((event) => {
         try {
           if (!event) return null;
-          const attendeesArray = Array.isArray(event.attendees) ? event.attendees : [];
-          const newPeopleArray = Array.isArray(event.new_people) ? event.new_people : [];
-          const consolidationsArray = Array.isArray(event.consolidations) ? event.consolidations : [];
+          const attendeesArray = Array.isArray(event.attendees)
+            ? event.attendees
+            : [];
+          const newPeopleArray = Array.isArray(event.new_people)
+            ? event.new_people
+            : [];
+          const consolidationsArray = Array.isArray(event.consolidations)
+            ? event.consolidations
+            : [];
 
-          const attendanceData = attendeesArray.map(a => mapEntry(a));
-          const newPeopleData = newPeopleArray.map(np => mapEntry(np, true));
-          const consolidatedData = consolidationsArray.map(c => {
-            const id = c.person_id || c.id || c._id;
-            const fp = findPerson(id, c.person_email || c.email);
+          const attendanceData = attendeesArray.map((a) => mapEntry(a));
+          const newPeopleData = newPeopleArray.map((np) => mapEntry(np, true));
+          const consolidatedData = consolidationsArray.map((c) => {
+            const nestedPerson = c.person_data || c.person || {};
+            const id = c.person_id || c.id || c._id || nestedPerson.id;
+            const email =
+              c.person_email ||
+              c.email ||
+              nestedPerson.email ||
+              nestedPerson.Email;
+            const fp = findPerson(id, email);
             return {
               ...c,
-              name: c.person_name || c.name || fp?.name || "",
-              surname: c.person_surname || c.surname || fp?.surname || "",
-              person_name: c.person_name || c.name || fp?.name || "",
-              person_surname: c.person_surname || c.surname || fp?.surname || "",
-              person_email: c.person_email || c.email || fp?.email || "",
-              person_phone: c.person_phone || c.phone || fp?.phone || "",
+              name:
+                c.person_name ||
+                c.name ||
+                nestedPerson.name ||
+                nestedPerson.Name ||
+                fp?.name ||
+                "",
+              surname:
+                c.person_surname ||
+                c.surname ||
+                nestedPerson.surname ||
+                nestedPerson.Surname ||
+                fp?.surname ||
+                "",
+              person_name:
+                c.person_name ||
+                c.name ||
+                nestedPerson.name ||
+                nestedPerson.Name ||
+                fp?.name ||
+                "",
+              person_surname:
+                c.person_surname ||
+                c.surname ||
+                nestedPerson.surname ||
+                nestedPerson.Surname ||
+                fp?.surname ||
+                "",
+              person_email:
+                c.person_email ||
+                c.email ||
+                nestedPerson.email ||
+                nestedPerson.Email ||
+                fp?.email ||
+                "",
+              person_phone:
+                c.person_phone ||
+                c.phone ||
+                nestedPerson.phone ||
+                nestedPerson.Number ||
+                fp?.phone ||
+                "",
               assigned_to: c.assigned_to || c.assignedTo || "",
-              decision_type: c.decision_type || c.consolidation_type || "Commitment",
+              decision_type:
+                c.decision_type || c.consolidation_type || "Commitment",
               status: c.status || "active",
               leader1: fp?.leader1 || c.leader1 || "",
               leader12: fp?.leader12 || c.leader12 || "",
@@ -312,23 +617,24 @@ function ServiceCheckIn() {
 
           return {
             id: event._id || event.id || Math.random().toString(36),
+            event_id:event.event_id,
             eventName: event.eventName || event.Event_Name || "Unnamed Event",
+            session_id: event.session_id,
             status: (event.status || "open").toLowerCase(),
             isGlobal: event.isGlobal === true || event.isGlobal === "true",
             isTicketed: event.isTicketed === true,
             date: event.date || event.createdAt,
+            rawDate: event.date || "",
             eventType: event.eventType || "Global Events",
             closed_by: event.closed_by,
             closed_at: event.closed_at,
             attendees: attendeesArray,
             new_people: newPeopleArray,
             consolidations: consolidationsArray,
-            total_attendance: typeof event.total_attendance === "number"
-              ? event.total_attendance
-              : attendanceData.length,
-            attendance: attendanceData.length,
-            newPeople: newPeopleData.length,
-            consolidated: consolidatedData.length,
+            total_attendance:event.attendance,
+            attendance: event.attendance,
+            newPeople: event.new_people,
+            consolidated: event.total_consolidation,
             attendanceData, newPeopleData, consolidatedData,
             location: event.location || event.Location || "",
             description: event.description || "",
@@ -336,13 +642,16 @@ function ServiceCheckIn() {
             created_at: event.created_at,
             updated_at: event.updated_at,
           };
-        } catch { return null; }
+        } catch {
+          return null;
+        }
       })
       .filter(Boolean);
   }, []);
 
   const filterValidEvents = useCallback((all) =>
     all.filter(event => {
+      console.log("Event obj:", event)
       if (!event || event.status === "error") return false;
       const typeName = (event.eventType || "").toLowerCase();
       if (["cells", "all cells", "cell", "training"].includes(typeName)) return false;
@@ -350,6 +659,38 @@ function ServiceCheckIn() {
       return true;
     }),
     []);
+
+  // Every event this page renders is a global one, so the request asks for
+  // exactly those instead of downloading the whole grid and discarding the rest.
+  //
+  // The endpoint paginates and this used to ask for a single page of 500, so the
+  // Event History only ever held the most recent ~14 weeks: it ran out at
+  // 2026-06-23 while the data goes back to 2024-10-14, which is why older
+  // Church Service and Conference services never appeared. Asking for is_global
+  // narrows 3,628 rows down to the 1,261 that belong here, so this is three
+  // requests rather than eight.
+  const SERVICE_EVENTS_PAGE_SIZE = 500;
+  const MAX_SERVICE_EVENT_PAGES = 12; // 6,000 rows; a stop against a bad has_more.
+
+  const fetchAllServiceEvents = useCallback(async () => {
+    const collected = [];
+    for (let page = 1; page <= MAX_SERVICE_EVENT_PAGES; page += 1) {
+      const res = await authFetch(
+        `${BASE_URL}/events/eventsdata?limit=${SERVICE_EVENTS_PAGE_SIZE}` +
+        `&page=${page}&start_date=2024-10-10&is_global=true`,
+      );
+      if (!res.ok) {
+        // A later page failing should not throw away the pages that worked.
+        if (collected.length) break;
+        throw new Error(`eventsdata page ${page} failed (${res.status})`);
+      }
+      const data = await res.json();
+      const rows = Array.isArray(data.events) ? data.events : [];
+      collected.push(...rows);
+      if (!data.has_more || rows.length === 0) break;
+    }
+    return collected;
+  }, [authFetch]);
 
   const hasInitialized = useRef(false);
   useEffect(() => {
@@ -359,38 +700,43 @@ function ServiceCheckIn() {
     (async () => {
       try {
         const cacheHit =
-          window.globalPeopleCache &&
-          window.globalCacheTimestamp &&
-          (Date.now() - window.globalCacheTimestamp < CACHE_DURATION);
+          getCachedPeople() &&
+          getCacheTimestamp() &&
+          Date.now() - getCacheTimestamp() < CACHE_DURATION;
 
         if (cacheHit) {
-          const normalisedPeople = window.globalPeopleCache.map(normalisePerson);
+          const normalisedPeople = getCachedPeople().map(normalisePerson);
           setAttendees(normalisedPeople);
           setHasDataLoaded(true);
           setIsLoadingPeople(false);
 
-          const evRes = await authFetch(`${BASE_URL}/events/eventsdata?limit=500&start_date=2024-10-10`);
-          if (evRes.ok) {
-            const evData = await evRes.json();
-            const transformed = transformEvents(evData.events || [], normalisedPeople);
+          const evRows = await fetchAllServiceEvents();
+          {
+            const transformed = transformEvents(evRows, normalisedPeople);
             const valid = filterValidEvents(transformed);
+            console.log("Transformed Events: 2",valid);
             setEvents(valid);
             setIsLoadingEvents(false);
             setIsLoadingHistory(false);
 
-            const todayStr = new Date().toISOString().split("T")[0];
-            const todayOpen = valid.filter(e => {
-              const status = e.status?.toLowerCase() || "";
-              if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
-              if (!e.date) return false;
-              return new Date(e.date).toISOString().split("T")[0] === todayStr;
-            });
-            if (todayOpen.length > 0) setCurrentEventId(todayOpen[0].id);
+            const todayOpen = valid
+              .filter((e) => {
+                const status = e.status?.toLowerCase() || "";
+                if (
+                  ["complete", "closed", "cancelled", "did_not_meet"].includes(
+                    status,
+                  )
+                )
+                  return false;
+                return isTodayService(e);
+              })
+              .sort((a, b) => (b.attendance + b.newPeople + b.consolidated) - (a.attendance + a.newPeople + a.consolidated));
+            if (todayOpen.length > 0) setCurrentSessionId(todayOpen[0].session_id);
           }
         } else {
           setIsLoadingPeople(true);
-          const [evRes, peopleRes] = await Promise.all([
-            authFetch(`${BASE_URL}/events/eventsdata?limit=500&start_date=2024-10-10`),
+          const [evRows, peopleRes] = await Promise.all([
+            fetchAllServiceEvents(),
             authFetch(`${BASE_URL}/cache/people`),
           ]);
 
@@ -407,22 +753,26 @@ function ServiceCheckIn() {
           }
           setIsLoadingPeople(false);
 
-          if (evRes.ok) {
-            const evData = await evRes.json();
-            const transformed = transformEvents(evData.events || [], normalisedPeople);
+          {
+            const transformed = transformEvents(evRows, normalisedPeople);
             const valid = filterValidEvents(transformed);
             setEvents(valid);
             setIsLoadingEvents(false);
             setIsLoadingHistory(false);
 
-            const todayStr = new Date().toISOString().split("T")[0];
-            const todayOpen = valid.filter(e => {
-              const status = e.status?.toLowerCase() || "";
-              if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
-              if (!e.date) return false;
-              return new Date(e.date).toISOString().split("T")[0] === todayStr;
-            });
-            if (todayOpen.length > 0) setCurrentEventId(todayOpen[0].id);
+            const todayOpen = valid
+              .filter((e) => {
+                const status = e.status?.toLowerCase() || "";
+                if (
+                  ["complete", "closed", "cancelled", "did_not_meet"].includes(
+                    status,
+                  )
+                )
+                  return false;
+                return isTodayService(e);
+              })
+              .sort((a, b) => (b.attendance + b.newPeople + b.consolidated) - (a.attendance + a.newPeople + a.consolidated));
+            if (todayOpen.length > 0) setCurrentSessionId(todayOpen[0].session_id);
           }
         }
       } catch {
@@ -433,51 +783,59 @@ function ServiceCheckIn() {
         setIsLoadingHistory(false);
       }
     })();
-  }, []);
+  }, [authFetch, fetchAllServiceEvents, filterValidEvents, transformEvents]);
 
   const fetchEvents = useCallback(async () => {
     try {
-      const res = await authFetch(`${BASE_URL}/events/eventsdata?limit=500&start_date=2024-10-10`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const transformed = transformEvents(data.events || [], attendees);
+      const rows = await fetchAllServiceEvents();
+      const transformed = transformEvents(rows, attendees);
       const valid = filterValidEvents(transformed);
       setEvents(valid);
     } catch { toast.error("Failed to fetch events. Please try again."); }
     finally { setIsLoadingEvents(false); setIsLoadingHistory(false); }
-  }, [authFetch, attendees, transformEvents, filterValidEvents]);
+  }, [fetchAllServiceEvents, attendees, transformEvents, filterValidEvents]);
 
   useEffect(() => {
     if (!search.trim()) setSortModel([]);
   }, [search]);
 
   useEffect(() => {
-    if (!currentEventId) { setRealTimeData(null); return; }
+    if (!currentSessionId) { setRealTimeData(null); return; }
     let isMounted = true;
     const loadRT = async () => {
-      const data = await fetchRealTimeEventData(currentEventId);
-      if (data && isMounted) setRealTimeData(data);
+      const data = await fetchRealTimeEventData(currentSessionId);
+      if (data && isMounted) commitRealTimeData(data);
     };
     loadRT();
-    const evInterval = setInterval(() => fetchEvents(), 30_000);
-    return () => { isMounted = false; clearInterval(evInterval); };
-  }, [currentEventId, fetchRealTimeEventData]);
+    const handleAttendanceUpdated = (event) => {
+      if (event.detail?.eventId !== currentSessionId) return;
+      fetchRealTimeEventData(currentSessionId).then(data => {
+        if (data && isMounted) commitRealTimeData(data);
+      });
+    };
+    window.addEventListener("attendanceUpdated", handleAttendanceUpdated);
+    const evInterval = setInterval(() => {if (checkInLoading.size === 0) fetchEvents();}, 30_000);
+    return () => {
+      isMounted = false;
+      window.removeEventListener("attendanceUpdated", handleAttendanceUpdated);
+      clearInterval(evInterval);
+    };
+  }, [currentSessionId, fetchRealTimeEventData, fetchEvents, commitRealTimeData]);
 
   const getFilteredEvents = useCallback((eventsList = events) => {
-    const todayStr = new Date().toISOString().split("T")[0];
+  
     return eventsList.filter(event => {
       const typeName = (event.eventType || "").toLowerCase();
       if (["cells", "all cells", "cell"].includes(typeName)) return false;
       if (event.isGlobal !== true && event.isGlobal !== "true") return false;
       const status = event.status?.toLowerCase() || "";
       if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
-      if (!event.date) return false;
-      return new Date(event.date).toISOString().split("T")[0] === todayStr;
+      return isTodayService(event);
     });
   }, [events]);
 
   const getFilteredClosedEvents = useCallback(() => {
-    const closed = events.filter(event => {
+    const closed = events.filter((event) => {
       if (event.isGlobal !== true && event.isGlobal !== "true") return false;
       const typeName = (event.eventType || "").toLowerCase();
       if (["cells", "all cells", "cell"].includes(typeName)) return false;
@@ -487,50 +845,71 @@ function ServiceCheckIn() {
     });
     if (!eventSearch.trim()) return closed;
     const q = eventSearch.toLowerCase();
-    return closed.filter(e =>
-      e.eventName?.toLowerCase().includes(q) ||
-      (e.date && new Date(e.date).toLocaleDateString().toLowerCase().includes(q)) ||
-      e.status?.toLowerCase().includes(q) ||
-      e.closed_by?.toLowerCase().includes(q)
+    return closed.filter(
+      (e) =>
+        e.eventName?.toLowerCase().includes(q) ||
+        (e.date &&
+          new Date(e.date).toLocaleDateString().toLowerCase().includes(q)) ||
+        e.status?.toLowerCase().includes(q) ||
+        e.closed_by?.toLowerCase().includes(q),
     );
   }, [events, eventSearch]);
 
   const menuEvents = useMemo(() => {
     const filtered = getFilteredEvents();
+    
     const list = [...filtered];
-    if (currentEventId && !list.some(ev => ev.id === currentEventId)) {
-      const cur = events.find(ev => ev.id === currentEventId);
-      if (cur) list.unshift(cur);
+
+    // Only preserve currentSessionId in the dropdown if it's actually a valid today event.
+    // Don't re-add stale/closed events from previous weeks.
+    if (currentSessionId && !list.some(ev => ev.session_id === currentSessionId)) {
+      const cur = events.find(ev => ev.session_id === currentSessionId);
+      if (cur && getFilteredEvents([cur]).length > 0) {
+        list.unshift(cur);
+      }
     }
     return list;
-  }, [events, currentEventId, getFilteredEvents]);
+  }, [events, currentSessionId, getFilteredEvents]);
+
+  // delete window.globalPeopleCache;
+  // delete window.globalCacheTimestamp;
+  // window.location.reload();
 
   const presentIds = useMemo(() => {
     const ids = new Set();
-    (realTimeData?.present_attendees || []).forEach(a => ids.add(a.id || a._id));
+    (realTimeData?.present_attendees || []).forEach(a => ids.add(a.person_id)); 
     return ids;
   }, [realTimeData]);
 
-  const newPeopleIds = useMemo(() => {
-    const ids = new Set();
-    (realTimeData?.new_people || []).forEach(np => ids.add(np.id || np._id));
-    return ids;
-  }, [realTimeData]);
+  const mergedNewSet = useMemo(() => {
+    const entries = new Map();
+    (realTimeData?.new_people || []).forEach((e) => {
+      const key = getEntryId(e) || String(e?.email || "")?.toLowerCase();
+      if (key) entries.set(`server:${key}`, e);
+    });
+    sessionNew.forEach((e, key) => entries.set(`session:${key}`, e));
+    return newIdentitySet([...entries.values()]);
+  }, [realTimeData, sessionNew]);
 
-  const attendeesWithStatus = useMemo(() =>
-    attendees.map(a => ({
+  const attendeesWithStatus = useMemo(() =>{
+    return attendees.map((a) => {
+     return {
       ...a,
-      present: presentIds.has(a._id),
-      isNew: newPeopleIds.has(a._id),
+      present: [ ...presentIds ].includes(a.person_id),
+      isNew: isNewInSet(a, mergedNewSet),
       id: a._id || a.email || `temp-${a.email}`,
-    })),
-    [attendees, presentIds, newPeopleIds]
+    }
+  })
+  
+  },
+    [attendees, presentIds, mergedNewSet]
   );
+
 
   const filteredAttendees = useMemo(() => {
     if (!search.trim()) return attendeesWithStatus;
     const terms = search.toLowerCase().trim().split(/\s+/);
-    const filtered = attendeesWithStatus.filter(p => matchesSearch(p, terms));
+    const filtered = attendeesWithStatus.filter((p) => matchesSearch(p, terms));
     return [...filtered].sort((a, b) => {
       const sa = isPriorityPerson(a.name, a.surname) ? 1 : 0;
       const sb = isPriorityPerson(b.name, b.surname) ? 1 : 0;
@@ -539,19 +918,21 @@ function ServiceCheckIn() {
     });
   }, [attendeesWithStatus, search]);
 
-const sortedFilteredAttendees = useMemo(() => {
+  const sortedFilteredAttendees = useMemo(() => {
     const result = [...filteredAttendees];
     const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
     // Score how well a value matches the search terms
-    const matchScore = (value, field) => {
+    const matchScore = (value) => {
       if (!terms.length || !value) return 0;
       const v = value.toString().toLowerCase();
       let score = 0;
       for (const term of terms) {
-        if (v === term) score += 10;           // exact match
-        else if (v.startsWith(term)) score += 5; // starts with
-        else if (v.includes(term)) score += 2;   // contains
+        if (v === term)
+          score += 10; // exact match
+        else if (v.startsWith(term))
+          score += 5; // starts with
+        else if (v.includes(term)) score += 2; // contains
       }
       return score;
     };
@@ -567,7 +948,9 @@ const sortedFilteredAttendees = useMemo(() => {
             if (sa !== sb) return sort === "desc" ? sa - sb : sb - sa;
           }
           // Fall back to normal alphabetical sort
-          const cmp = (a[field] || "").toString().toLowerCase()
+          const cmp = (a[field] || "")
+            .toString()
+            .toLowerCase()
             .localeCompare((b[field] || "").toString().toLowerCase());
           return sort === "desc" ? -cmp : cmp;
         });
@@ -582,15 +965,18 @@ const sortedFilteredAttendees = useMemo(() => {
     return result;
   }, [filteredAttendees, sortModel, search]);
 
-  const presentCount = realTimeData?.present_count ?? realTimeData?.present_attendees?.length ?? 0;
-  const newPeopleCount = realTimeData?.new_people_count ?? realTimeData?.new_people?.length ?? 0;
+  // const presentCount = realTimeData?.present_count ;
+  const [presentCount, setPresentCount] = useState(realTimeData?.present_count ||0);
+  const newPeopleCount = realTimeData?.newPeople
+  console.log('real',realTimeData)
   const consolidationCount = realTimeData?.consolidation_count ?? realTimeData?.consolidations?.length ?? 0;
 
   const modalFilteredAttendees = useMemo(() => {
-    const full = (realTimeData?.present_attendees || []).map(a => {
+    const full = (realTimeData?.present_attendees || []).map((a) => {
       const fp = attendeeMap.get(a.id || a._id) || {};
       return {
-        ...a, ...fp,
+        ...a,
+        ...fp,
         name: fp.name || a.name || "",
         surname: fp.surname || a.surname || "",
         email: fp.email || a.email || "",
@@ -604,93 +990,125 @@ const sortedFilteredAttendees = useMemo(() => {
       };
     });
     const sorted = [...full].sort((a, b) =>
-      `${a.name} ${a.surname}`.toLowerCase().localeCompare(`${b.name} ${b.surname}`.toLowerCase())
+      `${a.name} ${a.surname}`
+        .toLowerCase()
+        .localeCompare(`${b.name} ${b.surname}`.toLowerCase()),
     );
     if (!modalSearch.trim()) return sorted;
     const terms = modalSearch.toLowerCase().trim().split(/\s+/);
-    return sorted.filter(p => matchesSearch(p, terms));
+    return sorted.filter((p) => matchesSearch(p, terms));
   }, [realTimeData, attendeeMap, modalSearch]);
 
   const modalPaginatedAttendees = useMemo(
-    () => modalFilteredAttendees.slice(
-      modalPage * modalRowsPerPage,
-      modalPage * modalRowsPerPage + modalRowsPerPage
-    ),
-    [modalFilteredAttendees, modalPage, modalRowsPerPage]
+    () =>
+      modalFilteredAttendees.slice(
+        modalPage * modalRowsPerPage,
+        modalPage * modalRowsPerPage + modalRowsPerPage,
+      ),
+    [modalFilteredAttendees, modalPage, modalRowsPerPage],
   );
 
   const newPeopleFilteredList = useMemo(() => {
-    const full = (realTimeData?.new_people || []).map(np => {
-      const id = np.id || np._id;
-      const fp = attendeeMap.get(id) ||
-        (np.email ? [...attendeeMap.values()].find(p => p.email?.toLowerCase() === np.email?.toLowerCase()) : null) || {};
-      return {
-        ...np, ...fp,
-        name: fp.name || np.name || "",
-        surname: fp.surname || np.surname || "",
-        email: fp.email || np.email || "",
-        phone: fp.phone || np.phone || "",
-        number: fp.number || np.number || "",
-        invitedBy: fp.invitedBy || np.invitedBy || "",
-        gender: fp.gender || np.gender || "",
-        leader1: fp.leader1 || np.leader1 || "",
-        leader12: fp.leader12 || np.leader12 || "",
-        leader144: fp.leader144 || np.leader144 || "",
-      };
-    });
+    const full = newPeopleFromPresent(
+      realTimeData?.present_attendees || [],
+      attendeeMap,
+      mergedNewSet,
+    );
     const sorted = [...full].sort((a, b) =>
-      `${a.name} ${a.surname}`.toLowerCase().localeCompare(`${b.name} ${b.surname}`.toLowerCase())
+      `${a.name} ${a.surname}`
+        .toLowerCase()
+        .localeCompare(`${b.name} ${b.surname}`.toLowerCase()),
     );
     if (!newPeopleSearch.trim()) return sorted;
     const terms = newPeopleSearch.toLowerCase().trim().split(/\s+/);
-    return sorted.filter(p => matchesSearch(p, terms));
-  }, [realTimeData, attendeeMap, newPeopleSearch]);
+    return sorted.filter((p) => matchesSearch(p, terms));
+  }, [realTimeData, attendeeMap, mergedNewSet, newPeopleSearch]);
 
   const newPeoplePaginatedList = useMemo(
-    () => newPeopleFilteredList.slice(
-      newPeoplePage * newPeopleRowsPerPage,
-      newPeoplePage * newPeopleRowsPerPage + newPeopleRowsPerPage
-    ),
-    [newPeopleFilteredList, newPeoplePage, newPeopleRowsPerPage]
+    () =>
+      newPeopleFilteredList.slice(
+        newPeoplePage * newPeopleRowsPerPage,
+        newPeoplePage * newPeopleRowsPerPage + newPeopleRowsPerPage,
+      ),
+    [newPeopleFilteredList, newPeoplePage, newPeopleRowsPerPage],
   );
 
   const filteredConsolidatedPeople = useMemo(() => {
-    const full = (realTimeData?.consolidations || []).map(cons => {
-      const fp = attendeeMap.get(cons.person_id) ||
-        attendees.find(a =>
-          a.name === (cons.person_name || cons.name) &&
-          a.surname === (cons.person_surname || cons.surname)
-        ) || {};
+    const full = (realTimeData?.consolidations || []).map((cons) => {
+      const nestedPerson = cons.person_data || cons.person || {};
+      const personId = cons.person_id || nestedPerson.id || cons.id || cons._id;
+      const personEmail =
+        cons.person_email ||
+        cons.email ||
+        nestedPerson.email ||
+        nestedPerson.Email ||
+        "";
+      const fp =
+        attendeeMap.get(personId) ||
+        (personEmail
+          ? [...attendeeMap.values()].find(
+              (a) => a.email?.toLowerCase() === personEmail.toLowerCase(),
+            )
+          : null) ||
+        attendees.find(
+          (a) =>
+            a.name === (cons.person_name || cons.name || nestedPerson.name) &&
+            a.surname ===
+              (cons.person_surname || cons.surname || nestedPerson.surname),
+        ) ||
+        {};
       return {
-        ...cons, ...fp,
-        person_name: fp.name || cons.person_name || "",
-        person_surname: fp.surname || cons.person_surname || "",
-        person_email: fp.email || cons.person_email || "",
-        person_phone: fp.phone || cons.person_phone || "",
+        ...cons,
+        ...fp,
+        person_name:
+          fp.name ||
+          cons.person_name ||
+          cons.name ||
+          nestedPerson.name ||
+          nestedPerson.Name ||
+          "",
+        person_surname:
+          fp.surname ||
+          cons.person_surname ||
+          cons.surname ||
+          nestedPerson.surname ||
+          nestedPerson.Surname ||
+          "",
+        person_email: fp.email || personEmail || "",
+        person_phone:
+          fp.phone ||
+          fp.number ||
+          cons.person_phone ||
+          cons.phone ||
+          nestedPerson.phone ||
+          nestedPerson.Number ||
+          "",
         assigned_to: cons.assigned_to || cons.assignedTo || "",
         decision_type: cons.decision_type || cons.consolidation_type || "",
         notes: cons.notes || "",
       };
     });
     const sorted = [...full].sort((a, b) =>
-      `${a.person_name} ${a.person_surname}`.toLowerCase()
-        .localeCompare(`${b.person_name} ${b.person_surname}`.toLowerCase())
+      `${a.person_name} ${a.person_surname}`
+        .toLowerCase()
+        .localeCompare(`${b.person_name} ${b.person_surname}`.toLowerCase()),
     );
     if (!consolidatedSearch.trim()) return sorted;
     const terms = consolidatedSearch.toLowerCase().trim().split(/\s+/);
-    return sorted.filter(p => matchesSearch(p, terms));
+    return sorted.filter((p) => matchesSearch(p, terms));
   }, [realTimeData, attendeeMap, attendees, consolidatedSearch]);
 
   const consolidatedPaginatedList = useMemo(
-    () => filteredConsolidatedPeople.slice(
-      consolidatedPage * consolidatedRowsPerPage,
-      consolidatedPage * consolidatedRowsPerPage + consolidatedRowsPerPage
-    ),
-    [filteredConsolidatedPeople, consolidatedPage, consolidatedRowsPerPage]
+    () =>
+      filteredConsolidatedPeople.slice(
+        consolidatedPage * consolidatedRowsPerPage,
+        consolidatedPage * consolidatedRowsPerPage + consolidatedRowsPerPage,
+      ),
+    [filteredConsolidatedPeople, consolidatedPage, consolidatedRowsPerPage],
   );
 
   const handleFullRefresh = useCallback(async () => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
     setIsRefreshing(true);
     setOpenDialog(false);
     setEditingPerson(null);
@@ -701,10 +1119,10 @@ const sortedFilteredAttendees = useMemo(() => {
     try {
       await authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" });
       const [data, cacheResponse] = await Promise.all([
-        fetchRealTimeEventData(currentEventId),
+        fetchRealTimeEventData(currentSessionId),
         authFetch(`${BASE_URL}/cache/people`),
       ]);
-      if (data) setRealTimeData(data);
+      if (data) commitRealTimeData(data);
       if (cacheResponse.ok) {
         const cacheData = await cacheResponse.json();
         if (cacheData.success && cacheData.cached_data) {
@@ -719,14 +1137,14 @@ const sortedFilteredAttendees = useMemo(() => {
     } finally {
       setIsRefreshing(false);
     }
-  }, [currentEventId, authFetch, fetchRealTimeEventData]);
+  }, [currentSessionId, authFetch, fetchRealTimeEventData, commitRealTimeData]);
 
   const handleRemoveConsolidation = useCallback(async (consolidation) => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
     try {
       setIsDeleting(true);
       const response = await authFetch(
-        `${BASE_URL}/service-checkin/remove-consolidation?event_id=${currentEventId}&consolidation_id=${consolidation.id}&keep_person_in_attendees=true`,
+        `${BASE_URL}/service-checkin/remove-consolidation?event_id=${currentSessionId}&consolidation_id=${consolidation.id}&keep_person_in_attendees=true`,
         { method: "DELETE" }
       );
       if (response.ok) {
@@ -738,149 +1156,302 @@ const sortedFilteredAttendees = useMemo(() => {
         } else {
           toast.success(result.message || "Consolidation removed successfully");
         }
-        const freshData = await fetchRealTimeEventData(currentEventId);
-        if (freshData) setRealTimeData(freshData);
+        const freshData = await fetchRealTimeEventData(currentSessionId);
+        if (freshData) commitRealTimeData(freshData);
       }
     } catch { toast.error("Failed to remove. Please try again."); }
     finally { setIsDeleting(false); }
-  }, [currentEventId, authFetch, fetchRealTimeEventData, notifyTaskUpdate]);
+  }, [currentSessionId, authFetch, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
 
   const handleContextMenu = useCallback((event, person, type) => {
     event.preventDefault();
-    setContextMenu({ mouseX: event.clientX - 2, mouseY: event.clientY - 4, data: person, type });
-  }, []);
-  const handleCloseContextMenu = useCallback(() => {
-    setContextMenu({ mouseX: null, mouseY: null, data: null, type: null });
+    setContextMenu({
+      mouseX: event.clientX - 2,
+      mouseY: event.clientY - 4,
+      data: person,
+      type,
+    });
   }, []);
 
-  const handleToggleCheckIn = useCallback(async (attendee) => {
-    if (!currentEventId) { toast.error("Please select an event"); return; }
-    if (checkInLoading.has(attendee._id)) return;
+  const handleToggleCheckIn = useCallback(async (attendee, presentEntry) => {
+    if (!currentSessionId) { toast.error("Please select an event"); return; }
 
-    setCheckInLoading(prev => new Set(prev).add(attendee._id));
-    const fullName = `${attendee.name} ${attendee.surname}`.trim();
-    const isCurrentlyPresent = presentIds.has(attendee._id);
-    const personId = attendee._id;
+    const gridId = attendee?.person_id
+    if (!gridId) { toast.error("Missing person ID"); return; }
+    if (checkInLoading.has(gridId)) return;
+
+      const isCurrentlyPresent = presentIds.has(gridId);
+
+      // When uncapturing, prefer the exact id the server stored on the present
+      // entry. The grid row id comes from the local people cache and can differ
+      // from the stored record (e.g. duplicate rows for the same person), which
+      // makes the server's $pull miss -> 404 -> the row bounces back to checked.
+      const storedPresentEntry =
+        presentEntry ||
+        findPresentEntry(realTimeData?.present_attendees || [], gridId);
+      const presentId =
+        isCurrentlyPresent && storedPresentEntry
+          ? getEntryId(storedPresentEntry) || gridId
+          : gridId;
+
+      setCheckInLoading((prev) => new Set(prev).add(gridId));
+      const fullName =
+        `${attendee?.name || ""} ${attendee?.surname || ""}`.trim();
 
     const optimisticEntry = {
-      id: personId, _id: personId,
-      name: attendee.name, surname: attendee.surname, email: attendee.email,
-      phone: attendee.phone || attendee.number || "",
-      leader1: attendee.leader1 || "", leader12: attendee.leader12 || "", leader144: attendee.leader144 || "",
+      person_id: gridId, _id: gridId,
+      name: attendee?.name || "", surname: attendee?.surname || "",
+      email: attendee?.email || "",
+      phone: attendee?.phone || attendee?.number || "",
+      leader1: attendee?.leader1 || "", leader12: attendee?.leader12 || "", leader144: attendee?.leader144 || "",
     };
 
-    setRealTimeData(prev => {
-      const base = prev || { present_attendees: [], new_people: [], consolidations: [] };
-      if (!isCurrentlyPresent) {
-        const already = (base.present_attendees || []).some(a => a.id === personId || a._id === personId);
-        if (already) return base;
-        const newPresent = [...(base.present_attendees || []), optimisticEntry];
-        return { ...base, present_attendees: newPresent, present_count: newPresent.length };
-      } else {
-        const filtered = (base.present_attendees || []).filter(a => a.id !== personId && a._id !== personId);
-        return { ...base, present_attendees: filtered, present_count: filtered.length };
+    const removeFromPresent = (prevState) => {
+      if (!prevState) return prevState;
+      const filtered = (prevState.present_attendees || []).filter(a => {
+        const aId = getEntryId(a);
+        return a.person_id !== gridId
+      });
+      setPresentCount(filtered.length);
+      return { ...prevState, present_attendees: filtered, present_count: filtered.length };
+    };
+
+    const addToPresent = (prevState) => {
+      const base = prevState || { present_attendees: [], new_people: [], consolidations: [] };
+      const already = (base.present_attendees || []).some(a => {
+        const aId = getEntryId(a);
+        return aId === gridId || aId === presentId;
+      });
+      if (already) return base;
+      const newPresent = [...(base.present_attendees || []), optimisticEntry];
+      setPresentCount(newPresent.length);
+      return { ...base, present_attendees: newPresent, present_count: newPresent.length };
+    };
+
+      setRealTimeData((prev) =>
+        isCurrentlyPresent ? removeFromPresent(prev) : addToPresent(prev),
+      );
+
+      const readServerBody = async (res) => {
+        try {
+          return await res.json();
+        } catch {
+          return {};
+        }
+      };
+      const serverMsg = (body) =>
+        String(body?.detail || body?.message || body?.error || "server error");
+
+      try {
+        if (!isCurrentlyPresent) {
+          const response = await authFetch(
+            `${BASE_URL}/service-checkin/checkin`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                session_id: cleanEventId(currentSessionId),
+                event_id: getEventId(currentSessionId),
+                person_data: {
+                  id: gridId,
+                  name: attendee?.name,
+                  fullName,
+                  email: attendee?.email,
+                  phone: attendee?.phone,
+                  number: attendee?.number,
+                  leader12: attendee?.leader12,
+                },
+                type: "attendee",
+              }),
+            },
+          );
+          const body = await readServerBody(response);
+          const status = classifyToggleAdd(response.status, body);
+          if (status === "failure") {
+            setRealTimeData(removeFromPresent);
+            toast.error(
+              `${fullName} could not be checked in: ${serverMsg(body)}`,
+            );
+          } else {
+            sessionCaptured.current.set(gridId, optimisticEntry);
+            if (status === "alreadyPresent") {
+              toast.info(`${fullName} was already captured`);
+            } else {
+              toast.success(`${fullName} checked in`);
+            }
+          }
+        } else {
+          const response = await authFetch(
+            `${BASE_URL}/service-checkin/remove`,
+            {
+              method: "DELETE",
+              body: JSON.stringify({
+                event_id: cleanEventId(currentSessionId),
+                person_id: presentId,
+                type: "attendees",
+              }),
+            },
+          );
+          const body = await readServerBody(response);
+          const status = classifyToggleRemove(response.status, body);
+          if (status === "failure") {
+            setRealTimeData(addToPresent);
+            toast.error(
+              `${fullName} could not be removed from check-in: ${serverMsg(body)}`,
+            );
+          } else {
+            sessionCaptured.current.delete(gridId);
+            toast.info(`${fullName} removed from check-in`);
+          }
+        }
+
+        commitRealTimeData(await fetchRealTimeEventData(currentSessionId));
+      } catch (err) {
+        setRealTimeData((prev) =>
+          isCurrentlyPresent ? addToPresent(prev) : removeFromPresent(prev),
+        );
+        toast.error(err.message || "Failed to toggle check-in");
+      } finally {
+        setCheckInLoading((prev) => {
+          const s = new Set(prev);
+          s.delete(gridId);
+          return s;
+        });
+      }
+    },
+    [
+      currentSessionId,
+      checkInLoading,
+      presentIds,
+      realTimeData,
+      authFetch,
+      fetchRealTimeEventData,
+      commitRealTimeData,
+    ],
+  );
+
+  const setPersonNewFlag = useCallback(async (person) => {
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
+    const personId = person?.person_id 
+    const entryKey = personId || String(person?.email || "").toLowerCase().trim();
+    if (!entryKey) { toast.error("Missing person details"); return; }
+    const fullName = `${person?.name || ""} ${person?.surname || ""}`.trim() || "This person";
+    const currentlyNew = isNewInSet(person, mergedNewSet);
+    const personData = {
+      person_id: personId,
+      id: personId, name: person?.name,
+      fullName: fullName === " " ? "" : fullName,
+      email: person?.email || "",
+      phone: person?.number || person?.phone || "",
+      number: person?.number || person?.phone || "",
+      invitedBy:person?.invitedBy,
+      gender: person?.gender,
+      leader12: person?.leader12 || "",
+    };
+
+    if (currentlyNew) {
+      setSessionNew(prev => { const m = new Map(prev); m.delete(entryKey); return m; });
+      if (personId) {
+        authFetch(`${BASE_URL}/service-checkin/remove`, {
+          method: "DELETE",
+          body: JSON.stringify({ event_id: cleanEventId(currentSessionId), person_id: personId, type: "new_people" }),
+        }).catch(() => { });
+      }
+      toast.info(`${fullName} no longer marked as new`);
+    } else {
+      setSessionNew(prev => { const m = new Map(prev); m.set(entryKey, { ...personData, _id: personId }); return m; });
+      authFetch(`${BASE_URL}/service-checkin/checkin`, {
+        method: "POST",
+        body: JSON.stringify({session_id: cleanEventId(currentSessionId), event_id: events.find((e)=>e.session_id === currentSessionId)?.event_id, person_data: personData, type: "new_person" }),
+      }).catch(() => { });
+      toast.success(`${fullName} marked as new this service`);
+    }
+  }, [currentSessionId, mergedNewSet, authFetch]);
+
+  const normalizeLeaderValue = useCallback((value) => {
+    if (value == null) return "";
+    if (typeof value === "string") return value.trim();
+    return String(value).trim();
+  }, []);
+
+  // Helper function to get highest available leader
+  const getHighestAvailableLeader = useCallback(
+    (person) => {
+      if (!person)
+        return { leader: "No Leader Assigned", level: 0, hasLeader: false };
+
+      const leaderEntries = [];
+
+    if (Array.isArray(person.leaders) && person.leaders.length > 0) {
+      person.leaders.forEach((leader) => {
+        const level = leader?.level ?? leader?.Level ?? leader?.leader_level ?? leader?.leaderLevel;
+        const name = normalizeLeaderValue(leader?.name || leader?.full_name || leader?.leader_name || leader?.leaderName);
+        if (level != null && name) {
+          leaderEntries.push({ level: Number(level), name });
+        }
+      });
+    }
+
+    const directFields = [
+      { level: 1, keys: ["leader1", "leaderAt1", "leader_at_1", "Leader @1", "Leader at 1"] },
+      { level: 12, keys: ["leader12", "leaderAt12", "leader_at_12", "Leader @12", "Leader at 12"] },
+      { level: 144, keys: ["leader144", "leaderAt144", "leader_at_144", "Leader @144", "Leader at 144"] },
+      { level: 1728, keys: ["leader1728", "leaderAt1728", "leader_at_1728", "Leader @1728", "Leader at 1728"] },
+    ];
+
+    directFields.forEach((group) => {
+      for (const key of group.keys) {
+        const value = person?.[key];
+        if (value) {
+          leaderEntries.push({ level: group.level, name: normalizeLeaderValue(value) });
+          break;
+        }
       }
     });
 
-    try {
-      let success = false;
-      if (!isCurrentlyPresent) {
-        const response = await authFetch(`${BASE_URL}/service-checkin/checkin`, {
-          method: "POST",
-          body: JSON.stringify({
-            event_id: cleanEventId(currentEventId),
-            person_data: { id: personId, name: attendee.name, fullName, email: attendee.email, phone: attendee.phone, number: attendee.number, leader12: attendee.leader12 },
-            type: "attendee",
-          }),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success) { toast.success(`${fullName} checked in`); success = true; }
-          else if (data.message?.includes("already")) { toast.warning(`${fullName} is already checked in`); success = true; }
-        }
-      } else {
-        const response = await authFetch(`${BASE_URL}/service-checkin/remove`, {
-          method: "DELETE",
-          body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: personId, type: "attendees" }),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success) { toast.info(`${fullName} removed from check-in`); success = true; }
-        }
-      }
-
-      if (!success) {
-        setRealTimeData(prev => {
-          if (!prev) return prev;
-          if (!isCurrentlyPresent) {
-            const filtered = (prev.present_attendees || []).filter(a => a.id !== personId && a._id !== personId);
-            return { ...prev, present_attendees: filtered, present_count: filtered.length };
-          } else {
-            const newPresent = [...(prev.present_attendees || []), optimisticEntry];
-            return { ...prev, present_attendees: newPresent, present_count: newPresent.length };
-          }
-        });
-        toast.error(`Failed to update check-in for ${fullName}`);
-      }
-
-      fetchRealTimeEventData(currentEventId).then(freshData => { if (freshData) setRealTimeData(freshData); });
-    } catch (err) {
-      setRealTimeData(prev => {
-        if (!prev) return prev;
-        if (!isCurrentlyPresent) {
-          const filtered = (prev.present_attendees || []).filter(a => a.id !== personId && a._id !== personId);
-          return { ...prev, present_attendees: filtered, present_count: filtered.length };
-        } else {
-          const newPresent = [...(prev.present_attendees || []), optimisticEntry];
-          return { ...prev, present_attendees: newPresent, present_count: newPresent.length };
-        }
-      });
-      toast.error(err.message || "Failed to toggle check-in");
-    } finally {
-      setCheckInLoading(prev => { const s = new Set(prev); s.delete(personId); return s; });
-    }
-  }, [currentEventId, checkInLoading, presentIds, authFetch, fetchRealTimeEventData]);
-
-  // Helper function to get highest available leader
-  const getHighestAvailableLeader = (person) => {
-    if (!person) return { leader: "No Leader Assigned", level: 0, hasLeader: false };
-    
-    const leaders = [];
-    if (Array.isArray(person.leaders) && person.leaders.length > 0) {
-      person.leaders.forEach(l => {
-        if (l?.level != null && l?.name) {
-          leaders.push({ level: l.level, name: l.name });
-        }
-      });
-    }
-    
-    if (leaders.length === 0) {
+    if (leaderEntries.length === 0) {
       return { leader: "No Leader Assigned", level: 0, hasLeader: false };
     }
-    
-    leaders.sort((a, b) => b.level - a.level);
-    return { leader: leaders[0].name, level: leaders[0].level, hasLeader: true };
-  };
+
+    leaderEntries.sort((a, b) => b.level - a.level);
+    return { leader: leaderEntries[0].name, level: leaderEntries[0].level, hasLeader: true };
+  }, [normalizeLeaderValue]);
 
   // Helper function to resolve leader email from person object
-  const resolveLeaderEmail = (leaderName, person) => {
+  const resolveLeaderEmail = useCallback((leaderName, person) => {
     if (!leaderName || !person) return "";
-    
+
+    const normalizedLeaderName = (leaderName || "").trim().toLowerCase();
+    const directFields = [
+      { name: person?.leader1, email: person?.leader1Email || person?.leader1_email || person?.leader1email },
+      { name: person?.leader12, email: person?.leader12Email || person?.leader12_email || person?.leader12email },
+      { name: person?.leader144, email: person?.leader144Email || person?.leader144_email || person?.leader144email },
+      { name: person?.leader1728, email: person?.leader1728Email || person?.leader1728_email || person?.leader1728email },
+      { name: person?.["Leader @1"], email: person?.["Leader @1 Email"] || person?.["Leader @1_email"] || person?.["Leader @1email"] },
+      { name: person?.["Leader @12"], email: person?.["Leader @12 Email"] || person?.["Leader @12_email"] || person?.["Leader @12email"] },
+      { name: person?.["Leader @144"], email: person?.["Leader @144 Email"] || person?.["Leader @144_email"] || person?.["Leader @144email"] },
+      { name: person?.["Leader @1728"], email: person?.["Leader @1728 Email"] || person?.["Leader @1728_email"] || person?.["Leader @1728email"] },
+    ];
+
+    for (const candidate of directFields) {
+      if ((candidate.name || "").trim().toLowerCase() === normalizedLeaderName && candidate.email) {
+        return candidate.email.trim().toLowerCase();
+      }
+    }
+
     if (Array.isArray(person.leaders)) {
-      const found = person.leaders.find(
-        (l) =>
-          (l.name || "").trim().toLowerCase() ===
-          leaderName.trim().toLowerCase(),
-      );
+      const found = person.leaders.find((leader) => {
+        const leaderNameValue = normalizeLeaderValue(leader?.name || leader?.full_name || leader?.leader_name || leader?.leaderName);
+        return leaderNameValue.toLowerCase() === normalizedLeaderName;
+      });
       if (found?.email) {
-        return (found.email || "").trim().toLowerCase();
+        return normalizeLeaderValue(found.email).toLowerCase();
       }
     }
     return "";
-  };
+  }, [normalizeLeaderValue]);
 
   // Create task for leader when new person is added
-  const createNewPersonTaskForLeader = async ({
+  const createNewPersonTaskForLeader = useCallback(async ({
     leaderName,
     leaderEmail,
     person,
@@ -889,7 +1460,7 @@ const sortedFilteredAttendees = useMemo(() => {
     try {
       if (!leaderEmail) {
         console.warn("No leader email found for task assignment.");
-        toast.warning("No leader email found. Task may not be visible to leader.");
+        toast.warning("No leader email is available for this person, so the follow-up task was not assigned.");
         return;
       }
 
@@ -939,10 +1510,10 @@ const sortedFilteredAttendees = useMemo(() => {
       toast.error("Failed to create new person task: " + err.message);
       throw err;
     }
-  };
+  }, [user, authFetch]);
 
   const handlePersonSave = useCallback(async (responseData) => {
-    if (!currentEventId) { toast.error("Please select an event first before adding people"); return; }
+    if (!currentSessionId) { toast.error("Please select an event first before adding people"); return; }
     try {
       if (editingPerson) {
         const { __updatedNewPerson, ...normalizedUpdate } = responseData;
@@ -961,7 +1532,7 @@ const sortedFilteredAttendees = useMemo(() => {
           return { ...prev, new_people: patch(prev.new_people), present_attendees: patch(prev.present_attendees) };
         });
         setOpenDialog(false); setEditingPerson(null); setFormData(emptyForm);
-        fetchRealTimeEventData(currentEventId).then(fd => { if (fd) setRealTimeData(fd); });
+        fetchRealTimeEventData(currentSessionId).then(fd => { if (fd) commitRealTimeData(fd); });
         authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => { });
         return;
       }
@@ -970,172 +1541,193 @@ const sortedFilteredAttendees = useMemo(() => {
       const insertedId = newPersonData._id;
       const fullName = `${formData.name} ${formData.surname}`.trim();
 
-      const response = await authFetch(`${BASE_URL}/service-checkin/checkin`, {
-        method: "POST",
-        body: JSON.stringify({
-          event_id: cleanEventId(currentEventId),
-          person_data: {
-            id: insertedId,
-            name: newPersonData.Name || newPersonData.name || formData.name,
-            surname: newPersonData.Surname || newPersonData.surname || formData.surname,
-            email: newPersonData.Email || newPersonData.email || formData.email,
-            number: newPersonData.Number || newPersonData.number || formData.number,
-            gender: newPersonData.Gender || newPersonData.gender || formData.gender,
-            invitedBy: newPersonData.InvitedBy || newPersonData.invitedBy || formData.invitedBy,
-            stage: "First Time",
-          },
-          type: "new_person",
-        }),
+      toast.success(`${fullName} added successfully`);
+      setOpenDialog(false); setEditingPerson(null); setFormData(emptyForm); setSearch("");
+
+      const newPersonForGrid = normalisePerson({
+        _id: insertedId,
+        Name: newPersonData.Name || formData.name,
+        Surname: newPersonData.Surname || formData.surname,
+        Email: newPersonData.Email || formData.email,
+        Number: newPersonData.Number || formData.number,
+        Gender: newPersonData.Gender || formData.gender,
+        InvitedBy: newPersonData.InvitedBy || formData.invitedBy,
+        leaders: newPersonData.leaders || [],
+        Stage: "First Time",
+        isNew: true,
+        DateCreated: newPersonData.DateCreated || new Date().toISOString(),
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          toast.success(`${fullName} added as new person successfully`);
-          setOpenDialog(false); setEditingPerson(null); setFormData(emptyForm); setSearch("");
+      setAttendees(prev => [newPersonForGrid, ...prev]);
+      setSessionNew(prev => {
+        const m = new Map(prev);
+        m.set(String(insertedId || newPersonForGrid.email || "").toLowerCase() || `added:${Date.now()}`, {
+          id: insertedId, _id: insertedId,
+          name: newPersonForGrid.name, surname: newPersonForGrid.surname,
+          email: newPersonForGrid.email || "", phone: newPersonForGrid.number || "",
+          number: newPersonForGrid.number || "", leader12: newPersonForGrid.leader12 || "",
+        });
+        return m;
+      });
+      authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(() => {});
+      if (insertedId) {
+        authFetch(`${BASE_URL}/service-checkin/checkin`, {
+          method: "POST",
+          body: JSON.stringify({event_id:events.find((e)=>e.session_id === currentSessionId)?.event_id, session_id: cleanEventId(currentSessionId), type: "new_person", person_data: {
+            person_id:newPersonData.person_id,
+            id: insertedId, name: newPersonForGrid.name, fullName: fullName,
+            email: newPersonForGrid.email || "", phone: newPersonForGrid.number || "",
+            number: newPersonForGrid.number || "", leader12: newPersonForGrid.leader12 || "",
+          } }),
+        }).catch(() => { });
+      }
+      fetchRealTimeEventData(currentSessionId).then(fd => { if (fd) commitRealTimeData(fd); });
 
-          const newPersonForGrid = normalisePerson({
-            _id: insertedId,
-            Name: newPersonData.Name || formData.name,
-            Surname: newPersonData.Surname || formData.surname,
-            Email: newPersonData.Email || formData.email,
-            Number: newPersonData.Number || formData.number,
-            Gender: newPersonData.Gender || formData.gender,
-            InvitedBy: newPersonData.InvitedBy || formData.invitedBy,
-            leaders: newPersonData.leaders || [],
-            Stage: "First Time",
-            isNew: true,
-          });
-
-          setAttendees(prev => [newPersonForGrid, ...prev]);
-          setRealTimeData(prev => {
-            const base = prev || { present_attendees: [], new_people: [], consolidations: [] };
-            const newEntry = {
-              id: insertedId, _id: insertedId,
-              name: newPersonForGrid.name,
-              surname: newPersonForGrid.surname,
-              email: newPersonForGrid.email,
-              phone: newPersonForGrid.phone,
-              gender: newPersonForGrid.gender,
-              invitedBy: newPersonForGrid.invitedBy,
-              added_at: new Date().toISOString(),
-            };
-            const newPeopleArr = [...(base.new_people || []), newEntry];
-            return { ...base, new_people: newPeopleArr, new_people_count: newPeopleArr.length };
-          });
-
-          try { await authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }); } catch { }
-          fetchRealTimeEventData(cleanEventId(currentEventId)).then(fd => { if (fd) setRealTimeData(fd); });
-
-          // Create task for leader when new person is added
-          try {
-            const leaderInfo = getHighestAvailableLeader(newPersonForGrid);
-            if (leaderInfo.hasLeader) {
-              const resolvedLeaderEmail = resolveLeaderEmail(leaderInfo.leader, newPersonForGrid);
-              if (resolvedLeaderEmail) {
-                await createNewPersonTaskForLeader({
-                  leaderName: leaderInfo.leader,
-                  leaderEmail: resolvedLeaderEmail,
-                  person: newPersonForGrid,
-                  eventId: cleanEventId(currentEventId),
-                });
-              }
-            }
-          } catch (taskErr) {
-            console.error("Failed to create new person task:", taskErr);
+      try {
+        const leaderInfo = getHighestAvailableLeader(newPersonForGrid);
+        if (leaderInfo.hasLeader) {
+          const resolvedLeaderEmail = resolveLeaderEmail(leaderInfo.leader, newPersonForGrid);
+          if (resolvedLeaderEmail) {
+            await createNewPersonTaskForLeader({
+              leaderName: leaderInfo.leader,
+              leaderEmail: resolvedLeaderEmail,
+              person: newPersonForGrid,
+              eventId: cleanEventId(currentSessionId),
+            });
           }
         }
+      } catch (taskErr) {
+        console.error("Failed to create new person task:", taskErr);
       }
     } catch (error) { toast.error(error.message || "Failed to save person"); }
-  }, [currentEventId, editingPerson, formData, authFetch, fetchRealTimeEventData]);
+  }, [currentSessionId, editingPerson, formData, authFetch, fetchRealTimeEventData, createNewPersonTaskForLeader, getHighestAvailableLeader, resolveLeaderEmail, commitRealTimeData]);
 
   const handleFinishConsolidation = useCallback(async (task) => {
-  if (!currentEventId) return;
-  const fullName = task.recipientName || `${task.person_name || ""} ${task.person_surname || ""}`.trim() || "Unknown Person";
-  setConsolidationOpen(false);
-  toast.success(`${fullName} consolidated successfully`);
+    if (!currentSessionId) return;
+    const fullName =
+      task.recipientName ||
+      `${task.person_name || ""} ${task.person_surname || ""}`.trim() ||
+      "Unknown Person";
+    setConsolidationOpen(false);
+    toast.success(`${fullName} consolidated successfully`);
 
-  const newCons = {
-    id: task.consolidation_id || `opt_${Date.now()}`,
-    person_name: task.person_name || "",
-    person_surname: task.person_surname || "",
-    person_email: task.person_email || "",
-    person_phone: task.person_phone || "",
-    decision_type: task.decision_type || "Commitment",
-    assigned_to: task.assigned_to || "",
-    status: "active",
-    created_at: new Date().toISOString(),
-  };
+    const newCons = {
+      id: task.consolidation?.id || task.consolidation_id || `opt_${Date.now()}`,
+      person_name: task.person_name || "",
+      person_surname: task.person_surname || "",
+      person_email: task.person_email || "",
+      person_phone: task.person_phone || "",
+      decision_type: task.decision_type || "Commitment",
+      assigned_to: task.assigned_to || "",
+      status: "active",
+      created_at: new Date().toISOString(),
+    };
 
-  setRealTimeData(prev => {
-    const base = prev || { present_attendees: [], new_people: [], consolidations: [] };
-    const consArr = [...(base.consolidations || []), newCons];
-    return { ...base, consolidations: consArr, consolidation_count: consArr.length };
-  });
+    setRealTimeData((prev) => {
+      const base = prev || { present_attendees: [], new_people: [], consolidations: [] };
+      const consArr = [...(base.consolidations || []), newCons];
+      return { ...base, consolidations: consArr, consolidation_count: consArr.length };
+    });
 
-  // Wait longer, then merge instead of replace
-  setTimeout(async () => {
-    const freshData = await fetchRealTimeEventData(currentEventId);
-    if (freshData) {
-      setRealTimeData(prev => {
-        if (!prev) return freshData;
-        
-        // If fresh data has at least as many consolidations, trust it
-        const freshCount = freshData.consolidations?.length ?? 0;
-        const prevCount = prev.consolidations?.length ?? 0;
-        
-        if (freshCount >= prevCount) return freshData;
-        
-        // Otherwise keep our optimistic consolidations merged in
-        return {
-          ...freshData,
-          consolidations: prev.consolidations,
-          consolidation_count: prevCount,
-        };
-      });
-    }
-  }, 3000); // increased from 1500 to give backend more time
+    setTimeout(async () => {
+      commitRealTimeData(await fetchRealTimeEventData(currentSessionId));
+    }, 1500);
 
-  notifyTaskUpdate?.();
-  window.dispatchEvent(new CustomEvent("taskUpdated", { detail: { action: "consolidationCreated", task } }));
-}, [currentEventId, fetchRealTimeEventData, notifyTaskUpdate]);
+    notifyTaskUpdate?.();
+    window.dispatchEvent(new CustomEvent("taskUpdated", { detail: { action: "consolidationCreated", task } }));
+  }, [currentSessionId, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
 
   const handleSaveAndCloseEvent = useCallback(async () => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
-    const currentEvent = events.find(e => cleanEventId(e.id) === cleanEventId(currentEventId));
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
+    const currentEvent = events.find(e => e.session_id === currentSessionId);
     if (!currentEvent) { toast.error("Selected event not found"); return; }
     if (!window.confirm(`Are you sure you want to close "${currentEvent.eventName}"? This action cannot be undone.`)) return;
 
     setIsClosingEvent(true);
     try {
-      const response = await authFetch(`${BASE_URL}/events/${currentEventId}/toggle-status`, { method: "PATCH" });
+      const response = await authFetch(`${BASE_URL}/events/${currentSessionId}/${currentEvent.event_id}/toggle-status`, { method: "PATCH" });
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
-      if (result.already_closed) toast.info(result.message || "Event was already closed");
-      else toast.success(result.message || `Event "${currentEvent.eventName}" closed successfully!`);
+      if (result.already_closed)
+        toast.info(result.message || "Event was already closed");
+      else
+        toast.success(
+          result.message ||
+            `Event "${currentEvent.eventName}" closed successfully!`,
+        );
 
       setEvents(prev => {
         const updated = prev.map(e =>
-          cleanEventId(e.id) === cleanEventId(currentEventId)
+          cleanEventId(e.id) === cleanEventId(currentSessionId)
             ? { ...e, status: "complete", closed_by: result.closed_by, closed_at: result.closed_at }
             : e
         );
-        const todayStr = new Date().toISOString().split("T")[0];
+        const todayStr = saTodayKey();
         const nextEvent = updated.find(e => {
-          if (cleanEventId(e.id) === cleanEventId(currentEventId)) return false;
+          if (cleanEventId(e.id) === cleanEventId(currentSessionId)) return false;
           if (e.isGlobal !== true) return false;
           const typeName = (e.eventType || "").toLowerCase();
           if (["cells", "all cells", "cell"].includes(typeName)) return false;
           const status = (e.status || "").toLowerCase();
-          if (["complete", "closed", "cancelled", "did_not_meet"].includes(status)) return false;
-          if (!e.date) return false;
-          return new Date(e.date).toISOString().split("T")[0] === todayStr;
+          if (
+            ["complete", "closed", "cancelled", "did_not_meet"].includes(status)
+          )
+            return false;
+          if (!e.rawDate) return false;
+          return saDateKey(e.rawDate) === todayStr;
         });
-        setCurrentEventId(nextEvent?.id || "");
+        setCurrentSessionId(nextEvent?.session_id || "");
         return updated;
       });
 
       setRealTimeData(null);
+      try {
+        const payload = {
+          eventId: getEventId(currentSessionId),
+          sessionId: currentSessionId,
+          service_name: currentEvent.eventName || currentEvent.name || "",
+          eventType: currentEvent.eventType || currentEvent.type || "",
+          status: "complete",
+          // include attendance/new people/consolidations if available
+          attendees:
+            realTimeData?.present_attendees ||
+            realTimeData?.attendanceData ||
+            attendees ||
+            [],
+          attendanceData:
+            realTimeData?.present_attendees ||
+            realTimeData?.attendanceData ||
+            attendees ||
+            [],
+          new_people: realTimeData?.new_people || realTimeData?.newPeople || [],
+          newPeopleData:
+            realTimeData?.new_people || realTimeData?.newPeople || [],
+          consolidations: realTimeData?.consolidations || [],
+          consolidatedData: realTimeData?.consolidations || [],
+          total_attendance:
+            realTimeData?.present_count ??
+            realTimeData?.present_attendees?.length ??
+            attendees?.length ??
+            0,
+          new_people_count:
+            realTimeData?.new_people_count ??
+            realTimeData?.new_people?.length ??
+            0,
+          consolidation_count:
+            realTimeData?.consolidation_count ??
+            realTimeData?.consolidations?.length ??
+            0,
+          date: currentEvent.date || new Date().toISOString(),
+          eventName: currentEvent.eventName || currentEvent.name || "",
+          closed_by: result?.closed_by,
+          closed_at: result?.closed_at || result?.closedAt,
+          userEmail: user?.email || "",
+        };
+
+        saveToEventHistory(payload);
+      } catch (err) {
+        console.error("Failed to save event history:", err);
+      }
       setTimeout(() => fetchEvents(), 500);
     } catch (error) {
       if (error.message.includes("404")) toast.error("Event not found.");
@@ -1144,11 +1736,11 @@ const sortedFilteredAttendees = useMemo(() => {
     } finally {
       setIsClosingEvent(false);
     }
-  }, [currentEventId, events, authFetch, fetchEvents]);
+  }, [currentSessionId, events, authFetch, fetchEvents, attendees, realTimeData?.attendanceData, realTimeData?.consolidation_count, realTimeData?.consolidations, realTimeData?.newPeople, realTimeData?.new_people, realTimeData?.new_people_count, realTimeData?.present_attendees, realTimeData?.present_count, user?.email]);
 
   const handleUnsaveEvent = useCallback(async (event) => {
     try {
-      const fullId = event.id || event._id;
+      const fullId = event.session_id
       const baseId = cleanEventId(fullId);
       const response = await authFetch(`${BASE_URL}/events/${fullId}/toggle-status`, { method: "PATCH" });
       if (!response.ok) { const e = await response.json(); throw new Error(e.detail || "HTTP error"); }
@@ -1160,15 +1752,15 @@ const sortedFilteredAttendees = useMemo(() => {
           ? { ...e, status: "incomplete", closed_by: undefined, closed_at: undefined }
           : e
       ));
-      setCurrentEventId(fullId);
+      setCurrentSessionId(fullId);
       setTimeout(() => fetchEvents(), 1500);
     } catch (error) { toast.error(error.message || "Failed to reopen event"); }
   }, [authFetch, fetchEvents]);
 
   const handleConsolidationClick = useCallback(() => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
     setConsolidationOpen(true);
-  }, [currentEventId]);
+  }, [currentSessionId]);
 
   const handleEditClick = useCallback((person) => {
     setEditingPerson(person);
@@ -1190,223 +1782,393 @@ const sortedFilteredAttendees = useMemo(() => {
     setOpenDialog(true);
   }, []);
 
-  const handleDelete = useCallback(async (personId, personName) => {
-    setIsDeleting(true);
-    try {
-      const res = await authFetch(`${BASE_URL}/people/${personId}`, { method: "DELETE" });
-      if (!res.ok) { const e = await res.json(); toast.error(`Delete failed: ${e.detail}`); return; }
-      setAttendees(prev => prev.filter(p => p._id !== personId && p.id !== personId));
-      setRealTimeData(prev => {
-        if (!prev) return prev;
-        const filterFn = a => a.id !== personId && a._id !== personId;
-        const newPresent = (prev.present_attendees || []).filter(filterFn);
-        const newPeople = (prev.new_people || []).filter(filterFn);
-        return { ...prev, present_attendees: newPresent, new_people: newPeople, present_count: newPresent.length, new_people_count: newPeople.length };
-      });
-      try { await authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }); } catch { }
-      toast.success(`"${personName}" deleted successfully`);
-    } catch { toast.error("An error occurred while deleting the person"); }
-    finally { setIsDeleting(false); setDeleteConfirmation({ open: false, personId: null, personName: "" }); }
-  }, [authFetch]);
-
-  const handleRemoveNewPerson = useCallback(async (person) => {
-    if (!currentEventId) { toast.error("Please select an event first"); return; }
-    try {
-      const personId = person.id || person._id;
-      const response = await authFetch(`${BASE_URL}/service-checkin/remove`, {
-        method: "DELETE",
-        body: JSON.stringify({ event_id: cleanEventId(currentEventId), person_id: personId, type: "new_people" }),
-      });
-      if (response.ok) {
-        toast.success("Person removed from new people");
-        const freshData = await fetchRealTimeEventData(currentEventId);
-        if (freshData) setRealTimeData(freshData);
+  const handleDelete = useCallback(
+    async (personId, personName) => {
+      setIsDeleting(true);
+      try {
+        const res = await authFetch(`${BASE_URL}/people/${personId}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const e = await res.json();
+          toast.error(`Delete failed: ${e.detail}`);
+          return;
+        }
+        setAttendees((prev) =>
+          prev.filter((p) => p._id !== personId && p.id !== personId),
+        );
+        setRealTimeData((prev) => {
+          if (!prev) return prev;
+          const filterFn = (a) => a.id !== personId && a._id !== personId;
+          const newPresent = (prev.present_attendees || []).filter(filterFn);
+          const newPeople = (prev.new_people || []).filter(filterFn);
+          return {
+            ...prev,
+            present_attendees: newPresent,
+            new_people: newPeople,
+            present_count: newPresent.length,
+            new_people_count: newPeople.length,
+          };
+        });
+        authFetch(`${BASE_URL}/cache/people/refresh`, { method: "POST" }).catch(
+          () => {},
+        );
+        toast.success(`"${personName}" deleted successfully`);
+      } catch {
+        toast.error("An error occurred while deleting the person");
+      } finally {
+        setIsDeleting(false);
+        setDeleteConfirmation({ open: false, personId: null, personName: "" });
       }
-    } catch { toast.error("Failed to remove person"); }
-  }, [currentEventId, authFetch, fetchRealTimeEventData]);
+    },
+    [authFetch],
+  );
 
   const exportToExcel = useCallback((data, filename = "export") => {
-    if (!data?.length) { toast.error("No data to export"); return; }
-    const headers = ["Name", "Surname", "Email", "Phone", "Leader @1", "Leader @12", "Leader @144", "CheckIn_Time", "Status"];
-    const worksheetData = data.map(row => { const o = {}; headers.forEach(h => (o[h] = row[h] ?? "")); return o; });
+    if (!data?.length) {
+      toast.error("No data to export");
+      return;
+    }
+    const headers = [
+      "Name",
+      "Surname",
+      "Email",
+      "Phone",
+      "Leader @1",
+      "Leader @12",
+      "Leader @144",
+      "CheckIn_Time",
+      "Status",
+    ];
+    const worksheetData = data.map((row) => {
+      const o = {};
+      headers.forEach((h) => (o[h] = row[h] ?? ""));
+      return o;
+    });
     const ws = XLSX.utils.json_to_sheet(worksheetData, { header: headers });
-    ws["!cols"] = headers.map(h => {
+    ws["!cols"] = headers.map((h) => {
       let maxw = h.length;
-      worksheetData.forEach(row => { const v = String(row[h] || ""); if (v.length > maxw) maxw = v.length; });
+      worksheetData.forEach((row) => {
+        const v = String(row[h] || "");
+        if (v.length > maxw) maxw = v.length;
+      });
       return { wch: maxw + 3 };
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Present Attendees");
     const today = new Date().toISOString().split("T")[0];
     try {
-      const wbout = XLSX.write(wb, { bookType: "xlsx", type: "binary", compression: true });
-      const blob = new Blob([s2ab(wbout)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const wbout = XLSX.write(wb, {
+        bookType: "xlsx",
+        type: "binary",
+        compression: true,
+      });
+      const blob = new Blob([s2ab(wbout)], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = url; link.download = `${filename}_${today}.xlsx`; link.style.display = "none";
-      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      link.href = url;
+      link.download = `${filename}_${today}.xlsx`;
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
       URL.revokeObjectURL(url);
       toast.success(`Exported ${data.length} records`);
-    } catch { toast.error("Failed to create Excel file"); }
+    } catch {
+      toast.error("Failed to create Excel file");
+    }
   }, []);
 
   const handleAddPersonClick = useCallback(() => {
-    if (!currentEventId) { toast.error("Please select an event first before adding people"); return; }
+    if (!currentSessionId) { toast.error("Please select an event first before adding people"); return; }
     setEditingPerson(null); setFormData(emptyForm); setOpenDialog(true);
-  }, [currentEventId]);
+  }, [currentSessionId]);
+
+  const getEventId = (sessionId) => {
+    return events.find(e => e.session_id === sessionId)?.event_id;
+  }
 
   const handleViewEventDetails = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "attendance", data: data || [] }); }, []);
   const handleViewNewPeople = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "newPeople", data: data || [] }); }, []);
   const handleViewConsolidated = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "consolidated", data: data || [] }); }, []);
+  const handleViewEventStats = useCallback(async (row) => {
+    const sessionId = row?.session_id
+    if (!sessionId) {
+      toast.error("This event does not have a session id for stats.");
+      return;
+    }
 
-  const mainColumns = useMemo(() => {
-    const base = [
-      {
-        field: "name", headerName: "Name", flex: 1, minWidth: isSm ? 110 : 140, sortable: true,
-        renderCell: (params) => {
-          const isFirstTime = params.row.stage === "First Time" || params.row.isNew === true;
-          return (
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.3, width: "100%", overflow: "hidden" }}>
-              {isFirstTime && (
-                <Chip label="New" size="small" color="success" variant="filled"
-                  sx={{ fontSize: "0.5rem", height: 13, flexShrink: 0, px: "2px", "& .MuiChip-label": { px: "3px" } }} />
-              )}
-              <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.72rem" : "0.88rem", lineHeight: 1.2 }}>
-                {params.row.name} {params.row.surname}
-              </Typography>
-            </Box>
-          );
-        },
-      },
-      ...(!isSm ? [{
-        field: "phone", headerName: "Phone", flex: 0.7, minWidth: 100, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: "0.85rem" }}>{p.row.number || "—"}</Typography>
-      }] : []),
-      ...(!isMd ? [{
-        field: "email", headerName: "Email", flex: 1, minWidth: 130, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: "0.85rem" }}>{p.row.email || "—"}</Typography>
-      }] : []),
-      {
-        field: "leader1", headerName: isSm ? "L@1" : "Leader @1", flex: 0.55, minWidth: isSm ? 38 : 80, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.65rem" : "0.85rem" }}>{p.row.leader1 || "—"}</Typography>
-      },
-      {
-        field: "leader12", headerName: isSm ? "L@12" : "Leader @12", flex: 0.55, minWidth: isSm ? 44 : 88, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.65rem" : "0.85rem" }}>{p.row.leader12 || "—"}</Typography>
-      },
-      ...(!isXs ? [{
-        field: "leader144", headerName: isSm ? "L@144" : "Leader @144", flex: 0.55, minWidth: isSm ? 50 : 96, sortable: true,
-        renderCell: (p) => <Typography variant="body2" noWrap sx={{ fontSize: isSm ? "0.65rem" : "0.85rem" }}>{p.row.leader144 || "—"}</Typography>
-      }] : []),
-      {
-        field: "actions", headerName: "", width: isSm ? 96 : 120, sortable: false, filterable: false,
-        renderCell: (params) => {
-          const fullName = `${params.row.name || ""} ${params.row.surname || ""}`.trim();
-          const isDisabled = !currentEventId;
-          const isCheckInLoading = checkInLoading.has(params.row._id);
-          const btnSz = isSm ? "small" : "medium";
-          const iconSz = isSm ? "16px" : "22px";
-          const pad = isSm ? "3px" : "6px";
-          return (
-            <Stack direction="row" spacing={0} sx={{ alignItems: "center" }}>
-              <Tooltip title={isDisabled ? "Select event first" : "Delete"}>
-                <span>
-                  <IconButton size={btnSz} color={isDisabled ? "default" : "error"}
-                    onClick={() => !isDisabled && setDeleteConfirmation({ open: true, personId: params.row._id, personName: fullName })}
-                    disabled={isDisabled || isCheckInLoading} sx={{ p: pad, opacity: isDisabled || isCheckInLoading ? 0.4 : 1 }}>
-                    <DeleteIcon sx={{ fontSize: iconSz }} />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <Tooltip title={isDisabled ? "Select event first" : "Edit"}>
-                <span>
-                  <IconButton size={btnSz} color={isDisabled ? "default" : "primary"}
-                    onClick={() => !isDisabled && handleEditClick(params.row)}
-                    disabled={isDisabled || isCheckInLoading} sx={{ p: pad, opacity: isDisabled || isCheckInLoading ? 0.4 : 1 }}>
-                    <EditIcon sx={{ fontSize: iconSz }} />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <Tooltip title={isDisabled ? "Select event first" : isCheckInLoading ? "Processing…" : params.row.present ? "Checked in" : "Check in"}>
-                <span>
-                  <IconButton size={btnSz} color={isDisabled ? "default" : "success"}
-                    disabled={isDisabled || isCheckInLoading}
-                    onClick={() => !isDisabled && !isCheckInLoading && handleToggleCheckIn(params.row)}
-                    sx={{ p: pad, opacity: isDisabled || isCheckInLoading ? 0.4 : 1 }}>
-                    {params.row.present ? <CheckCircleIcon sx={{ fontSize: iconSz }} /> : <CheckCircleOutlineIcon sx={{ fontSize: iconSz }} />}
-                  </IconButton>
-                </span>
-              </Tooltip>
-            </Stack>
-          );
-        },
-      },
-    ];
-    return base;
-  }, [isXs, isSm, isMd, currentEventId, checkInLoading, handleEditClick, handleToggleCheckIn]);
+    try {
+      setEventHistoryModal({ open: true, event: row, type: "stats", data: [], isLoading: true });
+      const response = await authFetch(`${BASE_URL}/service-checkin/events-history?session_id=${encodeURIComponent(sessionId)}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.detail || "Unable to load event stats");
+      }
 
-  const StatsCard = useCallback(({ title, count, icon, color = "primary", onClick, disabled = false }) => (
-    <Paper variant="outlined" onClick={onClick} sx={{
-      p: rv(1, 1.2, 1.8, 2, 2), textAlign: "center", cursor: disabled ? "default" : "pointer",
-      boxShadow: 2, minHeight: rv(64, 72, 80, 88, 88),
-      display: "flex", flexDirection: "column", justifyContent: "center",
-      "&:hover": disabled ? {} : { boxShadow: 4, transform: "translateY(-2px)" },
-      transition: "all 0.2s", opacity: disabled ? 0.6 : 1, backgroundColor: "background.paper",
-    }}>
-      <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.8} mb={0.3}>
-        {React.cloneElement(icon, { color: disabled ? "disabled" : color, sx: { fontSize: rv(18, 20, 24, 26, 26) } })}
-        <Typography fontWeight={700} color={disabled ? "text.disabled" : `${color}.main`}
-          sx={{ fontSize: rv("1rem", "1.1rem", "1.25rem", "1.4rem", "1.4rem"), lineHeight: 1 }}>
-          {count}
-        </Typography>
-      </Stack>
-      <Typography color={disabled ? "text.disabled" : `${color}.main`}
-        sx={{ fontSize: rv("0.65rem", "0.72rem", "0.82rem", "0.9rem", "0.9rem") }}>
-        {title}
-        {disabled && <Typography component="span" display="block" sx={{ fontSize: "0.58rem", color: "text.disabled" }}>Select event</Typography>}
-      </Typography>
-    </Paper>
-  ), [rv]);
+      const eventData = payload && typeof payload === 'object' ? payload : {};
+      setEventHistoryModal({
+        open: true,
+        event: { ...row, eventName: row?.eventName || eventData?.event_name || "Event" },
+        type: "stats",
+        data: eventData,
+        isLoading: false,
+      });
+    } catch (error) {
+      console.error("Failed to fetch event stats", error);
+      toast.error(error.message || "Unable to load event stats.");
+      setEventHistoryModal({ open: false, event: null, type: null, data: [], isLoading: false });
+    }
+  }, [authFetch]);
 
-  const gridHeight = isSm ? "calc(100vh - 340px)" : isMd ? "calc(100vh - 300px)" : 620;
+const mainColumns = useMemo(() => {
+  const textSx = { fontSize: isSm ? "0.72rem" : "0.85rem", color: ink, fontFamily: BODY };
+  return [
+    {
+      field: "name", headerName: "Name", flex: 1.2, minWidth: isSm ? 130 : 180, sortable: true,
+      renderCell: (params) => (
+        <Box sx={{ minWidth: 0, lineHeight: 1.25 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+            <Typography noWrap sx={{ ...textSx, fontWeight: 600 }}>
+              {params.row.name} {params.row.surname}
+            </Typography>
+            {params.row.isNew === true && (
+              <Box component="span" sx={{
+                flexShrink: 0, fontSize: "0.68rem", fontWeight: 600, color: mute,
+                border: `1px solid ${line}`, borderRadius: 99, px: 0.9, lineHeight: "16px",
+              }}>
+                New
+              </Box>
+            )}
+          </Box>
+          {!isSm && (
+            <Typography noWrap sx={{ fontSize: "0.75rem", color: mute, fontFamily: BODY }}>
+              {params.row.email || "—"}
+            </Typography>
+          )}
+        </Box>
+      ),
+    },
+    ...(!isSm ? [{
+      field: "phone", headerName: "Phone", flex: 0.7, minWidth: 110, sortable: true,
+      renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.number || "—"}</Typography>,
+    }] : []),
+    {
+      field: "leader1", headerName: isSm ? "L@1" : "Leader @1", flex: 0.6, minWidth: isSm ? 48 : 100, sortable: true,
+      renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.leader1 || "—"}</Typography>,
+    },
+    {
+      field: "leader12", headerName: isSm ? "L@12" : "Leader @12", flex: 0.6, minWidth: isSm ? 52 : 100, sortable: true,
+      renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.leader12 || "—"}</Typography>,
+    },
+    ...(!isXs ? [{
+      field: "leader144", headerName: isSm ? "L@144" : "Leader @144", flex: 0.6, minWidth: isSm ? 56 : 104, sortable: true,
+      renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.leader144 || "—"}</Typography>,
+    }] : []),
+    {
+      field: "actions", headerName: "", width: isSm ? 104 : 136, sortable: false, filterable: false,
+      renderCell: (params) => {
+        const fullName = `${params.row.name || ""} ${params.row.surname || ""}`.trim();
+        const noEvent = !currentSessionId;
+        const busy = checkInLoading.has(params.row._id);
+        const disabled = noEvent || busy;
+        const iconSz = isSm ? "18px" : "20px";
+        return (
+          <Stack direction="row" spacing={0} sx={{ alignItems: "center" }}>
+            <Tooltip title={noEvent ? "Select event first" : "Delete"}>
+              <span>
+                <IconButton size="small" aria-label={`Delete ${fullName}`} disabled={disabled}
+                  onClick={() => setDeleteConfirmation({ open: true, personId: params.row._id, personName: fullName })}
+                  sx={iconBtnSx(disabled)}>
+                  <DeleteIcon sx={{ fontSize: iconSz }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={noEvent ? "Select event first" : "Edit"}>
+              <span>
+                <IconButton size="small" aria-label={`Edit ${fullName}`} disabled={disabled}
+                  onClick={() => handleEditClick(params.row)} sx={iconBtnSx(disabled)}>
+                  <EditIcon sx={{ fontSize: iconSz }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={noEvent ? "Select event first" : busy ? "Processing…" : params.row.present ? "Remove check-in" : "Check in"}>
+              <span>
+                <IconButton size="small" disabled={disabled}
+                  aria-label={`${params.row.present ? "Remove check-in for" : "Check in"} ${fullName}`}
+                  aria-pressed={!!params.row.present}
+                  onClick={() => handleToggleCheckIn(params.row)}
+                  sx={{ ...iconBtnSx(disabled), color: params.row.present ? accent : mute }}>
+                  {params.row.present
+                    ? <CheckCircleIcon sx={{ fontSize: iconSz }} />
+                    : <CheckCircleOutlineIcon sx={{ fontSize: iconSz }} />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+        );
+      },
+    },
+  ];
+}, [isXs, isSm, currentSessionId, checkInLoading, handleEditClick, handleToggleCheckIn,
+    ink, mute, line, accent, fieldBg]);
+
+
+
+  const StatsCard = useCallback(({ title, count, onClick, disabled = false }) => (
+  <Paper
+    variant="outlined"
+    component="button"
+    type="button"
+    onClick={onClick}
+    disabled={disabled}
+    sx={{
+      width: "100%", textAlign: "left", font: "inherit", color: "inherit",
+      p: rv(1.25, 1.5, 2, 2, 2), bgcolor: cardBg, border: `1px solid ${line}`, borderRadius: "18px",
+      cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
+      transition: "border-color .15s",
+      "&:hover": disabled ? {} : { borderColor: accent },
+      "&:focus-visible": { outline: `3px solid ${accent}55`, outlineOffset: 1 },
+    }}
+  >
+    <Typography sx={{ fontFamily: DISPLAY, fontWeight: 800, color: ink, lineHeight: 1, fontSize: rv("1.5rem", "1.7rem", "2rem", "2.1rem", "2.1rem") }}>
+      {count}
+    </Typography>
+    <Typography sx={{ mt: 0.5, color: mute, fontWeight: 600, fontFamily: BODY, fontSize: rv("0.7rem", "0.75rem", "0.8rem", "0.85rem", "0.85rem") }}>
+      {title}
+    </Typography>
+  </Paper>
+), [rv, cardBg, line, accent, ink, mute]);
+
+
+  const gridHeight = isSm
+    ? "calc(100vh - 340px)"
+    : isMd
+      ? "calc(100vh - 300px)"
+      : 620;
   const gridMinHeight = isSm ? 380 : isMd ? 450 : 550;
 
   return (
-    <Box p={containerPadding} sx={{ width: "100%", margin: "0 auto", mt: 6, minHeight: "100vh", maxWidth: "100vw", overflowX: "hidden" }}>
-      <ToastContainer position={isSm ? "top-center" : "top-right"} autoClose={3000}
-        hideProgressBar={isSm} style={{ marginTop: isSm ? "0px" : "20px", zIndex: 9999 }} />
+    <Box
+      p={containerPadding}
+      sx={{
+        width: "100%",
+        maxWidth: 1000,
+        mx: "auto",
+        mt: 6,
+        minHeight: "100vh",
+        overflowX: "hidden",
+      }}
+    >
+      <ToastContainer
+        position={isSm ? "top-center" : "top-right"}
+        autoClose={3000}
+        hideProgressBar={isSm}
+        style={{ marginTop: isSm ? "0px" : "20px", zIndex: 9999 }}
+      />
 
       <DeleteConfirmationModal
         open={deleteConfirmation.open}
-        onClose={() => setDeleteConfirmation({ open: false, personId: null, personName: "" })}
-        onConfirm={() => handleDelete(deleteConfirmation.personId, deleteConfirmation.personName)}
-        personName={deleteConfirmation.personName} isLoading={isDeleting}
+        onClose={() =>
+          setDeleteConfirmation({ open: false, personId: null, personName: "" })
+        }
+        onConfirm={() =>
+          handleDelete(
+            deleteConfirmation.personId,
+            deleteConfirmation.personName,
+          )
+        }
+        personName={deleteConfirmation.personName}
+        isLoading={isDeleting}
       />
+
+      {/* Header */}
+      <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 1, mb: 2 }}>
+        <Box sx={{ width: { xs: "100%", sm: "auto" } }}>
+          <Typography component="h1" sx={{ mb: 0.75, fontFamily: DISPLAY, fontWeight: 800, color: ink, letterSpacing: "-0.01em", fontSize: rv("1.4rem", "1.5rem", "1.75rem", "1.9rem", "1.9rem") }}>
+            Service check-in
+          </Typography>
+          <Typography component="label" htmlFor="service-event-select" sx={{ display: "block", mb: 0.5, color: mute, fontSize: "0.75rem", fontWeight: 600, fontFamily: BODY }}>
+            Global event
+          </Typography>
+          <Select
+            id="service-event-select"
+            size="small"
+            value={currentSessionId}
+            onChange={(e) => setCurrentSessionId(e.target.value)}
+            displayEmpty
+            inputProps={{ "aria-label": "Global event" }}
+            sx={{
+              width: { xs: "100%", sm: 293 },
+              ...inputSx["& .MuiOutlinedInput-root"],
+              height: 40,
+              fontFamily: BODY,
+              fontSize: "0.9rem",
+              "& fieldset": { borderColor: line, borderWidth: 1.5 },
+              "&:hover fieldset": { borderColor: accent },
+              "&.Mui-focused fieldset": { borderColor: accent, borderWidth: 1.5 },
+            }}
+          >
+            <MenuItem value="">
+              <Typography color="text.secondary" sx={{ fontSize: "inherit" }}>
+                {isLoadingEvents ? "Loading events…" : "Select global event"}
+              </Typography>
+            </MenuItem>
+            {menuEvents.map((ev) => (
+              <MenuItem key={ev.id} value={ev.id}>
+                <Typography variant="body2" fontWeight="medium" noWrap>
+                  {ev.eventName}
+                </Typography>
+              </MenuItem>
+            ))}
+            {menuEvents.length === 0 && events.length > 0 && (
+              <MenuItem disabled>
+                <Typography variant="body2" color="text.secondary" fontStyle="italic">
+                  No open global events
+                </Typography>
+              </MenuItem>
+            )}
+            {events.length === 0 && !isLoadingEvents && (
+              <MenuItem disabled>
+                <Typography variant="body2" color="text.secondary" fontStyle="italic">
+                  No events available
+                </Typography>
+              </MenuItem>
+            )}
+          </Select>
+        </Box>
+        <Typography sx={{ pb: { xs: 0, sm: 0.5 }, color: mute, fontSize: "0.8125rem", fontWeight: 600, fontFamily: BODY }}>
+          {currentSessionId ? "Service open" : "Select an event to start"}
+        </Typography>
+      </Box>
 
       {/* Stats Cards */}
       <Grid container spacing={cardSpacing} mb={cardSpacing}>
         <Grid item xs={4}>
           <StatsCard title="Present" count={presentCount} icon={<GroupIcon />} color="primary"
-            onClick={() => { if (currentEventId) { setModalOpen(true); setModalSearch(""); setModalPage(0); } }}
-            disabled={!currentEventId} />
+            onClick={() => { if (currentSessionId) { setModalOpen(true); setModalSearch(""); setModalPage(0); } }}
+            disabled={!currentSessionId} />
         </Grid>
         <Grid item xs={4}>
           <StatsCard title="New People" count={newPeopleCount} icon={<PersonAddAltIcon />} color="success"
-            onClick={() => { if (currentEventId) { setNewPeopleModalOpen(true); setNewPeopleSearch(""); setNewPeoplePage(0); } }}
-            disabled={!currentEventId} />
+            onClick={() => { if (currentSessionId) { setNewPeopleModalOpen(true); setNewPeopleSearch(""); setNewPeoplePage(0); } }}
+            disabled={!currentSessionId} />
         </Grid>
         <Grid item xs={4}>
           <StatsCard title="Consolidated" count={consolidationCount} icon={<MergeIcon />} color="secondary"
-            onClick={() => { if (currentEventId) { setConsolidatedModalOpen(true); setConsolidatedSearch(""); setConsolidatedPage(0); } }}
-            disabled={!currentEventId} />
-</Grid>
+            onClick={() => { if (currentSessionId) { setConsolidatedModalOpen(true); setConsolidatedSearch(""); setConsolidatedPage(0); } }}
+            disabled={!currentSessionId} />
+        </Grid>
+      </Grid>
 
       </Grid>
       {/* Controls Row */}
       <Box mb={cardSpacing}>
         <Grid container spacing={1} mb={1} alignItems="center">
           <Grid item xs={12} sm={6} md={5}>
-            <Select size="small" value={currentEventId} onChange={e => setCurrentEventId(e.target.value)}
+            <Select size="small" value={currentSessionId} onChange={e => setCurrentSessionId(e.target.value)}
               displayEmpty fullWidth sx={{ boxShadow: 1, fontSize: isSm ? "0.8rem" : "0.9rem" }}>
               <MenuItem value="">
                 <Typography color="text.secondary" sx={{ fontSize: "inherit" }}>
@@ -1414,7 +2176,7 @@ const sortedFilteredAttendees = useMemo(() => {
                 </Typography>
               </MenuItem>
               {menuEvents.map(ev => (
-                <MenuItem key={ev.id} value={ev.id}>
+                <MenuItem key={ev.session_id} value={ev.session_id}>
                   <Typography variant="body2" fontWeight="medium" noWrap>{ev.eventName}</Typography>
                 </MenuItem>
               ))}
@@ -1438,7 +2200,7 @@ const sortedFilteredAttendees = useMemo(() => {
             <Grid item md={3}>
               <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
                 <ActionButtons
-                  currentEventId={currentEventId} isDarkMode={isDarkMode} isSm={isSm}
+                  currentSessionId={currentSessionId} isDarkMode={isDarkMode} isSm={isSm}
                   isClosingEvent={isClosingEvent} isRefreshing={isRefreshing}
                   handleAddPersonClick={handleAddPersonClick}
                   handleConsolidationClick={handleConsolidationClick}
@@ -1452,53 +2214,111 @@ const sortedFilteredAttendees = useMemo(() => {
         {isMd && (
           <Stack direction="row" spacing={isSm ? 0.5 : 1} justifyContent="flex-start" alignItems="center" flexWrap="wrap" gap={0.5}>
             <ActionButtons
-              currentEventId={currentEventId} isDarkMode={isDarkMode} isSm={isSm}
+              currentSessionId={currentSessionId} isDarkMode={isDarkMode} isSm={isSm}
               isClosingEvent={isClosingEvent} isRefreshing={isRefreshing}
               handleAddPersonClick={handleAddPersonClick}
               handleConsolidationClick={handleConsolidationClick}
               handleSaveAndCloseEvent={handleSaveAndCloseEvent}
-              handleFullRefresh={handleFullRefresh} theme={theme}
+              handleFullRefresh={handleFullRefresh}
+              accent={accent}
+              outlinedBtnSx={outlinedBtnSx}
             />
           </Stack>
         )}
-      </Box>
+        </Box>
+      
 
       {/* Tabs + Content */}
       <Box sx={{ width: "100%" }}>
-        <Paper variant="outlined" sx={{ mb: 1.5, boxShadow: 2 }}>
-          <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} sx={{
-            borderBottom: 1, borderColor: "divider", minHeight: "38px",
-            "& .MuiTab-root": { py: 0.5, minHeight: "38px", fontSize: rv("0.7rem", "0.78rem", "0.85rem", "0.9rem", "0.9rem") },
-          }}>
-            <Tab label="All Attendees" />
-            <Tab label="Event History" />
-          </Tabs>
-        </Paper>
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          sx={{
+            borderBottom: `1px solid ${line}`,
+            mb: 1.5,
+            minHeight: 42,
+            "& .MuiTabs-indicator": { bgcolor: accent, height: 3 },
+            "& .MuiTab-root": {
+              textTransform: "none",
+              fontWeight: 600,
+              fontFamily: BODY,
+              color: mute,
+              minHeight: 42,
+              fontSize: rv("0.8rem", "0.85rem", "0.9rem", "0.9rem", "0.9rem"),
+            },
+            "& .Mui-selected": { color: `${ink} !important` },
+          }}
+        >
+          <Tab label="All attendees" />
+          <Tab label="Event history" />
+        </Tabs>
 
         {activeTab === 0 && (
           <Paper variant="outlined" sx={{ boxShadow: 3, overflow: "hidden", width: "100%", height: gridHeight, minHeight: gridMinHeight }}>
+           
             <DataGrid
               rows={sortedFilteredAttendees} columns={mainColumns}
-              getRowId={(row) => row.id || row._id || row.email || `temp-${Math.random()}`}
+              getRowId={(row) => row._id || row.id || row.email || `temp-${row._id || row.email || 'unknown'}`}
               loading={isLoadingPeople} pagination
               paginationModel={{ page, pageSize: rowsPerPage }}
-              onPaginationModelChange={model => { setPage(model.page); setRowsPerPage(model.pageSize); }}
-              rowCount={filteredAttendees.length} pageSizeOptions={[25, 50, 100]}
-              slots={{ toolbar: GridToolbar }}
-              slotProps={{ toolbar: { showQuickFilter: !isSm, quickFilterProps: { debounceMs: 500 } } }}
+              onPaginationModelChange={(model) => {
+                setPage(model.page);
+                setRowsPerPage(model.pageSize);
+              }}
+              rowCount={filteredAttendees.length}
+              pageSizeOptions={[25, 50, 100]}
               disableRowSelectionOnClick
-              sortModel={sortModel} onSortModelChange={model => { setPage(0); setSortModel(model); }}
-              // getRowId={row => row._id} rowHeight={isSm ? 44 : 52} columnHeaderHeight={isSm ? 40 : 48}
+              disableColumnMenu={isSm}
+              sortModel={sortModel}
+              onSortModelChange={(model) => {
+                setPage(0);
+                setSortModel(model);
+              }}
+              rowHeight={isSm ? 56 : 60}
+              columnHeaderHeight={isSm ? 40 : 46}
               sx={{
-                width: "100%", height: "100%",
-                "& .MuiDataGrid-cell": { display: "flex", alignItems: "center", px: isSm ? "4px" : "8px", fontSize: isSm ? "0.72rem" : "0.85rem", py: "2px" },
-                "& .MuiDataGrid-columnHeaders": { backgroundColor: theme.palette.action.hover, borderBottom: `1px solid ${theme.palette.divider}` },
-                "& .MuiDataGrid-columnHeader": { fontWeight: 700, fontSize: isSm ? "0.7rem" : "0.82rem", px: isSm ? "4px" : "8px" },
-                "& .MuiDataGrid-row:hover": { backgroundColor: theme.palette.action.hover },
-                "& .MuiDataGrid-toolbarContainer": { px: isSm ? "4px" : "12px", py: "6px", borderBottom: `1px solid ${theme.palette.divider}`, flexWrap: "wrap", gap: "4px" },
-                "& .MuiDataGrid-footerContainer": { borderTop: `1px solid ${theme.palette.divider}`, backgroundColor: theme.palette.background.paper, minHeight: "48px" },
-                "& .MuiTablePagination-root": { fontSize: "0.72rem", flexWrap: "wrap" },
-                ...(isSm && { "& .MuiDataGrid-columnSeparator": { display: "none" }, "& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows": { fontSize: "0.68rem" } }),
+                border: 0,
+                width: "100%",
+                height: "100%",
+                fontFamily: BODY,
+                "& .MuiDataGrid-cell": {
+                  display: "flex",
+                  alignItems: "center",
+                  px: isSm ? "6px" : "14px",
+                  borderColor: line,
+                  outline: "none !important",
+                },
+                "& .MuiDataGrid-columnHeaders": {
+                  bgcolor: fieldBg,
+                  borderBottom: `1px solid ${line}`,
+                },
+                "& .MuiDataGrid-columnHeader": {
+                  px: isSm ? "6px" : "14px",
+                  outline: "none !important",
+                },
+                "& .MuiDataGrid-columnHeaderTitle": {
+                  fontWeight: 600,
+                  fontSize: isSm ? "0.72rem" : "0.8rem",
+                  color: mute,
+                },
+                "& .MuiDataGrid-row": {
+                  bgcolor: cardBg,
+                  color: ink,
+                },
+                "& .MuiDataGrid-row:hover": {
+                  bgcolor: fieldBg,
+                },
+                "& .MuiDataGrid-footerContainer": {
+                  borderTop: `1px solid ${line}`,
+                  minHeight: 48,
+                },
+                "& .MuiTablePagination-root": {
+                  fontSize: "0.75rem",
+                  color: mute,
+                },
+                ...(isSm && {
+                  "& .MuiDataGrid-columnSeparator": { display: "none" },
+                }),
               }}
             />
           </Paper>
@@ -1509,6 +2329,7 @@ const sortedFilteredAttendees = useMemo(() => {
             <EventHistory
               onViewDetails={handleViewEventDetails} onViewNewPeople={handleViewNewPeople}
               onViewConverts={handleViewConsolidated} onUnsaveEvent={handleUnsaveEvent}
+              onViewEventStats={handleViewEventStats}
               events={getFilteredClosedEvents()} searchTerm={eventSearch}
               isLoading={isLoadingEvents && events.length === 0 && isLoadingHistory}
             />
@@ -1522,7 +2343,7 @@ const sortedFilteredAttendees = useMemo(() => {
         onClose={() => { setOpenDialog(false); setEditingPerson(null); setFormData(emptyForm); }}
         onSave={handlePersonSave} formData={formData} setFormData={setFormData}
         isEdit={Boolean(editingPerson)} personId={editingPerson?._id || null}
-        currentEventId={currentEventId} preloadedPeople={attendees}
+        currentSessionId={currentSessionId} preloadedPeople={attendees}
         editingPersonObject={editingPerson}
       />
 
@@ -1535,7 +2356,7 @@ const sortedFilteredAttendees = useMemo(() => {
         <DialogContent dividers sx={{ p: isSm ? 1 : 2, overflowY: "auto" }}>
           <TextField size="small" placeholder="Search…" value={modalSearch}
             onChange={e => { setModalSearch(e.target.value); setModalPage(0); }} fullWidth sx={{ mb: 1.5 }} />
-          {!currentEventId
+          {!currentSessionId
             ? <Typography color="text.secondary" textAlign="center" py={4}>Please select an event</Typography>
             : modalFilteredAttendees.length === 0
               ? <Typography color="text.secondary" textAlign="center" py={4}>{modalSearch ? "No matching attendees" : "No attendees present"}</Typography>
@@ -1568,7 +2389,7 @@ const sortedFilteredAttendees = useMemo(() => {
                             <TableCell align="center">
                               <Tooltip title="Remove from check-in">
                                 <IconButton color="error" size="small"
-                                  onClick={() => { const att = attendeeMap.get(a.id || a._id); if (att) handleToggleCheckIn(att); }}>
+                                  onClick={() => handleToggleCheckIn(attendeeMap.get(a.id || a._id || a.person_id) || a, a)}>
                                   <CheckCircleOutlineIcon sx={{ fontSize: "18px" }} />
                                 </IconButton>
                               </Tooltip>
@@ -1590,28 +2411,83 @@ const sortedFilteredAttendees = useMemo(() => {
           <Button variant="outlined" size="small" startIcon={<DownloadIcon />}
             onClick={() => exportToExcel(
               modalFilteredAttendees.map(a => ({ Name: a.name, Surname: a.surname, Email: a.email, Phone: a.phone, "Leader @1": a.leader1, "Leader @12": a.leader12, "Leader @144": a.leader144, CheckIn_Time: a.time || "", Status: "Present" })),
-              `Present_Attendees_${cleanEventId(currentEventId)}`
+              `Present_Attendees_${cleanEventId(currentSessionId)}`
             )}
             disabled={modalFilteredAttendees.length === 0}>
             {isSm ? "Export" : "Download XLSX"}
           </Button>
-          <Button onClick={() => setModalOpen(false)} variant="outlined" size="small">Close</Button>
         </DialogActions>
       </Dialog>
 
       {/* New People Modal */}
-      <Dialog open={newPeopleModalOpen} onClose={() => setNewPeopleModalOpen(false)} fullWidth maxWidth="md"
-        fullScreen={isXs} PaperProps={{ sx: { boxShadow: 6, ...(isSm && !isXs && { mx: 1.5, maxHeight: "88vh" }) } }}>
-        <DialogTitle sx={{ pb: 1, fontWeight: 600, fontSize: isSm ? "1rem" : "1.25rem" }}>
-          New People: {newPeopleCount}
+      <Dialog
+        open={newPeopleModalOpen}
+        onClose={() => setNewPeopleModalOpen(false)}
+        fullWidth
+        maxWidth={isSm ? "sm" : "lg"}
+        fullScreen={isXs}
+        PaperProps={{
+          sx: {
+            borderRadius: "18px",
+            bgcolor: modalTokens.cardBg,
+            border: `1px solid ${modalTokens.line}`,
+            backgroundImage: "none",
+            m: 2,
+            maxHeight: "90vh",
+            ...(isSm && !isXs && { mx: 1.5 }),
+          },
+        }}
+      >
+        <DialogTitle
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            px: 2.5,
+            py: 2,
+            borderBottom: `1px solid ${modalTokens.line}`,
+          }}
+        >
+          <Box>
+            <Typography
+              sx={{
+                fontFamily: DISPLAY,
+                fontWeight: 800,
+                color: modalTokens.ink,
+                fontSize: isSm ? "1.05rem" : "1.25rem",
+                lineHeight: 1.25,
+              }}
+            >
+              New people: {newPeopleCount}
+            </Typography>
+            <Typography
+              sx={{
+                mt: 0.5,
+                color: modalTokens.mute,
+                fontSize: "0.8125rem",
+                fontWeight: 600,
+                fontFamily: BODY,
+              }}
+            >
+              First-time visitors at this service
+            </Typography>
+          </Box>
+          <Button
+            variant="outlined"
+            onClick={() => setNewPeopleModalOpen(false)}
+            size="small"
+            sx={{ ...sharedOutlinedBtnSx(modalTokens), height: 38, px: 1.5 }}
+          >
+            Close
+          </Button>
         </DialogTitle>
         <DialogContent dividers sx={{ p: isSm ? 1 : 2, overflowY: "auto" }}>
           <TextField size="small" placeholder="Search…" value={newPeopleSearch}
             onChange={e => { setNewPeopleSearch(e.target.value); setNewPeoplePage(0); }} fullWidth sx={{ mb: 1.5 }} />
-          {!currentEventId
+          {!currentSessionId
             ? <Typography color="text.secondary" textAlign="center" py={4}>Please select an event</Typography>
             : newPeopleFilteredList.length === 0
-              ? <Typography color="text.secondary" textAlign="center" py={4}>{newPeopleSearch ? "No matching people" : "No new people added"}</Typography>
+              ? <Typography color="text.secondary" textAlign="center" py={4}>{newPeopleSearch ? "No matching people" : "No new people present"}</Typography>
               : (
                 <>
                   <Box sx={{ overflowX: "auto" }}>
@@ -1640,7 +2516,9 @@ const sortedFilteredAttendees = useMemo(() => {
                             {!isSm && <TableCell sx={{ fontSize: "0.8rem" }}>{a.leader12 || "—"}</TableCell>}
                             <TableCell>
                               <Tooltip title="Remove">
-                                <IconButton size="small" color="error" onClick={() => handleRemoveNewPerson(a)} sx={{ p: "3px" }}>
+                                <IconButton size="small" color="error"
+                                  onClick={() => handleToggleCheckIn(attendeeMap.get(a.id || a._id || a.person_id) || a, a)}
+                                  sx={{ p: "3px" }}>
                                   <DeleteForeverIcon sx={{ fontSize: "18px" }} />
                                 </IconButton>
                               </Tooltip>
@@ -1658,8 +2536,10 @@ const sortedFilteredAttendees = useMemo(() => {
               )
           }
         </DialogContent>
-        <DialogActions sx={{ p: isSm ? 1 : 1.5 }}>
-          <Button onClick={() => setNewPeopleModalOpen(false)} variant="outlined" size="small">Close</Button>
+        <DialogActions sx={{ borderTop: `1px solid ${modalTokens.line}`, px: 2.5, py: 1.5, gap: 1 }}>
+          <Typography sx={{ mr: "auto", color: modalTokens.mute, fontSize: "0.8125rem", fontWeight: 600, fontFamily: BODY }}>
+            {newPeopleFilteredList.length} people
+          </Typography>
         </DialogActions>
       </Dialog>
 
@@ -1672,7 +2552,7 @@ const sortedFilteredAttendees = useMemo(() => {
         <DialogContent dividers sx={{ p: isSm ? 1 : 2, overflowY: "auto" }}>
           <TextField size="small" placeholder="Search…" value={consolidatedSearch}
             onChange={e => { setConsolidatedSearch(e.target.value); setConsolidatedPage(0); }} fullWidth sx={{ mb: 1.5 }} />
-          {!currentEventId
+          {!currentSessionId
             ? <Typography color="text.secondary" textAlign="center" py={4}>Please select an event</Typography>
             : filteredConsolidatedPeople.length === 0
               ? <Typography color="text.secondary" textAlign="center" py={4}>{consolidatedSearch ? "No matching people" : "No consolidated people"}</Typography>
@@ -1735,77 +2615,86 @@ const sortedFilteredAttendees = useMemo(() => {
         <DialogActions sx={{ p: isSm ? 1 : 1.5, gap: 1 }}>
           <Button variant="contained" size="small" startIcon={<EmojiPeopleIcon />}
             onClick={() => { setConsolidatedModalOpen(false); handleConsolidationClick(); }}
-            disabled={!currentEventId}>
+            disabled={!currentSessionId}>
             {isSm ? "Add" : "Add Consolidation"}
           </Button>
-          <Button onClick={() => setConsolidatedModalOpen(false)} variant="outlined" size="small">Close</Button>
         </DialogActions>
       </Dialog>
 
       <EventHistoryModal
         open={eventHistoryModal.open}
-        onClose={() => setEventHistoryModal({ open: false, event: null, type: null, data: [] })}
-        event={eventHistoryModal.event} type={eventHistoryModal.type} data={eventHistoryModal.data}
+        onClose={() =>
+          setEventHistoryModal({
+            open: false,
+            event: null,
+            type: null,
+            data: [],
+          })
+        }
+        event={eventHistoryModal.event}
+        type={eventHistoryModal.type}
+        data={eventHistoryModal.data}
       />
 
       <ConsolidationModal
         open={consolidationOpen} onClose={() => setConsolidationOpen(false)}
         attendeesWithStatus={attendeesWithStatus} onFinish={handleFinishConsolidation}
-        consolidatedPeople={filteredConsolidatedPeople} currentEventId={cleanEventId(currentEventId)}
+        consolidatedPeople={filteredConsolidatedPeople} currentSessionId={currentSessionId}
+        eventId={getEventId(currentSessionId)}
       />
     </Box>
   );
 }
 
 function ActionButtons({
-  currentEventId, isDarkMode, isSm, isClosingEvent, isRefreshing,
+  currentSessionId, isDarkMode, isSm, isClosingEvent, isRefreshing,
   handleAddPersonClick, handleConsolidationClick, handleSaveAndCloseEvent,
   handleFullRefresh, theme,
 }) {
-  const iconColor = currentEventId ? (isDarkMode ? "white" : "black") : "text.disabled";
-  const iconFilter = currentEventId ? "drop-shadow(0px 2px 3px rgba(0,0,0,0.25))" : "none";
+  const iconColor = currentSessionId ? (isDarkMode ? "white" : "black") : "text.disabled";
+  const iconFilter = currentSessionId ? "drop-shadow(0px 2px 3px rgba(0,0,0,0.25))" : "none";
   const iconSz = isSm ? 28 : 34;
 
   return (
     <>
-      <Tooltip title={currentEventId ? "Add Person" : "Select event first"}>
+      <Tooltip title={currentSessionId ? "Add Person" : "Select event first"}>
         <span>
           <PersonAddIcon onClick={handleAddPersonClick} sx={{
-            cursor: currentEventId ? "pointer" : "not-allowed", fontSize: iconSz,
+            cursor: currentSessionId ? "pointer" : "not-allowed", fontSize: iconSz,
             color: iconColor, filter: iconFilter,
-            opacity: currentEventId ? 1 : 0.4,
-            "&:hover": { color: currentEventId ? "primary.main" : iconColor },
+            opacity: currentSessionId ? 1 : 0.4,
+            "&:hover": { color: currentSessionId ? "primary.main" : iconColor },
           }} />
         </span>
       </Tooltip>
-      <Tooltip title={currentEventId ? "Consolidation" : "Select event first"}>
+      <Tooltip title={currentSessionId ? "Consolidation" : "Select event first"}>
         <span>
           <EmojiPeopleIcon onClick={handleConsolidationClick} sx={{
-            cursor: currentEventId ? "pointer" : "not-allowed", fontSize: iconSz,
+            cursor: currentSessionId ? "pointer" : "not-allowed", fontSize: iconSz,
             color: iconColor, filter: iconFilter,
-            opacity: currentEventId ? 1 : 0.4,
-            "&:hover": { color: currentEventId ? "secondary.main" : iconColor },
+            opacity: currentSessionId ? 1 : 0.4,
+            "&:hover": { color: currentSessionId ? "secondary.main" : iconColor },
           }} />
         </span>
       </Tooltip>
-      <Tooltip title={currentEventId ? "Save and Close Event" : "Select event first"}>
+      <Tooltip title={currentSessionId ? "Save and Close Event" : "Select event first"}>
         <span>
           <Button variant="contained" size={isSm ? "small" : "medium"}
             startIcon={isClosingEvent ? <CloseIcon /> : <SaveIcon />}
-            onClick={handleSaveAndCloseEvent} disabled={!currentEventId || isClosingEvent}
+            onClick={handleSaveAndCloseEvent} disabled={!currentSessionId || isClosingEvent}
             sx={{
-              minWidth: "auto", px: isSm ? 1.2 : 2, opacity: currentEventId ? 1 : 0.4,
+              minWidth: "auto", px: isSm ? 1.2 : 2, opacity: currentSessionId ? 1 : 0.4,
               backgroundColor: theme.palette.warning.main,
-              "&:hover": currentEventId ? { backgroundColor: theme.palette.warning.dark, transform: "translateY(-1px)" } : {},
+              "&:hover": currentSessionId ? { backgroundColor: theme.palette.warning.dark, transform: "translateY(-1px)" } : {},
             }}>
             {isClosingEvent ? "Closing…" : "Save"}
           </Button>
         </span>
       </Tooltip>
-      <Tooltip title={currentEventId ? "Refresh" : "Select event first"}>
+      <Tooltip title={currentSessionId ? "Refresh" : "Select event first"}>
         <span>
           <IconButton onClick={handleFullRefresh} color="primary" size={isSm ? "small" : "medium"}
-            disabled={!currentEventId || isRefreshing} sx={{ opacity: currentEventId ? 1 : 0.4 }}>
+            disabled={!currentSessionId || isRefreshing} sx={{ opacity: currentSessionId ? 1 : 0.4 }}>
             <RefreshIcon />
           </IconButton>
         </span>

@@ -135,11 +135,15 @@ function mapRawPerson(raw) {
       raw.org_id ||
       "",
   ).trim();
+  const personId = safeStr(
+    raw.person_id || raw.personId || raw.PersonId || raw._id || raw.id || "",
+  );
   const leaderMap = getLeadersByLevel(raw);
   const leadersCombined = Object.values(leaderMap).join(" ");
   const fullName = `${name} ${surname}`.trim();
   return {
     _id: safeStr(raw._id || raw.id || ""),
+    person_id: personId,
     name,
     surname,
     fullName,
@@ -953,9 +957,12 @@ export const PeopleSection = () => {
   // ── Search debounce ────────────────────────────────────────────────────────
   useEffect(() => {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    if (searchTerm.trim()) setIsSearching(true);
+    const trimmed = searchTerm.trim();
+    const shouldSearch = trimmed.length >= 3;
+    setIsSearching(shouldSearch);
+
     searchDebounceRef.current = setTimeout(() => {
-      setDebouncedSearch(searchTerm);
+      setDebouncedSearch(shouldSearch ? searchTerm : "");
       setIsSearching(false);
     }, 300);
     return () => {
@@ -1589,7 +1596,7 @@ export const PeopleSection = () => {
           <>
             <TextField
               size="small"
-              placeholder="Search..."
+              placeholder="Please type at least 3 characters to search"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               InputProps={{

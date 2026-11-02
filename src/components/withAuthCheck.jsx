@@ -105,12 +105,12 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
     }
 
     if (isCustomRole) {
-      console.log('Custom role detected:', userRole);
+      console.log('Custom role detected:', userRole, '(normalized:', normalizedUserRole + ')');
       
       const userLevel = ROLE_HIERARCHY['user'] || 2;
       
       const hasAccess = allowedRoles.some(role => {
-        const roleLevel = ROLE_HIERARCHY[role] || 0;
+        const roleLevel = ROLE_HIERARCHY[normalizeRole(role)] || 0;
         return userLevel >= roleLevel;
       });
       
@@ -126,11 +126,11 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
         return <WrappedComponent {...props} />;
       }
       
-      const isLeaderPage = allowedRoles.includes('leader') || allowedRoles.includes('leaderAt12');
+      const isLeaderPage = allowedRoles.includes('leader') || allowedRoles.includes('leaderat12');
       const isAdminPage = allowedRoles.includes('admin');
       
       if (isLeaderPage) {
-        const roleLower = userRole.toLowerCase();
+        const roleLower = normalizedUserRole;
         if (roleLower.includes('leader') || roleLower.includes('head') || roleLower.includes('manager')) {
           console.log('Custom role', userRole, 'granted leader access based on name');
           return <WrappedComponent {...props} />;
@@ -215,7 +215,7 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
       return <WrappedComponent {...props} />;
     }
 
-    console.log('Access denied for role:', userRole, 'Required:', allowedRoles);
+    console.log('Access denied for role:', userRole, '(normalized:', normalizedUserRole + ') Required:', allowedRoles);
     return (
       <Box sx={{ 
         display: 'flex', 

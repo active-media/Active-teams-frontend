@@ -15,7 +15,7 @@ import { PeopleSection as People } from "./Pages/People";
 import Events from "./Pages/Events";
 import Stats from "./Pages/Stats";
 import Reports from "./Pages/Reports";
-import CellsDrilldown from "./Pages/CellsDrilldown";
+import CellsDrilldown from "./Pages/Cellsdrilldown";
 import ScheduledReports from "./Pages/ScheduledReports";
 import ReportingDashboard from "./Pages/ReportingDashboard";
 import ReportingDashboardLegacy from "./features/reporting/_legacy/ReportingDashboardLegacy";
@@ -27,6 +27,7 @@ import AttendanceModal from "./Pages/AttendanceModal";
 import EventDetails from "./Pages/EventDetails";
 import Login from "./Pages/Login";
 import Signup from "./Pages/Signup";
+import AuthLayout from "./components/AuthLayout"; // shared shell for /login + /signup
 import ForgotPassword from "./components/ForgotPassword";
 import ResetPassword from "./components/ResetPassword";
 import EventRegistrationForm from "./components/EventRegistrationForm";
@@ -53,9 +54,9 @@ const ProtectedReportingDashboardLegacy = withAuthCheck(ReportingDashboardLegacy
 const ProtectedCheckIn = withAuthCheck(ServiceCheckIn, ['admin', 'registrant', 'leaderAt12']);
 const ProtectedDailyTasks = withAuthCheck(DailyTasks, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
 const ProtectedAdmin = withAuthCheck(Admin, ['admin']);
-const ProtectedCreateEvents = withAuthCheck(CreateEvents, ['admin', 'leader', 'leaderAt12']);
-const ProtectedAttendance = withAuthCheck(AttendanceModal, ['admin', 'leader', 'leaderAt12']);
-const ProtectedEventDetails = withAuthCheck(EventDetails, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
+const ProtectedCreateEvents = withAuthCheck(CreateEvents, ['admin', 'leader', 'leaderat12']);
+const ProtectedAttendance = withAuthCheck(AttendanceModal, ['admin', 'leader', 'leaderat12']);
+const ProtectedEventDetails = withAuthCheck(EventDetails, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
 
 function App() {
   const { user, loading, authFetch } = useContext(AuthContext);
@@ -63,7 +64,40 @@ function App() {
   const location = useLocation();
   const profileRefreshDone = useRef(false);
   const [mode, setMode] = useState(() => localStorage.getItem("themeMode") || "light");
-  const theme = useMemo(() => createTheme({ palette: { mode } }), [mode]);
+  const theme = useMemo(
+    () =>
+      createTheme({
+        palette: {
+          mode,
+          primary: {
+            main: mode === "dark" ? "#90caf9" : "#1565c0",
+          },
+          background: {
+            default: mode === "dark" ? "#121212" : "#f5f7fa",
+            paper: mode === "dark" ? "#1e1e1e" : "#ffffff",
+          },
+        },
+        shape: {
+          borderRadius: 10,
+        },
+        typography: {
+          fontFamily: "'DM Sans', sans-serif",
+        },
+        components: {
+          MuiButton: {
+            defaultProps: {
+              disableElevation: true,
+            },
+          },
+          MuiCard: {
+            defaultProps: {
+              elevation: 0,
+            },
+          },
+        },
+      }),
+    [mode],
+  );
 
   const [showSplash, setShowSplash] = useState(true);
   const [splashFinished, setSplashFinished] = useState(false);
@@ -175,7 +209,7 @@ function App() {
     return (
       <SplashScreen
         onFinish={handleSplashFinish}
-        duration={6000}
+        duration={2000}
       />
     );
   }
@@ -189,33 +223,23 @@ function App() {
       <div style={{ display: "flex" }}>
         {user && !hideLayout && <Sidebar mode={mode} setMode={setMode} />}
         
-        <div style={{ flexGrow: 1 }}>
+        <div style={{ flexGrow: 1, minWidth: 0 }}>
           <Routes>
             {/* Public routes */}
-            <Route 
-              path="/login" 
-              element={
-                !user ? (
-                  <Login mode={mode} setMode={setMode} />
-                ) : (
-                  <Navigate to="/" replace />
-                )
-              } 
-            />
-            <Route 
-              path="/signup" 
-              element={
-                !user ? (
-                  <Signup mode={mode} setMode={setMode} />
-                ) : (
-                  <Navigate to="/" replace />
-                )
-              } 
-            />
+<Route element={<AuthLayout mode={mode} setMode={setMode} />}>
+  <Route
+    path="/login"
+    element={!user ? <Login mode={mode} /> : <Navigate to="/" replace />}
+  />
+  <Route
+    path="/signup"
+    element={!user ? <Signup mode={mode} /> : <Navigate to="/" replace />}
+  />
+</Route>
             <Route path="/forgot-password" element={<ForgotPassword mode={mode} />} />
             <Route path="/reset-password" element={<ResetPassword mode={mode} />} />
 
-            {/* Protected routes with role restrictions - UPDATED WITH leaderAt12 */}
+            {/* Protected routes with role restrictions - normalized roles (lowercase) */}
             <Route path="/" element={<ProtectedHome />} />
             <Route path="/admin" element={<ProtectedAdmin />} />
             <Route path="/profile" element={<ProtectedProfile title="Profile" />} />

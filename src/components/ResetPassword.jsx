@@ -42,13 +42,21 @@ const ResetPassword = ({ mode }) => {
     e.preventDefault();
     setError("");
     setMessage("");
-    setLoading(true);
 
-    if (password !== confirm) {
-      setError("Passwords do not match.");
-      setLoading(false);
+    if (!token) {
+      setError("Invalid or expired reset token.");
       return;
     }
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters long.");
+      return;
+    }
+    if (password !== confirm) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setLoading(true);
 
     try {
       await resetPassword(token, password);
@@ -194,7 +202,7 @@ const ResetPassword = ({ mode }) => {
           type="submit"
           variant="contained"
           fullWidth
-          disabled={loading}
+          disabled={loading || !token}
           sx={{
             backgroundColor: mode === "dark" ? "#fff" : "#000",
             color: mode === "dark" ? "#000" : "#fff",
