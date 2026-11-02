@@ -120,7 +120,7 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
 
     const headers =
       activeTab === 1
-        ? ['Name', 'Surname', 'Email', 'Phone', 'Gender', 'Invited By', 'Leader @1', 'Leader @12', 'Leader @144']
+        ? ['Full Name', 'Email', 'Phone', 'Gender', 'Invited By', 'Leader @1', 'Leader @12', 'Leader @144']
         : activeTab === 2
           ? ['Name', 'Surname', 'Email', 'Phone', 'Decision Type', 'Assigned To', 'Status', 'Leader @1', 'Leader @12', 'Leader @144']
           : ['Name', 'Surname', 'Email', 'Phone', 'Leader @1', 'Leader @12', 'Leader @144'];
@@ -128,8 +128,9 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
     const rows = filteredData.map((item) => {
       if (activeTab === 1) {
         return [
-          item.name || '',
-          item.surname || '',
+          // item.name || '',
+          // item.surname || '',
+          item.full_name || '',
           item.email || '',
           item.phone || '',
           item.gender || '',
