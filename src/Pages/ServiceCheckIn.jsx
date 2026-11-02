@@ -2163,7 +2163,6 @@ const mainColumns = useMemo(() => {
         </Grid>
       </Grid>
 
-      </Grid>
       {/* Controls Row */}
       <Box mb={cardSpacing}>
         <Grid container spacing={1} mb={1} alignItems="center">
