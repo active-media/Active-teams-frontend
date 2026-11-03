@@ -44,10 +44,10 @@ const KPI_ICONS = {
 /* Where each KPI box leads. null = page not built yet, so the box renders
    as a disabled "Coming soon" card instead of a dead click. */
 const KPI_ROUTES = {
-  total_attendance: "/reporting/attendance",
+  total_attendance: null,
   active_cells: "/reports/cells_graph",
-  service_target: "/reporting/service-target",
-  twelve_tasks: "/reporting/twelve-tasks",
+  service_target: "/reports/service_target",
+  twelve_tasks: "/reports/twelve_tasks",
   life_class: null,
   school_of_leaders: null,
   plan_40: null,
@@ -464,7 +464,8 @@ export default function ReportingDashboard() {
       if (v) carried.set(k, v);
     });
     const qs = carried.toString();
-    return qs ? `${route}?${qs}` : route;
+    const pathname = qs ? `${route}?${qs}` : route;
+    return { pathname, state: { from: "/reporting/dashboard" } };
   };
 
   const isNetworkError = error && /failed to fetch|networkerror|load failed/i.test(error.message || "");

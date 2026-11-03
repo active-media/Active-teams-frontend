@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Alert, Box, Button, Card, Chip, LinearProgress, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -25,8 +25,9 @@ function saveBlob(blob, filename) {
 }
 
 export default function Reports() {
-  const { authFetch, user } = useContext(AuthContext);
-  const { reportType } = useParams();
+const { authFetch, user } = useContext(AuthContext);
+const { reportType } = useParams();
+const location = useLocation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [catalog, setCatalog] = useState([]);
@@ -124,6 +125,8 @@ export default function Reports() {
   };
 
   const selectedReport = catalog.find((item) => item.report_type === reportType);
+  const backTo = location.state?.from || "/reports";
+  const isDashboardBack = location.state?.from === "/reporting/dashboard";
   if (!reportType) {
     return (
       <Box sx={{ px: { xs: 2, md: 4 }, py: 3, maxWidth: 1440, mx: "auto" }}>
@@ -155,7 +158,9 @@ export default function Reports() {
     <Box sx={{ px: { xs: 2, md: 4 }, py: 3, maxWidth: 1440, mx: "auto" }}>
       <Stack direction={{ xs: "column", md: "row" }} alignItems={{ xs: "stretch", md: "center" }} justifyContent="space-between" spacing={1.5} sx={{ mb: 2 }}>
         <Box>
-          <Button startIcon={<ArrowBackIcon />} onClick={() => navigate("/reports")} sx={{ mb: 0.75 }}>All reports</Button>
+          <Button startIcon={<ArrowBackIcon />} onClick={() => navigate(backTo)} sx={{ mb: 0.75 }}>
+            {isDashboardBack ? "Back to dashboard" : "All reports"}
+          </Button>
           <Typography variant="h4" component="h1" fontWeight={800}>{selectedReport?.title || reportType.replaceAll("_", " ")}</Typography>
           {envelope?.meta?.period?.label && <Typography variant="body2" color="text.secondary">{envelope.meta.period.label}</Typography>}
         </Box>
