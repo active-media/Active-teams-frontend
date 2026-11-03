@@ -453,6 +453,7 @@ export default function ReportingDashboard() {
   const comparison = useMemo(() => getSeries(dashboard, "campus_comparison"), [dashboard]);
   const kpis = useMemo(() => getKpis(dashboard), [dashboard]);
   const table = useMemo(() => getTable(dashboard, "ministry_performance"), [dashboard]);
+  const hasDashboardData = Boolean(dashboard) && (dashboard.kpis?.length || dashboard.series?.length || dashboard.tables?.length);
 
   const campuses = dashboard?.campuses || [];
 
@@ -517,7 +518,7 @@ export default function ReportingDashboard() {
         </Alert>
       )}
 
-      {dashboard && (
+      {hasDashboardData ? (
         <>
           {kpis.length > 0 && (
             <Box sx={{ display: "grid", gap: 2, mb: 2.5, gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(4, 1fr)" } }}>
@@ -536,9 +537,9 @@ export default function ReportingDashboard() {
 
           {table && <PerformanceTable table={table} />}
         </>
+      ) : !loading && !error && (
+        <Alert severity="info">No dashboard data is available.</Alert>
       )}
-
-      {!dashboard && !loading && !error && <Alert severity="info">No dashboard data is available.</Alert>}
     </Box>
   );
 }
