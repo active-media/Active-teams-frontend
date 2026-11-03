@@ -148,7 +148,7 @@ function niceMax(value) {
 function formatX(x) {
   if (typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x)) {
     const d = new Date(`${x}T00:00:00`);
-    return d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
   return String(x ?? "");
 }
@@ -205,7 +205,8 @@ export function LineChart({ points }) {
       render={({ pad, innerW, y, height, muted }) => {
         const step = points.length > 1 ? innerW / (points.length - 1) : 0;
         const xy = points.map((p, i) => [pad.left + (points.length > 1 ? i * step : innerW / 2), y(Number(p.y) || 0)]);
-        const labelEvery = Math.ceil(points.length / 6);
+        const maxLabels = Math.max(2, Math.floor(innerW / 56));
+        const labelEvery = Math.ceil(points.length / maxLabels);
         return (
           <>
             <path d={smoothPath(xy)} fill="none" stroke={color} strokeWidth="2.5" />
