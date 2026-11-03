@@ -28,6 +28,8 @@ import { CircularProgress, Box, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { AuthContext } from "../contexts/AuthContext";
 import { useOrgConfig } from "../contexts/OrgConfigContext";
+import {supabase} from '../services/supabase-client'
+
 const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
 const GEOAPIFY_COUNTRY_CODE = (
   import.meta.env.VITE_GEOAPIFY_COUNTRY_CODE || "za"
@@ -1467,6 +1469,9 @@ const AttendanceModal = ({
   const [people, setPeople] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const isFutureSession = event?.date
+    ? new Date(event.date) > new Date()
+    : false;
   const [associateSearch, setAssociateSearch] = useState("");
   const [isLoadingPeople, setIsLoadingPeople] = useState(false);
   const [showAddPersonModal, setShowAddPersonModal] = useState(false);
@@ -1479,6 +1484,10 @@ const AttendanceModal = ({
     [],
   );
   const [preloadedPeople, setPreloadedPeople] = useState([]);
+  const [peoplePage, setPeoplePage] = useState(1);
+  const [peopleHasMore, setPeopleHasMore] = useState(false);
+  const [peopleTotal, setPeopleTotal] = useState(0);
+  const [isLoadingMorePeople, setIsLoadingMorePeople] = useState(false);
 
   // ─── NEW: flag to prevent duplicate consolidation calls if Save is clicked twice ───
   const [consolidationsCreated, setConsolidationsCreated] = useState(false);
@@ -1527,9 +1536,8 @@ const AttendanceModal = ({
   };
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
-
-  const isTicketedEvent =
-    event?.isTicketed === true || event?.isTicketed === "true" || false;
+  console.log('full event:', event);
+  const isTicketedEvent =  event.isTicketed;
   // Only sync to Service Check-In for events that actually appear there:
   // ticketed events and global events (services). Never cells, training, etc.
   const syncsServiceCheckIn = shouldSyncServiceCheckIn(event);
@@ -1731,20 +1739,22 @@ const AttendanceModal = ({
   };
 
   // ─── NEW: Fire POST /consolidations for a single person ───
-  const createCellConsolidation = async ({ person, decisionType, eventId }) => {
-    const assignedTo = resolveAssignedTo(person);
+  const createCellConsolidation = async ({ person, decisionType, eventId, session_id }) => {
+    //logic to get assigned person's details:
+    const assignedTo = resolveAssignedTo(person) || event?.eventLeaderName
 
     if (!assignedTo) {
       console.warn(
-        `No leader found for ${person.fullName} — skipping consolidation`,
+        `No leader found for ${person.fullName} — assigning consolidation to event leader`,
       );
-      return { success: false, skipped: true, name: person.fullName };
+      
+
     }
 
     const nameParts = (person.fullName || "").trim().split(" ");
     const personName = nameParts[0] || "";
     const personSurname = nameParts.slice(1).join(" ") || "";
-
+    console.log("LOOK HERE!",event)
     const payload = {
       person_name: person.name || personName,
       person_surname: person.surname || personSurname,
@@ -1760,6 +1770,10 @@ const AttendanceModal = ({
         (l) => l && l.trim() !== "",
       ),
       notes: "",
+      person_id: person.person_id || person.id,
+      session_id: session_id || "",
+      event_leader_name: event.eventLeaderName,
+      event_leader_email: event.eventLeaderEmail
     };
 
     const response = await authFetch(`${BACKEND_URL}/consolidations`, {
@@ -1890,18 +1904,26 @@ const AttendanceModal = ({
       clearTimeout(ticketSaveTimers.current[person.id]);
     ticketSaveTimers.current[person.id] = setTimeout(() => {
       ticketSaveTimers.current[person.id] = null;
-      const overrideMap = {
-        ...attendeeTicketInfo,
-        [person.id]: nextTicket,
-      };
-      saveAllAttendees(
-        persistentAttendeesRef.current || [],
-        overrideMap,
-        true,
-      )
+      const token = localStorage.getItem("token");
+      authFetch(`${BACKEND_URL}/update_attendee_price_tier_info`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          person_id: person.id,
+          event_id: event.event_id,
+          priceName: nextTicket.priceName,
+          price: nextTicket.price,
+          ageGroup: nextTicket.ageGroup,
+          paymentMethod: nextTicket.paymentMethod,
+          paid: nextTicket.paid || 0,
+        }),
+      })
         .catch((err) => {
-          console.error("Failed to save ticket details:", err);
-          toast.error("Failed to save ticket details");
+          console.error("Failed to update attendee price tier info:", err);
+          toast.error("Failed to update attendee price tier info");
         })
         .finally(() => {
           pendingTicketSaveIds.current.delete(person.id);
@@ -2134,6 +2156,7 @@ const AttendanceModal = ({
   };
 
   const loadPersistentAttendees = async (eventId) => {
+    
     if (!eventId || eventId === "undefined") {
       console.error("Invalid eventId:", eventId);
       return;
@@ -2142,9 +2165,26 @@ const AttendanceModal = ({
     try {
       const token = localStorage.getItem("token");
 
+      // 1. Build the query string dynamically
+      const queryParams = new URLSearchParams({
+        event_name: event.eventName,
+        session_id: event.session_id,
+        event_leader: event.eventLeaderName,
+        leader_at_12: event.leader12,
+        event_type: event.eventType
+      }).toString();
+    
+      const event_id= event.event_id;
+      console.log("PAYLOAD?",event)
+
+      // 2. Append it to your endpoint URL
       const response = await authFetch(
-        `${BACKEND_URL}/events/${eventId}/persistent-attendees`,
-        { headers: { Authorization: `Bearer ${token}` } },
+        `${BACKEND_URL}/events/${event_id}/persistent-attendees?${queryParams}`,
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`,
+          }
+        }
       );
 
       if (!response.ok) {
@@ -2154,7 +2194,19 @@ const AttendanceModal = ({
 
       const data = await response.json();
 
+      console.log("THE EVENT",event)
+
       const persistentList = data.persistent_attendees || [];
+      const checkedInList = data.attendees || [];
+      // console.log("PERSISTENT LIST:", persistentList);
+      // console.log("CHECKED-IN LIST:", checkedInList);
+
+      setPersistentCommonAttendees(persistentList);
+
+      const isCompleted = true
+        event.status === "complete" ||
+        event.status === "did_not_meet";
+
       const attendanceEventId = getAttendanceEventId(event) || eventId;
 
       // Door check-ins only matter for events that actually sync with Service
@@ -2185,11 +2237,11 @@ const AttendanceModal = ({
         status === "complete" ||
         status === "did_not_meet" ||
         status === "closed";
-      const checkedInList = liveResponseOk
-        ? liveCheckedInList
-        : isCaptured
-          ? data.checked_in_attendees || []
-          : [];
+        // const checkedInList = liveResponseOk
+        //   ? liveCheckedInList
+        //   : isCaptured
+        //     ? data.checked_in_attendees || []
+        //     : [];
 
       setPersistentCommonAttendees(persistentList);
 
@@ -2198,22 +2250,25 @@ const AttendanceModal = ({
         if (att.id) newCheckedIn[att.id] = false;
       });
 
-      checkedInList.forEach((att) => {
-        const id = att.id || att._id || att.person_id;
-        if (id) newCheckedIn[id] = true;
-      });
+      if (isCompleted && event.status !== "did_not_meet") {
+        checkedInList.forEach((att) => {
+          if (att.id) newCheckedIn[att.id] = true;
+        });
+      }
+      
       setCheckedIn(newCheckedIn);
 
       const newDecisions = {};
       const newDecisionTypes = {};
 
-      checkedInList.forEach((att) => {
-        const id = att.id || att._id || att.person_id;
-        if (id && att.decision) {
-          newDecisions[id] = true;
-          newDecisionTypes[id] = att.decision;
-        }
-      });
+      if (isCompleted && event.status !== "did_not_meet") {
+        checkedInList.forEach((att) => {
+          if (att.id && att.decision) {
+            newDecisions[att.id] = true;
+            newDecisionTypes[att.id] = att.decision;
+          }
+        });
+      }
 
       setDecisions(newDecisions);
       setDecisionTypes(newDecisionTypes);
@@ -2344,7 +2399,7 @@ const AttendanceModal = ({
     try {
       const token = localStorage.getItem("access_token");
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await authFetch(`${BACKEND_URL}/people?perPage=5000`, {
+      const res = await authFetch(`${BACKEND_URL}/people/paginated?page=1&perPage=100`, {
         headers,
       });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -2446,47 +2501,29 @@ const AttendanceModal = ({
   }, [persistentCommonAttendees]);
 
   const fetchPeople = useCallback(
-    (q) => {
-      const query = (q || "").trim().toLowerCase();
+    (q, page = 1, append = false) => {
+      const query = (q || "").trim();
 
-      if (!query) {
-        const source =
-          preloadedPeople.length > 0
-            ? preloadedPeople
-            : window.globalPeopleCache?.data || [];
-        setPeople(source.slice(0, 50));
-        setIsSearching(false);
-        return;
+      if (page === 1) {
+        setIsSearching(true);
+      } else {
+        setIsLoadingMorePeople(true);
       }
 
-      const cachedData =
-        preloadedPeople.length > 0
-          ? preloadedPeople
-          : window.globalPeopleCache?.data || [];
+      const params = new URLSearchParams({
+        page: String(page),
+        perPage: "50",
+      });
+      if (query) params.set("name", query);
 
-      if (cachedData.length > 0) {
-        const cachedResults = cachedData
-          .filter((p) => (p.searchText || "").includes(query))
-          .slice(0, 100);
-
-        if (cachedResults.length > 0) {
-          setPeople(cachedResults);
-          setIsSearching(false);
-          return;
-        }
-      }
-      setIsSearching(true);
-      authFetch(
-        `${BACKEND_URL}/people?name=${encodeURIComponent(q)}&perPage=200`,
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-          },
+      authFetch(`${BACKEND_URL}/people/paginated?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
         },
-      )
+      })
         .then((res) => res.json())
         .then((data) => {
-          const arr = data.results || data.people || [];
+          const arr = data.results || [];
           const formatted = arr.map((p) => {
             const leader1 =
               p["Leader @1"] ||
@@ -2515,6 +2552,7 @@ const AttendanceModal = ({
 
             return {
               id: p._id,
+              person_id:p.person_id,
               fullName: `${p.Name || ""} ${p.Surname || ""}`.trim(),
               email: p.Email || "",
               leader1: leader1,
@@ -2527,13 +2565,33 @@ const AttendanceModal = ({
                 `${p.Name || ""} ${p.Surname || ""} ${p.Email || ""} ${leader1} ${leader12} ${leader144} ${leader1728}`.toLowerCase(),
             };
           });
-          setPeople(formatted);
+          setPeople((prev) => (append ? [...prev, ...formatted] : formatted));
+          setPeoplePage(page);
+          setPeopleHasMore(Boolean(data.hasMore));
+          setPeopleTotal(data.total || 0);
         })
-        .catch(() => setPeople([]))
-        .finally(() => setIsSearching(false));
+        .catch(() => {
+          if (!append) setPeople([]);
+        })
+        .finally(() => {
+          setIsSearching(false);
+          setIsLoadingMorePeople(false);
+        });
     },
-    [preloadedPeople, authFetch, BACKEND_URL],
+    [authFetch, BACKEND_URL],
   );
+
+  const loadMorePeople = useCallback(() => {
+    if (isLoadingMorePeople || isSearching || !peopleHasMore) return;
+    fetchPeople(associateSearch, peoplePage + 1, true);
+  }, [
+    associateSearch,
+    peoplePage,
+    peopleHasMore,
+    isLoadingMorePeople,
+    isSearching,
+    fetchPeople,
+  ]);
 
   useEffect(() => {
     setIsSearching(true);
@@ -2608,7 +2666,7 @@ const AttendanceModal = ({
             const headers = { Authorization: `Bearer ${token}` };
 
             const res = await authFetch(
-              `${BACKEND_URL}/people/all-with-fields?perPage=200`,
+              `${BACKEND_URL}/people/paginated?page=1&perPage=200`,
               {
                 headers,
               },
@@ -2618,6 +2676,8 @@ const AttendanceModal = ({
             const data = await res.json();
 
             const peopleArray = data.results || data.people || [];
+            setPeopleHasMore(Boolean(data.hasMore));
+            setPeopleTotal(data.total || 0);
 
             const formatted = peopleArray.map((person) => {
               const fullName =
@@ -2680,7 +2740,7 @@ const AttendanceModal = ({
     }
   }, [activeTab, preloadedPeople.length]);
 
-  const handleCheckIn = (id) => {
+  const handleCheckIn = async (id) => {
     setCheckedIn((prev) => {
       const isNowChecked = !prev[id];
       const newState = { ...prev, [id]: isNowChecked };
@@ -2697,76 +2757,54 @@ const AttendanceModal = ({
       return newState;
     });
     const isNowChecked = !checkedIn[id];
-    const nextChecked = { ...checkedIn, [id]: isNowChecked };
-    const checkedInSnapshots = (persistentAttendeesRef.current || [])
-      .filter((p) => p.id && nextChecked[p.id])
-      .map((p) => ({
-        id: p.id,
-        name: p.name || p.fullName || "",
-        surname: p.surname || "",
-        fullName: p.fullName || p.name || "",
-        email: p.email || "",
-        phone: p.phone || "",
-        leader12: p.leader12 || "",
-        leader144: p.leader144 || "",
-        decision: decisions[p.id] ? decisionTypes[p.id] || "" : "",
-        priceName: p.priceName || "",
-        price: p.price || 0,
-        ageGroup: p.ageGroup || "",
-        paymentMethod: p.paymentMethod || "",
-        paid: p.paidAmount ?? p.paid ?? 0,
-      }));
-    if (isNowChecked) {
-      if (isTicketedEvent) {
-        setAttendeeTicketInfo((prevTicket) => {
-          if (!prevTicket[id] || !prevTicket[id].priceName) {
-            const person = getAllCommonAttendees().find((p) => p.id === id);
-            if (person && person.priceName) {
-              return {
-                ...prevTicket,
-                [id]: {
-                  priceName: person.priceName,
-                  price: person.price || 0,
-                  ageGroup: person.ageGroup || "",
-                  paymentMethod: person.paymentMethod || "Cash",
-                  paidAmount: person.paidAmount || 0,
-                },
-              };
-            }
-          }
-          return prevTicket;
-        });
+
+    // Determine the person object from common attendees
+    const person = getAllCommonAttendees().find((p) => p.id === id) || {
+      id,
+      fullName: id,
+    };
+
+    try {
+      const token = localStorage.getItem("access_token");
+     
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      // Use the /events/check_in endpoint to add/remove the individual person
+      const response = await authFetch(
+        `${BACKEND_URL}/update_check_in_status`,
+        {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({
+            event_id: event?.event_id || event?.id || "",
+            session_id: event?.session_id,
+            event_type: event?.eventType || event?.event_type_name || "Cells",
+            ...person,
+            checked_in: isNowChecked,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `Check-in ${isNowChecked ? "failed" : "removed"} error`);
       }
 
-      const personData = getAllCommonAttendees().find((p) => p.id === id) || {
-        id,
-        fullName: id,
-      };
-      syncServiceCheckIn(personData, true).catch((error) => {
-        console.warn("Service check-in sync failed:", error);
-      });
-      saveAllAttendees(
-        persistentAttendeesRef.current || [],
-        null,
-        true,
-        checkedInSnapshots,
-      ).catch(() => {});
-      toast.success("Person checked in for this week");
-    } else {
-      const personData = getAllCommonAttendees().find((p) => p.id === id) || {
-        id,
-        fullName: id,
-      };
-      syncServiceCheckIn(personData, false).catch((error) => {
-        console.warn("Service check-in remove sync failed:", error);
-      });
-      saveAllAttendees(
-        persistentAttendeesRef.current || [],
-        null,
-        true,
-        checkedInSnapshots,
-      ).catch(() => {});
-      toast.warning("Person unchecked for this week");
+      const result = await response.json();
+      console.log("Check-in result:", result);
+
+      // Update local state based on response
+      if (isNowChecked) {
+        toast.success(result.message || "Person checked in for this week");
+      } else {
+        toast.warning(result.message || "Person unchecked for this week");
+      }
+    } catch (error) {
+      console.error("Failed to check-in/out person:", error);
+      toast.error(error.message || "Failed to check-in/out person");
     }
   };
 
@@ -2784,7 +2822,8 @@ const AttendanceModal = ({
   ) => {
     if (!event) return false;
 
-    let eventId = getAttendanceEventId(event);
+    let eventId = event?.event_id
+    // let eventId = getAttendanceEventId(event);
 
     if (!eventId || eventId === "undefined") {
       console.error(
@@ -2832,6 +2871,7 @@ const AttendanceModal = ({
             ...(checkedInOverride !== null && {
               checked_in_attendees: checkedInOverride,
             }),
+            "event_type": event?.event_type_name || "cells"
           }),
         },
       );
@@ -2867,15 +2907,36 @@ const AttendanceModal = ({
       return;
     }
 
+    //temp solution:
+      const queryParams = new URLSearchParams({
+        email: person.email,
+        full_name: person.fullName
+      }).toString();
+
+     const token = localStorage.getItem("token"); 
+     const response = await authFetch(
+        `${BACKEND_URL}/get_person_uuid?${queryParams}`,
+        { 
+          headers: { 
+            Authorization: `Bearer ${token}`,
+          }
+        }
+      );
+
+      const data = await response.json();
+   
+    
+    console.log("PERSON ID",data)
     const personWithLeaders = {
-      id: person.id,
-      fullName: person.fullName,
+      id: data,
+      person_id:data,
+      full_name: person.fullName,
       email: person.email,
       leader12: person.leader12 || "",
       leader144: person.leader144 || "",
       phone: person.phone || "",
-      invitedBy: person.invitedBy || "",
-      uniqueKey: `${person.id}_${Date.now()}`,
+      // invitedBy: person.invitedBy || "",
+      // uniqueKey: `${person.id}_${Date.now()}`,
       ...(isTicketedEvent && {
         priceName: "",
         price: 0,
@@ -2886,6 +2947,7 @@ const AttendanceModal = ({
     };
 
     const updatedAttendees = [...persistentCommonAttendees, personWithLeaders];
+    console.log("NEW ASSOCIATE", personWithLeaders);
     setPersistentCommonAttendees(updatedAttendees);
     setCheckedIn((prev) => ({ ...prev, [person.id]: false }));
 
@@ -2906,10 +2968,36 @@ const AttendanceModal = ({
     }
 
     toast.success(`${person.fullName} added to attendees list`);
-    saveAllAttendees(updatedAttendees, attendeeTicketInfo).catch((error) => {
-      console.error("Background save failed:", error);
+    try {
+      const payload = {
+        "associate": true,
+        "attendee":personWithLeaders,
+        "session_id": event?.session_id,
+        "event_name": event?.event_name,
+        "event_type": event?.eventType || "cells"
+      }
+ 
+      const response = await authFetch(
+          `${BACKEND_URL}/events/${event?.event_id}/persistent-attendees`,
+          { method: "PUT",
+            headers: { 
+              Authorization: `Bearer ${token}`,
+              // "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+          }
+        );
+        if (!response.ok){
+          toast.error("Failed to save to database, but person is added locally");
+        }
+    }catch(e){
       toast.error("Failed to save to database, but person is added locally");
-    });
+    }
+    // save new associated person
+    // saveAllAttendees([personWithLeaders], attendeeTicketInfo).catch((error) => {
+    //   console.error("Background save failed:", error);
+    //   
+    // });
   };
 
   const handleRemoveAttendee = async (personId, personName) => {
@@ -2918,6 +3006,7 @@ const AttendanceModal = ({
         (p) => p.id !== personId,
       );
       setPersistentCommonAttendees(updatedAttendees);
+      console.log("HEReeeE",personId)
 
       setCheckedIn((prev) => {
         const newState = { ...prev };
@@ -2944,14 +3033,34 @@ const AttendanceModal = ({
           return newState;
         });
       }
-
-      const success = await saveAllAttendees(updatedAttendees);
-
-      if (success) {
-        toast.success(`${personName} removed from attendees`);
-      } else {
-        toast.error("Failed to remove attendee from database");
+      toast.success("Removed associated attendee")
+      try {
+      const payload = {
+        "associate": false,
+        "attendee":{"person_id":personId},
+        "session_id": event?.session_id,
+        "event_name": event?.event_name
       }
+      
+      const token = localStorage.getItem("token"); 
+      const response = await authFetch(
+          `${BACKEND_URL}/events/${event?.event_id}/persistent-attendees`,
+          { method: "PUT",
+            headers: { 
+              Authorization: `Bearer ${token}`,
+              // "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+          }
+        );
+        if (!response.ok){
+          toast.error("Failed to save to database, but person is added locally");
+        }
+    }catch(e){
+      console.error("Failed to remove associate",e)
+      toast.error("Failed to save to database, but person is added locally");
+    }
+
     } catch (error) {
       console.error("Error removing attendee:", error);
       toast.error("Error removing attendee");
@@ -2971,14 +3080,15 @@ const AttendanceModal = ({
     }
 
     const combinedMap = new Map();
-
+    
     persistent.forEach((att) => {
       if (att && att.id) {
         const attendeeId = att.id;
         if (attendeeId && !combinedMap.has(attendeeId)) {
           combinedMap.set(attendeeId, {
             id: attendeeId,
-            fullName: att.fullName || att.name || "Unknown Person",
+            person_id: att.person_id || "",
+            fullName: att.fullName || att.full_name || "Unknown Person",
             email: att.email || "",
             leader12: att.leader12 || "",
             leader144: att.leader144 || "",
@@ -3040,11 +3150,16 @@ const AttendanceModal = ({
   ).length;
   console.log("Re-commitment decisions count:", reCommitmentCount);
 
-  const filteredCommonAttendees = getAllCommonAttendees().filter(
-    (person) =>
-      person.fullName.toLowerCase().includes(searchName.toLowerCase()) ||
-      person.email.toLowerCase().includes(searchName.toLowerCase()),
-  );
+  const [filteredCommonAttendees, setFilteredCommonAttendees] = useState([])
+  useEffect(()=>{
+     const filtered = getAllCommonAttendees().filter(
+      (person) =>
+        person.fullName.toLowerCase().includes(searchName.toLowerCase()) ||
+        person.email.toLowerCase().includes(searchName.toLowerCase()),
+    );
+   
+    setFilteredCommonAttendees(filtered);
+  },[persistentCommonAttendees])
 
   const subtotals = isTicketedEvent
     ? computeTicketSubtotals(filteredCommonAttendees, (person) => {
@@ -3066,7 +3181,9 @@ const AttendanceModal = ({
     const attendeesList = Object.keys(checkedIn).filter((id) => checkedIn[id]);
     const finalHeadcount = manualHeadcount ? parseInt(manualHeadcount) : 0;
 
-    const eventId = getAttendanceEventId(event);
+    // const eventId = getAttendanceEventId(event);
+    const eventId = event?.event_id;
+    
 
     if (!eventId) {
       toast.error("Event ID is missing, cannot submit attendance.");
@@ -3097,7 +3214,7 @@ const AttendanceModal = ({
             owing = price;
             change = 0;
           }
-
+          
           const attendee = {
             id: person.id,
             name: person.fullName || "",
@@ -3180,10 +3297,15 @@ const AttendanceModal = ({
         leaderEmail: currentUser?.email || "",
         leaderName:
           `${currentUser?.name || ""} ${currentUser?.surname || ""}`.trim(),
+        leader12: event?.leader12 || "",
         did_not_meet: shouldMarkAsDidNotMeet,
         isTicketed: isTicketedEvent,
         week: get_current_week_identifier(),
         headcount: finalHeadcount,
+        session_id: event?.session_id || "",
+        event_id: event?.event_id || "",
+        event_name: event?.eventName || "",
+        event_type: event?.eventType || event?.event_type_name || "Cells",
       };
 
       console.log("Saving payload:", payload);
@@ -3200,7 +3322,7 @@ const AttendanceModal = ({
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              // Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(payload),
           },
@@ -3236,7 +3358,8 @@ const AttendanceModal = ({
                 const consolidationResult = await createCellConsolidation({
                   person: attendee,
                   decisionType,
-                  eventId,
+                  eventId: event?.event_id || "",
+                  session_id: event?.session_id || ""
                 });
 
                 // 2. Also create the due-date follow-up task (mirrors ServiceCheckIn logic)
@@ -3328,7 +3451,7 @@ const AttendanceModal = ({
     }
   };
 
-  const downloadAttendanceData = (everyone = false) => {
+  const downloadAttendanceData = (everyone = false) => {  
     try {
       const allPeople = getAllCommonAttendees();
       const checkedInIds = Object.keys(checkedIn).filter((id) => checkedIn[id]);
@@ -3573,12 +3696,15 @@ const AttendanceModal = ({
             }),
           };
         }),
-        leaderEmail: currentUser?.email || "",
-        leaderName:
-          `${currentUser?.name || ""} ${currentUser?.surname || ""}`.trim(),
-        did_not_meet: true,
+        leaderEmail:event?.eventLeaderEmail || "",
+        leaderName: event?.eventLeaderName,    
+        leader12: event?.leader12,
+        session_id:event?.session_id,
+         did_not_meet: true,
         isTicketed: isTicketedEvent,
         week: get_current_week_identifier(),
+        event_type: event?.eventType || event?.event_type_name || "Cells",
+        event_name: event?.eventName
       };
 
       let result;
@@ -3593,7 +3719,7 @@ const AttendanceModal = ({
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              // Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(payload),
           },
@@ -3685,6 +3811,7 @@ const AttendanceModal = ({
         person: createdPerson,
         decisionType: "first_time",
         eventId,
+        session_id: event?.session_id || ""
       });
       toast.success(`Consolidation task created for ${createdPerson.fullName}`);
     } catch (err) {
@@ -3810,8 +3937,11 @@ const AttendanceModal = ({
             style={{
               ...styles.radioButton,
               ...(isCheckedIn ? styles.radioButtonChecked : {}),
+              cursor: isFutureSession ? "not-allowed" : "pointer",
             }}
             onClick={() => handleCheckIn(person.id)}
+            disabled={isFutureSession}
+            title={isFutureSession ? "Can't check in until the session happens" : undefined}
           >
             {isCheckedIn && <span style={styles.radioButtonInner}>✓</span>}
           </button>
@@ -3917,6 +4047,11 @@ const AttendanceModal = ({
       alignItems: "center",
       gap: 12,
       flexWrap: "wrap",
+    },
+    subtitle: {
+      margin: "4px 0 0",
+      fontSize: 13,
+      color: theme.palette.text.secondary,
     },
     ticketBadge: {
       background: theme.palette.warning.main,
@@ -4434,11 +4569,14 @@ const AttendanceModal = ({
         <div style={styles.modal}>
           <div style={styles.header}>
             <h2 style={styles.title}>
-              ATTENDANCE
+              Attendance
               {isTicketedEvent && (
                 <span style={styles.ticketBadge}>Ticketed Event</span>
               )}
             </h2>
+            <p style={styles.subtitle}>
+              {event?.eventName || "Event"} {event?.date ? `· ${event.date}` : ""}
+            </p>
             <button
               style={styles.addPersonBtn}
               onClick={() => setShowAddPersonModal(true)}
@@ -4466,7 +4604,7 @@ const AttendanceModal = ({
                   }}
                   onClick={() => setActiveTab(0)}
                 >
-                  CAPTURE ATTENDEES
+                  Capture attendance
                 </button>
                 <button
                   style={{
@@ -4475,7 +4613,7 @@ const AttendanceModal = ({
                   }}
                   onClick={() => setActiveTab(1)}
                 >
-                  ASSOCIATE PERSON
+                  Add people
                 </button>
               </>
             )}
@@ -4615,7 +4753,7 @@ const AttendanceModal = ({
                           const financials = isTicketedEvent
                             ? calculateFinancials(person.id)
                             : null;
-                          const nameParts = (person.fullName || "").split(" ");
+                          const nameParts = (person.fullName || person.full_name || "").split(" ");
                           const firstName = nameParts[0] || "";
                           const lastName = nameParts.slice(1).join(" ") || "";
 
@@ -4808,7 +4946,7 @@ const AttendanceModal = ({
                                           ageGroup: ticketInfo.ageGroup,
                                           paymentMethod:
                                             ticketInfo.paymentMethod || "Cash",
-                                          paidAmount: value,
+                                          paid: value,
                                         });
                                       }}
                                       style={styles.paidInput}
@@ -4849,8 +4987,11 @@ const AttendanceModal = ({
                                     ...(checkedIn[person.id]
                                       ? styles.radioButtonChecked
                                       : {}),
+                                      cursor: isFutureSession ? "not-allowed" : "pointer",
                                   }}
+                                  disabled={isFutureSession}
                                   onClick={() => handleCheckIn(person.id)}
+                                  title={isFutureSession ? "Can't check in until the session happens" : undefined}
                                 >
                                   {checkedIn[person.id] && (
                                     <span style={styles.radioButtonInner}>
@@ -4991,7 +5132,7 @@ const AttendanceModal = ({
                         color: theme.palette.info.main,
                       }}
                     >
-                      {persistentCommonAttendees.length}
+                      {filteredCommonAttendees.length}
                     </div>
                     <div style={styles.statLabel}>Associated People</div>
                   </div>
@@ -5241,7 +5382,7 @@ const AttendanceModal = ({
                           people.map((person) => {
                             const isAlreadyAdded =
                               persistentCommonAttendees.some(
-                                (p) => p.id === person.id,
+                                (p) => p.id === person.person_id,
                               );
                             const nameParts = (person.fullName || "").split(
                               " ",
@@ -5304,13 +5445,52 @@ const AttendanceModal = ({
                     </table>
                   </div>
                 )}
+
+                {peopleHasMore && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "12px 0",
+                    }}
+                  >
+                    <button
+                      onClick={loadMorePeople}
+                      disabled={isLoadingMorePeople}
+                      style={{
+                        padding: "10px 20px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: "#6366f1",
+                        color: "#fff",
+                        cursor: isLoadingMorePeople
+                          ? "not-allowed"
+                          : "pointer",
+                        opacity: isLoadingMorePeople ? 0.6 : 1,
+                        fontSize: 14,
+                        fontWeight: 500,
+                      }}
+                    >
+                      {isLoadingMorePeople ? "Loading..." : "Load more"}
+                    </button>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: theme.palette.text.secondary }}
+                    >
+                      Showing {people.length}
+                      {peopleTotal > 0 ? ` of ${peopleTotal}` : ""}
+                    </Typography>
+                  </div>
+                )}
               </>
             )}
           </div>
 
           <div style={styles.footer}>
             <button style={styles.closeBtn} onClick={onClose}>
-              CLOSE
+              Close
             </button>
 
             <button
@@ -5345,7 +5525,7 @@ const AttendanceModal = ({
                 <polyline points="7 10 12 15 17 10" />
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
-              Download Attendance
+              Download attendance
             </button>
             <button
               onClick={() => downloadAttendanceData(true)}
@@ -5392,22 +5572,28 @@ const AttendanceModal = ({
               }}
             >
               <button
-                style={styles.didNotMeetBtn}
+                style={{
+                  ...styles.didNotMeetBtn,
+                  opacity: isSaving ? 0.7 : 1,
+                  cursor: isSaving || isFutureSession ? "not-allowed" : "pointer",
+                }}
                 onClick={handleDidNotMeet}
-                disabled={isSaving}
+                disabled={isSaving || isFutureSession}
+                title={isFutureSession ? "Can't save until the session happens" : undefined}
               >
-                {isSaving ? "SAVING..." : "DID NOT MEET"}
+                {isSaving ? "Saving..." : "Mark as did not meet"}
               </button>
               <button
                 style={{
                   ...styles.saveBtn,
                   opacity: isSaving ? 0.7 : 1,
-                  cursor: isSaving ? "not-allowed" : "pointer",
+                  cursor: isSaving || isFutureSession ? "not-allowed" : "pointer",
                 }}
                 onClick={handleSave}
-                disabled={isSaving}
+                disabled={isSaving || isFutureSession}
+                title={isFutureSession ? "Can't save until the session happens" : undefined}
               >
-                {isSaving ? "SAVING..." : "SAVE"}
+                {isSaving ? "Saving..." : "Save attendance"}
               </button>
             </div>
           </div>

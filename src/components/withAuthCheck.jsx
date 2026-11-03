@@ -1,11 +1,23 @@
 import React, { useContext, useState, useEffect } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { AuthContext } from "../contexts/AuthContext";
-import { normalizeRole, SYSTEM_ROLES, ROLE_HIERARCHY, getRoleHierarchyLevel } from "../utils/roleNormalizer";
+import { normalizeRole } from "../utils/roleNormalizer";
 import { Box, Typography, Paper, Button, CircularProgress } from "@mui/material";
 import { Block } from "@mui/icons-material";
 
-const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false) => {
+const SYSTEM_ROLES = ['admin', 'leader', 'leaderAt12', 'user', 'registrant'].map(normalizeRole);
+
+const ROLE_HIERARCHY = {
+  registrant: 1,
+  user: 2,
+  leader: 3,
+  leaderat12: 4,
+  leaderat144: 4,
+  admin: 5,
+  supremeadmin: 6,
+};
+
+const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false, strictRoleCheck = false) => {
   return function AuthenticatedComponent(props) {
     const { user, loading, authFetch } = useContext(AuthContext);
     const location = useLocation();
@@ -69,8 +81,18 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
 
     const userRole = user.role;
     const normalizedUserRole = normalizeRole(userRole);
-    const isSupremeAdmin = user.is_supreme_admin || user.email === "tkgenia1234@gmail.com";
+    const isSupremeAdmin = user.is_supreme_admin || normalizedUserRole === "superadmin" || user.email === "plaatjiessamuel98@gmail.com" || user.email === "tkgenia1234@gmail.com";
     const isCustomRole = !SYSTEM_ROLES.includes(normalizedUserRole);
+    const isReportingRoute = location.pathname.startsWith("/reports") || location.pathname.startsWith("/reporting");
+    const normalizedAllowedRoles = allowedRoles.map(normalizeRole);
+
+    if (strictRoleCheck && !normalizedAllowedRoles.includes(normalizedUserRole)) {
+      return <Navigate to="/" replace />;
+    }
+
+    if (isReportingRoute && !isSupremeAdmin && isCustomRole && !normalizedAllowedRoles.includes(normalizedUserRole)) {
+      return <Navigate to="/" replace />;
+    }
 
     if (isSupremeAdmin) {
       console.log('Supreme admin access granted for:', user.email);
@@ -176,17 +198,15 @@ const withAuthCheck = (WrappedComponent, allowedRoles = [], requiresCell = false
       );
     }
 
-    // Check if user role matches allowed roles (with normalization)
-    const normalizedAllowedRoles = allowedRoles.map(normalizeRole);
     if (normalizedAllowedRoles.includes(normalizedUserRole)) {
-      console.log('System role', userRole, '(normalized:', normalizedUserRole + ') access granted');
+      console.log('System role', userRole, 'access granted');
       return <WrappedComponent {...props} />;
     }
 
-    const userLevel = getRoleHierarchyLevel(userRole);
+    const userLevel = ROLE_HIERARCHY[normalizedUserRole] || 0;
     
     const hasHierarchyAccess = allowedRoles.some(role => {
-      const roleLevel = getRoleHierarchyLevel(role);
+      const roleLevel = ROLE_HIERARCHY[normalizeRole(role)] || 0;
       return userLevel >= roleLevel;
     });
     

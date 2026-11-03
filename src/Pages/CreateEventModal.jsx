@@ -111,6 +111,7 @@ const CreateEventModal = ({ open, onClose, user }) => {
 
   return (
     <>
+  
       <Dialog 
         open={open} 
         onClose={handleModalClose} 

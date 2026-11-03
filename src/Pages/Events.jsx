@@ -43,6 +43,7 @@ import EditEventModal from "./EditEventModal";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { AuthContext } from "../contexts/AuthContext";
+import {supabase} from '../services/supabase-client'
 import { normalizeEventAttendance, resolveHeadcount } from "../utils/attendanceLogic";
 
 const formatRecurringDays = (recurringDays) => {
@@ -487,6 +488,69 @@ const formatDate = (date) => {
     .replace(/\//g, " - ");
 };
 
+// Resolve the date-range dropdown into a concrete window. Kept in one place so
+// the backend request and the local filter always describe the same range.
+const resolveDateRangeWindow = (range) => {
+  if (!range || range === "all") return null;
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const addDays = (date, days) => {
+    const next = new Date(date);
+    next.setDate(next.getDate() + days);
+    return next;
+  };
+
+  let start;
+  let endExclusive;
+
+  if (range === "this-week" || range === "last-week") {
+    const mondayOffset = (today.getDay() + 6) % 7; // days since Monday
+    start = addDays(today, -mondayOffset);
+    if (range === "last-week") start = addDays(start, -7);
+    endExclusive = addDays(start, 7);
+  } else if (range === "this-month") {
+    start = new Date(today.getFullYear(), today.getMonth(), 1);
+    // Month-to-date, matching how the local filter has always behaved.
+    endExclusive = addDays(today, 1);
+  } else if (range === "last-month") {
+    start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    endExclusive = new Date(today.getFullYear(), today.getMonth(), 1);
+  } else if (range === "last-3-months") {
+    start = new Date(today);
+    start.setMonth(start.getMonth() - 3);
+    endExclusive = addDays(today, 1);
+  } else {
+    return null;
+  }
+
+  // Never ask for dates after today: end_date is inclusive, so the exclusive
+  // bound is capped at tomorrow.
+  const tomorrow = addDays(today, 1);
+  if (endExclusive > tomorrow) endExclusive = tomorrow;
+
+  return { start, endExclusive };
+};
+
+const toDateParam = (date) => {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+};
+
+// The API takes inclusive start_date/end_date, so the exclusive local bound is
+// stepped back by one day.
+const getApiDateRange = (range) => {
+  const bounds = resolveDateRangeWindow(range);
+  if (!bounds) return {};
+  const lastDay = new Date(bounds.endExclusive);
+  lastDay.setDate(lastDay.getDate() - 1);
+  return {
+    start_date: toDateParam(bounds.start),
+    end_date: toDateParam(lastDay),
+  };
+};
+
 const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
   if (!events || events.length === 0) return [];
 
@@ -601,6 +665,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
   const filteredFields = Object.keys(sampleEvent).filter((key) => {
     const keyLower = key.toLowerCase();
     const excludedFields = [
+      "event_id","session_id",
       "persistent_attendees", "uuid", "did_not_meet", "status", "week_identifier",
       "attendees", "_id", "id", "isoverdue", "attendance", "location", "eventtype",
       "event_type", "eventtypes", "displaydate", "originatedid", "leader12",
@@ -816,7 +881,7 @@ ${xmlCols}
   const fetchEventFull = async (event) => {
 
     try {
-      let eventId = event._id || event.id;
+      let eventId = event.event_id || event.id;
       if (!eventId) return event;
       if (eventId.includes("_")) eventId = eventId.split("_")[0];
       const token = localStorage.getItem("access_token");
@@ -981,7 +1046,7 @@ ${xmlCols}
             </IconButton>
           </Tooltip>
         )}
-        <Tooltip title="Download Attendance (Event)" arrow>
+        <Tooltip title="Download Event Attendance" arrow>
           <IconButton
             onClick={() => downloadEventAttendance(event)}
             size="small"
@@ -1009,13 +1074,14 @@ const isValidObjectId = (id) => {
   return /^[0-9a-fA-F]{24}$/.test(id);
 };
 const Events = () => {
-  const { authFetch, logout } = React.useContext(AuthContext);
+  const { authFetch } = React.useContext(AuthContext);
   const { orgConfig, configLoaded } = useOrgConfig();
   
   // Get user from localStorage immediately (available on login)
   const currentUser = JSON.parse(localStorage.getItem("userProfile")) || {};
   const userOrganization = currentUser?.Organization || currentUser?.organization || "";
   const userOrgId = currentUser?.org_id || "";
+  // alert("userOrgId: " + userOrgId + ", userOrganization: " + userOrganization);
   
   // Determine isActiveTeams immediately from user data
   const isActiveTeams = userOrgId === "active-teams" || userOrganization === "Active Church";
@@ -1091,6 +1157,9 @@ const Events = () => {
   // did-not-meet event until the user manually changed the filter.
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const searchDebounceRef = useRef(null);
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const [selectedDateRange, setSelectedDateRange] = useState("all");
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
@@ -1262,7 +1331,7 @@ ${xmlCols}
 const findEventTypeByName = (typeName, eventTypes = []) => {
     if (!typeName || typeName === "all") {
       return {
-        name: "CELLS",
+        name: "Cells",
         isGlobal: false,
         isTicketed: false,
         hasPersonSteps: true,
@@ -1334,7 +1403,7 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
 
   const fetchEventFull = async (event) => {
     try {
-      let eventId = event._id || event.id;
+      let eventId = event.event_id || event.id;
       if (!eventId) return event;
       if (eventId.includes("_")) eventId = eventId.split("_")[0];
       const token = localStorage.getItem("access_token");
@@ -1501,8 +1570,6 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
       toast.dismiss(TOAST_ID);
     }
   };
-  const paginatedEvents = useMemo(() => events, [events]);
-
   const startIndex = useMemo(() => {
     return totalEvents > 0 ? (currentPage - 1) * rowsPerPage + 1 : 0;
   }, [currentPage, rowsPerPage, totalEvents]);
@@ -1514,13 +1581,24 @@ const allEventTypes = useMemo(() => {
   const typeNames = eventTypes.map((t) => (typeof t === "string" ? t : t.name));
   return typeNames;
 }, [eventTypes]);
+const getEventTypeName = (eventType) => {
+  console.log("normal",eventTypes)
+  return eventTypes.find(et => et.name === eventType)?.name || 'cells';
+};
+
 
 const fetchEventsFilters = (filters) => {
+  // The date picker drives the backend window. "All dates" keeps the page's
+  // default earliest date; any other option sends an explicit start_date and
+  // end_date to whichever endpoint the event type resolves to.
+  const dateRange = getApiDateRange(selectedDateRange);
   const params = {
     page: filters.page || currentPage,
     limit: filters.limit || rowsPerPage,
-    start_date: filters.start_date || DEFAULT_API_START_DATE,
+    start_date: dateRange.start_date || filters.start_date || "2026-10-24",
+    // filters.start_date || DEFAULT_API_START_DATE,
   };
+  if (dateRange.end_date) params.end_date = dateRange.end_date;
 
   // Never send status="all". The backend treats any non-empty status as an exact
   // match against the computed instance status, so "all" would match nothing and
@@ -1532,7 +1610,8 @@ const fetchEventsFilters = (filters) => {
 
   if (filters.search) params.search = filters.search;
   if (filters.event_type) {
-    params.event_type = filters.event_type;
+    
+    params.event_type = getEventTypeName(filters.event_type);
   }
 
   const currentUser = JSON.parse(localStorage.getItem("userProfile")) || {};
@@ -1544,8 +1623,8 @@ const fetchEventsFilters = (filters) => {
   const userSurname =
     currentUser?.surname || userName?.split(" ").slice(1).join(" ") || "";
   let endpoint = `${BACKEND_URL}/events`;
-
   const eventType = filters.event_type || selectedEventTypeFilter;
+  console.log("Fetching events for user:", filters)
     const userOrg = currentUser?.Organization || currentUser?.organization || "";
   const userOrgId = currentUser?.org_id || "";
   const isCellOrg = userOrgId === "active-teams" || userOrg === "Active Church";
@@ -1601,12 +1680,6 @@ const fetchEventsFilters = (filters) => {
         }
 
         try {
-          const token = localStorage.getItem("access_token");
-          if (!token) {
-            logout();
-            window.location.href = "/login";
-            return;
-          }
           const [params, endpoint] = fetchEventsFilters(filters);
 
           const queryString = new URLSearchParams(params).toString();
@@ -1629,10 +1702,17 @@ const fetchEventsFilters = (filters) => {
           const filtered = allEvents;
 
           console.log("Final events to display:", filtered.length);
+          const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
+          eventsCache.current[cacheKey] = filtered;
+          const pageSize = filters.limit || rowsPerPage;
+          const eventCount = data.total_events ?? filtered.length;
+          const page = filters.page || currentPage;
+          const start = (page - 1) * pageSize;
 
-          setEvents(filtered);
-          setTotalEvents(data.total_events || 0);
-          setTotalPages(data.total_pages || 1);
+          setEvents(filtered.slice(start, start + pageSize));
+          console.log("FETCHED EVENTS:",filtered);
+          setTotalEvents(eventCount);
+          setTotalPages(Math.ceil(eventCount / pageSize) || 1);
         } catch (error) {
           console.error(" Fetch error:", error);
           setEvents([]);
@@ -1655,25 +1735,26 @@ const fetchEventsFilters = (filters) => {
         isAdmin,
         isRegistrant,
         viewFilter,
-        logout,
         selectedEventTypeFilter,
         selectedStatus,
+        selectedDateRange,
       ],
     );
 
+const [fetchedEventTypes, setFetchedEventTypes] = useState([]);
 const fetchEventTypes = useCallback(async () => {
   try {
     const token = localStorage.getItem("access_token");
-
-    const response = await authFetch(`${BACKEND_URL}/event-types`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!response.ok) {
-      throw new Error("Failed to fetch event types");
+    const org_id = userOrgId || currentUser?.org_id || "";
+    console.log("Fetching event types for org_id:", org_id);
+    const {data:eventTypesData, error} = await supabase.from('event_types').select('*').eq("org_id",org_id)
+    if (error){
+      console.error("supabase error: ",error.message);
+      throw new Error("supabase error: ",error.message);
     }
+    console.log("Fetched event types:", eventTypesData);
 
-    const eventTypesData = await response.json();
+   
     
     let filteredTypes = eventTypesData.filter((type) => {
       if (isActiveTeams && (type.name === "Cells" || type.name === "CELLS" || type.name?.toLowerCase() === "cells")) {
@@ -2214,6 +2295,7 @@ const getFilteredEventTypes = (allEventTypes) => {
                 typeof type === "string" ? type : type.name || type;
               const isActive = selectedEventTypeFilter === typeName;
               const color = getEventTypeColor(typeName);
+              const name = type.display_name
 
               // Get description from event type object
               const eventTypeObj = eventTypes.find(
@@ -2238,7 +2320,7 @@ const getFilteredEventTypes = (allEventTypes) => {
                   onClick={() => onSelectEventType(typeName)}
                 >
                   <Typography sx={styles.eventTypeName}>
-                    {typeName === "all" ? "All Events" : typeName}
+                    {typeName === "all" ? "All Events" : name}
                   </Typography>
                   <Typography sx={styles.eventTypeDescription}>
                     {description}
@@ -2253,8 +2335,14 @@ const getFilteredEventTypes = (allEventTypes) => {
   };
 
   const clearAllFilters = useCallback(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
     setSearchQuery("");
+    setDebouncedSearchTerm("");
     setIsSearching(false);
+    setSelectedDateRange("all");
+    setCurrentPage(1);
 
     // `events` holds only the rows on screen — one page of `rowsPerPage` —
     // not the result set, and it isn't even in this callback's dependency
@@ -2262,7 +2350,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     // collapsed "1-50 of 134" into "1-50 of 50", and since `rowCount` feeds
     // the DataGrid the page navigation disappeared with it. Restore the real
     // total from the full unfiltered set the loader cached instead.
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
     const fullSet = eventsCache.current[cacheKey];
     if (fullSet?.length) {
       setTotalEvents(fullSet.length);
@@ -2276,10 +2364,11 @@ const getFilteredEventTypes = (allEventTypes) => {
     DEFAULT_API_START_DATE,
     selectedEventTypeFilter,
     selectedStatus,
+    selectedDateRange,
   ]);
 
   const [allCurrentEvents, setAllCurrentEvents] = useState([]);
-  const [isSearching, setIsSearching] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
 
   const fetchAllCurrentEvents = useCallback(async () => {
     try {
@@ -2334,59 +2423,96 @@ const getFilteredEventTypes = (allEventTypes) => {
     DEFAULT_API_START_DATE,
   ]);
 
-  // Refreshing the searchable set when the surrounding filters change *while*
-  // searching. `isSearching` is deliberately NOT a dependency: the searchable
-  // set is loaded by clicking the search bar (see the input's onClick), so
-  // merely starting to type must not trigger a load.
-  useEffect(() => {
-    if (!isSearching) return;
-    fetchAllCurrentEvents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStatus, selectedEventTypeFilter, viewFilter, userRole]);
+  // The events the user already has in the browser for the active filters.
+  // Search must run purely on this local set: the old behaviour refetched a
+  // separate "all current events" list on every click of the search box, so
+  // the rows could change under the user, the request could land after the
+  // first keystroke and wipe the matches, and the loaded page was ignored.
+  const loadedEvents = useMemo(() => {
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
+    const cached = eventsCache.current?.[cacheKey];
+    const cachedList = Array.isArray(cached) ? cached : [];
+    // The cache holds everything fetched for the filter, while `events` holds
+    // the current page and is the freshest copy. Prefer the cache only when it
+    // actually has more rows than the page on screen.
+    const source =
+      cachedList.length > (events?.length || 0) ? cachedList : events;
+    return Array.isArray(source) ? source : [];
+  }, [events, selectedEventTypeFilter, selectedStatus, viewFilter, selectedDateRange]);
 
-  // Pure filter over the set loaded by clicking the search bar. It must stay
+  // Pure filter over the events already loaded in the browser. It must stay
   // free of state writes because it runs inside a useMemo — setting state
   // during render was discarding the result count and the rendered rows
   // could disagree.
   const filterEventsBySearch = (list, searchText) => {
     const trimmedSearch = String(searchText || "").trim();
     if (!trimmedSearch) return list || [];
-    const needle = trimmedSearch.toLowerCase();
+    const terms = trimmedSearch.toLowerCase().split(/\s+/).filter(Boolean);
 
-    return (list || []).filter((event) =>
-      [
-        "Event Name",
-        "eventName",
-        "EventName",
-        "Leader",
-        "eventLeaderName",
-        "EventLeaderName",
-        "Email",
-        "eventLeaderEmail",
-        "EventLeaderEmail",
-        "Leader at 12",
-        "Leader @12",
-        "leader12",
-      ].some(
-        (field) =>
-          typeof event?.[field] === "string" &&
-          event[field].toLowerCase().includes(needle),
-      ),
-    );
+    // Keep this in sync with the columns the page can render. Different event
+    // shapes use different keys (cells use `leader12`, non-cell events use
+    // `eventLeaderName`), so all of them are checked.
+    const searchableFields = [
+      "eventName",
+      "Event Name",
+      "EventName",
+      "name",
+      "eventLeaderName",
+      "Event Leader Name",
+      "EventLeaderName",
+      "leaderName",
+      "Leader",
+      "leader",
+      "eventLeaderEmail",
+      "Event Leader Email",
+      "EventLeaderEmail",
+      "leaderEmail",
+      "Email",
+      "email",
+      "leader1",
+      "Leader @1",
+      "Leader at 1",
+      "leader12",
+      "Leader @12",
+      "Leader at 12",
+      "leader144",
+      "Leader @144",
+      "Leader at 144",
+      "eventType",
+      "Event Type",
+      "event_type",
+    ];
+
+    return (list || []).filter((event) => {
+      if (!event) return false;
+      const haystack = searchableFields
+        .map((field) => event[field])
+        .filter(
+          (value) => typeof value === "string" || typeof value === "number",
+        )
+        .join(" ")
+        .toLowerCase();
+      return terms.every((term) => haystack.includes(term));
+    });
   };
 
-  const searchDebounceRef = useRef(null);
-  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   useEffect(() => {
-    if (searchQuery.trim() === "") {
-      clearAllFilters();
-      setIsSearching(false);
-    } else if (!isSearching) setIsSearching(true);
+    setCurrentPage(1);
 
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
     }
 
+    // Clearing the box should restore the list immediately instead of waiting
+    // for the debounce, and must not reset the other filters (the old handler
+    // called clearAllFilters, which also wiped the selected date range).
+    if (!searchQuery.trim()) {
+      setDebouncedSearchTerm("");
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
     searchDebounceRef.current = setTimeout(() => {
       setDebouncedSearchTerm(searchQuery);
     }, 300);
@@ -2396,25 +2522,62 @@ const getFilteredEventTypes = (allEventTypes) => {
         clearTimeout(searchDebounceRef.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
 
+  const hasActiveSearch = Boolean(isSearching && debouncedSearchTerm.trim());
+
   const filteredEvents = useMemo(() => {
-    if (isSearching === null) return events;
-    if (!debouncedSearchTerm.trim()) return events;
-    return filterEventsBySearch(allCurrentEvents, debouncedSearchTerm);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allCurrentEvents, debouncedSearchTerm, selectedStatus, isSearching]);
+    if (!hasActiveSearch) return events;
+    return filterEventsBySearch(loadedEvents, debouncedSearchTerm);
+  }, [loadedEvents, events, debouncedSearchTerm, hasActiveSearch]);
+
+  const dateFilteredEvents = useMemo(() => {
+    const sourceEvents = hasActiveSearch ? filteredEvents : loadedEvents;
+    const bounds = resolveDateRangeWindow(selectedDateRange);
+    if (!bounds) return sourceEvents;
+
+    return sourceEvents.filter((event) => {
+      if (!event?.date) return false;
+      const dateText = String(event.date);
+      const eventDate = /^\d{4}-\d{2}-\d{2}$/.test(dateText)
+        ? new Date(`${dateText}T00:00:00`)
+        : new Date(dateText);
+      return (
+        !Number.isNaN(eventDate.getTime()) &&
+        eventDate >= bounds.start &&
+        eventDate < bounds.endExclusive
+      );
+    });
+  }, [
+    loadedEvents,
+    filteredEvents,
+    hasActiveSearch,
+    selectedDateRange,
+  ]);
+  const paginatedEvents = useMemo(() => {
+    if (!hasActiveSearch && selectedDateRange === "all") return events;
+    const start = (currentPage - 1) * rowsPerPage;
+    return dateFilteredEvents.slice(start, start + rowsPerPage);
+  }, [
+    currentPage,
+    dateFilteredEvents,
+    events,
+    hasActiveSearch,
+    rowsPerPage,
+    selectedDateRange,
+  ]);
 
   // Keep the result counter in step with the rows. This has to be an effect,
   // not a write inside the memo above: writing state during render discarded
-  // the count. Keying it on filteredEvents also covers the case where the
-  // click-loaded set lands *after* the user's keystroke, which would otherwise
-  // leave the counter stuck on zero.
+  // the count. Keying it on the filtered rows also covers the case where the
+  // loaded set arrives after the user's keystroke.
   useEffect(() => {
-    if (!isSearching) return;
-    setTotalEvents(filteredEvents.length);
-  }, [isSearching, filteredEvents]);
+    if (!hasActiveSearch && selectedDateRange === "all") return;
+    const pages = Math.ceil(dateFilteredEvents.length / rowsPerPage) || 1;
+    setTotalEvents(dateFilteredEvents.length);
+    setTotalPages(pages);
+    setCurrentPage((page) => Math.min(page, pages));
+  }, [dateFilteredEvents, hasActiveSearch, rowsPerPage, selectedDateRange]);
   console.log(
     "issearching",
     isSearching,
@@ -2425,54 +2588,55 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handleRowsPerPageChange = useCallback((e) => {
     const newRowsPerPage = Number(e.target.value);
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+    if (!Number.isInteger(newRowsPerPage) || newRowsPerPage < 1) return;
+
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
     const cached = eventsCache.current[cacheKey];
 
     localStorage.setItem("ev_rows_per_page", String(newRowsPerPage));
     setRowsPerPage(newRowsPerPage);
     setCurrentPage(1);
 
+    if (hasActiveSearch || selectedDateRange !== "all") {
+      setTotalEvents(dateFilteredEvents.length);
+      setTotalPages(Math.ceil(dateFilteredEvents.length / newRowsPerPage) || 1);
+      return;
+    }
+
     if (cached) {
+      setTotalEvents(cached.length);
       setTotalPages(Math.ceil(cached.length / newRowsPerPage) || 1);
       setEvents(cached.slice(0, newRowsPerPage));
+    } else {
+      fetchEvents({ page: 1, limit: newRowsPerPage }, true);
     }
-  }, [selectedEventTypeFilter, selectedStatus, viewFilter]);
+  }, [
+    fetchEvents,
+    dateFilteredEvents.length,
+    hasActiveSearch,
+    selectedDateRange,
+    selectedEventTypeFilter,
+    selectedStatus,
+    viewFilter,
+  ]);
 
 
   const handleCaptureClick = useCallback(async (event) => {
     try {
       const token = localStorage.getItem("access_token");
+      console.log("CAPTURE",event)
       let eventId = event._id || event.id;
       const originalId = eventId;
       if (eventId && eventId.includes("_")) {
         eventId = eventId.split("_")[0];
       }
-
-      if (!eventId || eventId === "undefined") {
-        console.error("handleCaptureClick: no valid ID on event", event);
-        setSelectedEvent(event);
-        setAttendanceModalOpen(true);
-        return;
-      }
-
-      const response = await fetch(`${BACKEND_URL}/events/${eventId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!response.ok) {
-        console.error("Failed to fetch full event, using local event data");
-        setSelectedEvent(event);
-        setAttendanceModalOpen(true);
-        return;
-      }
-      const fullEvent = await response.json();
-      const enrichedEvent = {
-        ...event,
-        ...fullEvent,
-        _id: originalId,
-        original_event_id: eventId,
-      };
-      setSelectedEvent(enrichedEvent);
+      //event object is selected event saved in state
+      setSelectedEvent(event);
       setAttendanceModalOpen(true);
+      return;
+    
+
+
     } catch (err) {
       console.error("Failed to fetch full event:", err);
       setSelectedEvent(event);
@@ -2621,8 +2785,8 @@ const getFilteredEventTypes = (allEventTypes) => {
   const handleAttendanceSubmit = useCallback(
     async (data) => {
       try {
-        const token = localStorage.getItem("access_token");
-        const eventId = getAttendanceEventId(selectedEvent);
+        // const eventId = getAttendanceEventId(selectedEvent);
+        const eventId = selectedEvent?.event_id;
         if (!eventId) {
           throw new Error("No valid event id found for attendance submission");
         }
@@ -2639,6 +2803,8 @@ const getFilteredEventTypes = (allEventTypes) => {
 
         let payload;
 
+        const eventType = selectedEvent?.eventType || selectedEvent?.event_type_name || "Cells";
+
         if (data === "did_not_meet") {
           payload = {
             event_id: eventId,
@@ -2648,6 +2814,7 @@ const getFilteredEventTypes = (allEventTypes) => {
             leaderName,
             did_not_meet: true,
             event_date: eventDate,
+            event_type: eventType,
           };
         } else if (Array.isArray(data)) {
           payload = {
@@ -2658,6 +2825,7 @@ const getFilteredEventTypes = (allEventTypes) => {
             leaderName,
             did_not_meet: false,
             event_date: eventDate,
+            event_type: eventType,
           };
         } else {
           payload = {
@@ -2666,16 +2834,17 @@ const getFilteredEventTypes = (allEventTypes) => {
             leaderEmail,
             leaderName,
             event_date: eventDate,
+            event_type: eventType,
           };
         }
 
-        const response = await fetch(
+
+        const response = await authFetch(
           `${BACKEND_URL.replace(/\/$/, "")}/submit-attendance/${eventId}`,
           {
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(payload),
           },
@@ -2753,6 +2922,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       }
     },
     [
+      authFetch,
       selectedEvent,
       currentUser,
       BACKEND_URL,
@@ -2775,7 +2945,8 @@ const getFilteredEventTypes = (allEventTypes) => {
   const handleEditEvent = useCallback((event) => {
     console.log("THE EVENT",event)
     
-    let eventId = event._id;
+    let eventId = event.event_id;
+    let sessionId = event.session_id || event.sessionId || null;
     let eventDate = event.date;
     if (eventId && eventId.includes("_")) {
       const parts = eventId.split("_");
@@ -2787,6 +2958,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     if (event.isTicketed === true){
       let url = new URL(window.location.href);
       url.searchParams.set("eventId", eventId);
+      url.searchParams.set("sessionId", sessionId);
       window.history.pushState({}, "", url);
       setSelectedEventTypeObj(event)
       setCreateEventModalOpen(true);
@@ -2827,7 +2999,7 @@ const getFilteredEventTypes = (allEventTypes) => {
             }
           }
 
-          const response = await authFetch(`${BACKEND_URL}/events/${eventId}`, {
+          const response = await authFetch(`${BACKEND_URL}/events/${event?.event_id}/${event?.eventName}/${event?.eventType}`, {
             method: "DELETE",
             headers: {
               Authorization: `Bearer ${token}`,
@@ -3226,17 +3398,33 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handlePageChange = useCallback(
     (newPage) => {
-      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+      const page = Math.min(Math.max(newPage, 1), Math.max(totalPages, 1));
+      if (isLoading) return;
+
+      setCurrentPage(page);
+      if (hasActiveSearch || selectedDateRange !== "all") return;
+
+      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
       const cached = eventsCache.current[cacheKey];
 
-      setCurrentPage(newPage);
-
       if (cached) {
-        const skip = (newPage - 1) * rowsPerPage;
+        const skip = (page - 1) * rowsPerPage;
         setEvents(cached.slice(skip, skip + rowsPerPage));
+      } else {
+        fetchEvents({ page, limit: rowsPerPage }, true);
       }
     },
-    [selectedEventTypeFilter, selectedStatus, viewFilter, rowsPerPage]
+    [
+      fetchEvents,
+      hasActiveSearch,
+      isLoading,
+      rowsPerPage,
+      selectedDateRange,
+      selectedEventTypeFilter,
+      selectedStatus,
+      totalPages,
+      viewFilter,
+    ]
   );
   const handleNextPage = useCallback(() => {
     if (currentPage < totalPages && !isLoading) {
@@ -3371,6 +3559,8 @@ const getFilteredEventTypes = (allEventTypes) => {
   const handleSaveEventType = useCallback(
     async (eventTypeData, eventTypeId = null) => {
       try {
+        console.log('DATA',eventTypeData, eventTypeId)
+      
         const token = localStorage.getItem("access_token");
         if (!token) {
           throw new Error("No authentication token found");
@@ -3450,7 +3640,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   useEffect(() => {
     if (!selectedEventTypeFilter || !showingEvents) return;
 
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}`;
     const cached = eventsCache.current[cacheKey];
 
     if (cached) {
@@ -3543,6 +3733,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     showingEvents,
     selectedStatus,
     viewFilter,
+    selectedDateRange,
     isAdmin,
     isRegistrant,
     isRegularUser,
@@ -3567,14 +3758,14 @@ const getFilteredEventTypes = (allEventTypes) => {
     DEFAULT_API_START_DATE,
   }) => {
     const statuses = [
-      {
-        // Neutral option. Without it the three badges below imply a status is
-        // always selected, and the user has no way back to seeing every event
-        // once they have narrowed to one.
-        value: "all",
-        label: "ALL EVENTS",
-        style: styles.statusBadgeAll,
-      },
+      // {
+      //   // Neutral option. Without it the three badges below imply a status is
+      //   // always selected, and the user has no way back to seeing every event
+      //   // once they have narrowed to one.
+      //   value: "all",
+      //   label: "ALL EVENTS",
+      //   style: styles.statusBadgeAll,
+      // },
       {
         value: "incomplete",
         label: "INCOMPLETE",
@@ -3647,6 +3838,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       }
 
       fetchEvents(fetchParams, true);
+     
     };
 
     const canDownload =
@@ -3674,6 +3866,7 @@ const getFilteredEventTypes = (allEventTypes) => {
 
     return (
       <div style={styles.statusBadgeContainer}>
+        
         {statuses.map((status) => (
           <button
             key={status.value}
@@ -3698,7 +3891,35 @@ const getFilteredEventTypes = (allEventTypes) => {
             {status.label}
           </button>
         ))}
-
+        <select
+                aria-label="Filter events by date range"
+                value={selectedDateRange}
+                onChange={(event) => {
+                  // The fetch effect keys on selectedDateRange, so changing the
+                  // range immediately reloads from /events/cells or
+                  // /events/eventsdata with start_date + end_date.
+                  setSelectedDateRange(event.target.value);
+                  setCurrentPage(1);
+                }}
+                style={{
+                  minWidth: isMobileView ? "100%" : "160px",
+                  padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
+                  border: `1px solid ${isDarkMode ? theme.palette.divider : "#ccc"}`,
+                  borderRadius: "4px",
+                  backgroundColor: isDarkMode
+                    ? theme.palette.background.paper
+                    : "#fff",
+                  color: isDarkMode ? theme.palette.text.primary : "#000",
+                  fontSize: isMobileView ? "14px" : "0.95rem",
+                }}
+              >
+                {/* <option value="all">All dates</option> */}
+                <option value="this-week">This week</option>
+                <option value="last-week">Last week</option>
+                <option value="this-month">This month</option>
+                <option value="last-month">Last month</option>
+                <option value="last-3-months">Last 3 months</option>
+              </select>
         {/* Integrated dropdown in download button - only shown when COMPLETE or DID NOT MEET selected */}
         {canDownload && (
           <div
@@ -4012,6 +4233,7 @@ const filteredEventTypes = useMemo(() => {
 
       if (setSearchQuery) setSearchQuery("");
       if (setShowingEvents) setShowingEvents(true);
+   
     };
 
     const eventTypeStyles = externalStyles || {
@@ -4387,7 +4609,7 @@ const getTypeValue = (type) => {
             {showingEvents
               ? "Events"
               : viewMode === "grid"
-                ? "Select Event Type"
+                ? "Select Event Types"
                 : "Event Types"}
           </Typography>
 
@@ -4465,6 +4687,7 @@ const getTypeValue = (type) => {
               </Box>
             )}
           </Box>
+          
         </Box>
         {/* WHEN SHOWING EVENTS - Show back button */}
         {showingEvents && (
@@ -4513,13 +4736,12 @@ const getTypeValue = (type) => {
                 size="small"
                 placeholder="Search by Event Name, Leader, or Email..."
                 value={searchQuery}
-                onClick={fetchAllCurrentEvents}
                 disabled={loading}
                 onChange={(e) => {
                   const value = e.target.value;
                   setSearchQuery(value);
                 }}
-                onKeyPress={(e) => {
+                onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     // Apply straight away rather than waiting out the debounce.
                     // The result counter is kept in sync by the effect above.
@@ -4574,6 +4796,8 @@ const getTypeValue = (type) => {
                   },
                 }}
               />
+
+              
 
               <Button
                 variant="outlined"
@@ -4751,7 +4975,7 @@ const getTypeValue = (type) => {
                         />
                       </>
                     ))
-                    : filteredEvents.map((event) => (
+                    : paginatedEvents.map((event) => (
                       <>
                         <MobileEventCard
                           key={event._id}
@@ -4999,7 +5223,7 @@ const getTypeValue = (type) => {
                               "data-recurring": isRecurring,
                             };
                           })
-                          : filteredEvents.map((event, idx) => {
+                          : paginatedEvents.map((event, idx) => {
                             const id =
                               event._id || event.id || event.UUID || idx;
 
@@ -5018,7 +5242,7 @@ const getTypeValue = (type) => {
                       }
                       columns={[
                         ...generateDynamicColumns(
-                          !isSearching ? paginatedEvents : filteredEvents,
+                          paginatedEvents,
                           isOverdue,
                           selectedEventTypeFilter,
                         ),
@@ -5385,7 +5609,10 @@ const getTypeValue = (type) => {
           return typeName.toLowerCase().includes(eventTypeSearch.toLowerCase());
         })
         .map((type) => {
+          //HEREEEEEEEEEEEEEEEEEEE
           const typeName = typeof type === "string" ? type : type.name || type;
+          const eventTypeCategory = eventTypes.find((et) => et.name?.toLowerCase() === typeName.toLowerCase())?.event_type_category || "small_gatherings";
+          const name = eventTypes.find((t) => t.name === typeName)?.name;
           const isAllCells = typeName === "all";
           const eventTypeObj = isAllCells 
             ? { name: "all", description: "Gatherings for discipleship, community and spiritual growth" }
@@ -5396,14 +5623,11 @@ const getTypeValue = (type) => {
 
           const getEventTypeColor = (type) => {
             const colors = {
-              "Global Events": "#007bff",
-              "Life Class": "#28a745",
-              "Testing Recurring": "#6f42c1",
-              Workshop: "#fd7e14",
-              Conference: "#dc3545",
-              Service: "#17a2b8",
-              "Testing Recurring Days": "#e83e8c",
-              "All Cells": "#6c757d",
+              "small_gatherings": "#007bff",
+              "training": "#28a745",
+              "ticketed": "#6f42c1",
+              "service": "#e83e8c",
+          
             };
             return colors[type] || "#007bff";
           };
@@ -5419,7 +5643,7 @@ const getTypeValue = (type) => {
                 padding: "12px",
                 cursor: "pointer",
                 border: `1px solid ${isDarkMode ? theme.palette.divider : "#e0e0e0"}`,
-                borderLeft: `4px solid ${getEventTypeColor(typeName)}`,
+                borderLeft: `4px solid ${getEventTypeColor(eventTypeCategory)}`,
                 transition: "all 0.2s ease",
                 display: "flex",
                 flexDirection: "column",
@@ -5433,13 +5657,14 @@ const getTypeValue = (type) => {
                   borderColor: isDarkMode
                     ? theme.palette.divider
                     : "#e0e0e0",
-                  borderLeftColor: getEventTypeColor(typeName),
+                  borderLeftColor: getEventTypeColor(eventTypeCategory),
                 },
               }}
             >
+              
               <Box
                 onClick={() => {
-                  setSelectedEventTypeFilter(typeName);
+                  setSelectedEventTypeFilter(name);
                   setShowingEvents(true);
                   setCurrentPage(1);
 
@@ -5449,8 +5674,8 @@ const getTypeValue = (type) => {
                     start_date: DEFAULT_API_START_DATE,
                     event_type: typeName === "all" ? "CELLS" : typeName,
                   };
-
-                  fetchEvents(fetchParams, true);
+                  console.log('FETCH PARAMS', fetchParams,name,typeName);
+                  // fetchEvents(fetchParams, true);
                 }}
                 sx={{
                   width: "100%",
@@ -5475,7 +5700,7 @@ const getTypeValue = (type) => {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {typeName === "all" ? "ALL CELLS" : typeName}
+                  {typeName === "all" ? "ALL CELLS" : name}
                 </Typography>
 
                 <Box
@@ -5510,7 +5735,7 @@ const getTypeValue = (type) => {
                   sx={{
                     height: "3px",
                     width: "100%",
-                    backgroundColor: getEventTypeColor(typeName),
+                    backgroundColor: getEventTypeColor(eventTypeCategory),
                     borderRadius: "2px",
                     marginTop: "6px",
                     opacity: 0.5,
@@ -5603,7 +5828,7 @@ const getTypeValue = (type) => {
                     const typeName =
                       typeof type === "string" ? type : type.name || type;
                     const isAllCells = typeName === "all";
-
+                    const eventTypeCategory = eventTypes.find((et) => et.name?.toLowerCase() === typeName.toLowerCase())?.event_type_category || "small_gatherings";
                     const eventTypeObj = eventTypes.find(
                       (et) => et.name?.toLowerCase() === typeName.toLowerCase(),
                     ) || { name: typeName };
@@ -5612,20 +5837,18 @@ const getTypeValue = (type) => {
                     const description = eventTypeObj.description || "";
                     console.log("Rendering event type:", typeName, "with description:", description);
 
-                    const getEventTypeColor = (typeName) => {
+                     const getEventTypeColor = (type) => {
                       const colors = {
-                        "Global Events": "#007bff",
-                        "Life Class": "#28a745",
-                        "Testing Recurring": "#6f42c1",
-                        Workshop: "#fd7e14",
-                        Conference: "#dc3545",
-                        Service: "#17a2b8",
-                        "All Cells": "#6c757d",
+                        "small_gatherings": "#007bff",
+                        "training": "#28a745",
+                        "ticketed": "#6f42c1",
+                        "service": "#e83e8c",
+                    
                       };
-                      return colors[typeName] || "#007bff";
+                      return colors[type] || "#007bff";
                     };
 
-                    const color = getEventTypeColor(typeName);
+                    const color = getEventTypeColor(eventTypeCategory);
 
                     return (
                       <Box
@@ -6027,7 +6250,7 @@ const getTypeValue = (type) => {
             >
               <CreateEvents
                 key={selectedEventTypeFilter}
-                user={currentUser}
+                user={currentUser} 
                 isModal={true}
                 onClose={handleCloseCreateEventModal}
                 selectedEventTypeObj={findEventTypeByName(
