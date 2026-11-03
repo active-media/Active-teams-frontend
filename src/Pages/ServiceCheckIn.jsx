@@ -1894,9 +1894,9 @@ function ServiceCheckIn() {
   }
 
   const handleViewEventDetails = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "attendance", data: data || [] }); }, []);
-  const handleViewNewPeople = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "newPeople", data: data || [] }); }, []);
-  const handleViewConsolidated = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "consolidated", data: data || [] }); }, []);
-  const handleViewEventStats = useCallback(async (row) => {
+  const handleViewNewPeople = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "newPeople", data: data || [] });handleViewEventStats(event,"newPeople") }, [] );
+  const handleViewConsolidated = useCallback((event, data) => { setEventHistoryModal({ open: true, event, type: "consolidated", data: data || [] });handleViewEventStats(event,"consolidated") }, []);
+  const handleViewEventStats = useCallback(async (row,type="attendance") => {
     const sessionId = row?.session_id
     if (!sessionId) {
       toast.error("This event does not have a session id for stats.");
@@ -1904,7 +1904,7 @@ function ServiceCheckIn() {
     }
 
     try {
-      setEventHistoryModal({ open: true, event: row, type: "stats", data: [], isLoading: true });
+      setEventHistoryModal({ open: true, event: row, type: type, data: [], isLoading: true });
       const response = await authFetch(`${BASE_URL}/service-checkin/events-history?session_id=${encodeURIComponent(sessionId)}`);
       const payload = await response.json();
       if (!response.ok) {
@@ -1915,9 +1915,9 @@ function ServiceCheckIn() {
       setEventHistoryModal({
         open: true,
         event: { ...row, eventName: row?.eventName || eventData?.event_name || "Event" },
-        type: "stats",
+        type: type,
         data: eventData,
-        isLoading: false,
+        // isLoading: false,
       });
     } catch (error) {
       console.error("Failed to fetch event stats", error);

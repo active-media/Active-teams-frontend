@@ -153,6 +153,7 @@ const Signup = ({ onSignup, mode }) => {
 
   const [form, setForm] = useState(initialForm);
   const [errors, setErrors] = useState({});
+  const [errorMessage, setErrorMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
   const [organizations, setOrganizations] = useState([]);
@@ -393,19 +394,25 @@ const Signup = ({ onSignup, mode }) => {
     setLoading(true);
 
     try {
-      const { error: authError } = await supabase.auth.signUp({
-        email: form.email,
-        password: form.password,
-      });
-
-      if (authError) {
-        const message =
-          authError.code === "weak_password" ||
-          /password should contain/i.test(authError.message || "")
-            ? "Your password does not meet the requirements in the checklist."
-            : authError.message || "Signup failed.";
-        toast.error(message, toastOptions);
+      // const { error: authError } = await supabase.auth.signUp({
+      //   email: form.email,
+      //   password: form.password,
+      // });
+      const url = `${import.meta.env.VITE_BACKEND_URL}/signup`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(form),
+      }); 
+      const authResult = await res.json();
+      console.log("Signup response:", authResult);
+      if (!res.ok || authResult.error) {
+        const message = authResult.detail || "Signup failed.";
+        // toast.error(message, toastOptions);
         setLoading(false);
+        setErrorMessage( message);
         return;
       }
 
@@ -932,6 +939,11 @@ const Signup = ({ onSignup, mode }) => {
           {hasErrors && (
             <Alert severity="error" sx={{ borderRadius: 2 }}>
               Please fix the highlighted errors above.
+            </Alert>
+          )}
+          {errorMessage && (
+            <Alert severity="error" sx={{ borderRadius: 2 }}>
+              {errorMessage}
             </Alert>
           )}
 
