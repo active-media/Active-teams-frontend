@@ -1,121 +1,97 @@
-import { useContext, useEffect, useState, useCallback, useRef } from "react";
-import { Phone, UserPlus, Plus } from "lucide-react";
+import { useContext, useEffect, useState, useCallback, useMemo } from "react";
+import { Phone, Plus, Filter, X, Check, Search, Users, MoreVertical, ChevronDown, MapPin, Calendar } from "lucide-react";
 import { useTheme } from "@mui/material/styles";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { AuthContext } from "../contexts/AuthContext";
 import { useTaskUpdate } from "../contexts/TaskUpdateContext";
-const CACHE_DURATION = 30 * 60 * 1000;
-const normalizePerson = (raw) => {
-  const fullName = (raw.FullName || raw.fullName || "").toString().trim();
-  const nameParts = fullName ? fullName.split(/\s+/) : [];
-  const name = (raw.Name || raw.name || nameParts[0] || "")
-    .toString()
-    .trim();
-  const surname = (raw.Surname || raw.surname || nameParts.slice(1).join(" "))
-    .toString()
-    .trim();
+import {
+  Box,
+  Button,
+  TextField,
+  MenuItem,
+  Select,
+  FormControl,
+  IconButton,
+  Chip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemIcon,
+  Checkbox,
+  Divider,
+  Typography,
+  InputAdornment,
+} from "@mui/material";
+import { useMediaQuery } from "@mui/material";
 
-  return {
-    _id: (raw._id || raw.id || "").toString(),
-    name,
-    surname,
-    email: (raw.Email || raw.email || "").toString().trim(),
-    phone: (raw.Number || raw.phone || raw.Phone || "").toString().trim(),
-    fullNameLower: `${name} ${surname}`.toLowerCase().trim(),
-  };
+// ─── Design System Colors ──────────────────────────────────────────────
+const COLORS = {
+  // Light mode
+  light: {
+    background: "#f8f9fa",
+    backgroundSecondary: "#ffffff",
+    card: "#ffffff",
+    border: "#e5e7eb",
+    borderSecondary: "#d1d5db",
+    foreground: "#1a1a24",
+    mutedForeground: "#6b7280",
+    primary: "#6366f1",
+    primaryForeground: "#ffffff",
+    primaryHover: "#4f46e5",
+    primaryBorder: "#818cf8",
+    teal: "#14b8a6",
+    tealBg: "#ecfdf5",
+    tealBorder: "#14b8a6",
+    gold: "#f59e0b",
+    overdue: "#f59e0b",
+    completed: "#22c55e",
+    inProgress: "#3b82f6",
+    awaiting: "#f97316",
+    cardHover: "#f3f4f6",
+    inputBg: "#f9fafb",
+    inputBorder: "#d1d5db",
+    ring: "#6366f1",
+    overlay: "rgba(0, 0, 0, 0.6)",
+    sidebar: "#ffffff",
+    sidebarBorder: "#e5e7eb",
+    sidebarActive: "#f3f4f6",
+  },
+  // Dark mode
+  dark: {
+    background: "#111827",
+    backgroundSecondary: "#1e1e1e",
+    card: "#1e1e1e",
+    border: "#374151",
+    borderSecondary: "#4b5563",
+    foreground: "#f9fafb",
+    mutedForeground: "#9ca3af",
+    primary: "#6366f1",
+    primaryForeground: "#ffffff",
+    primaryHover: "#818cf8",
+    primaryBorder: "#818cf8",
+    teal: "#14b8a6",
+    tealBg: "#064e3b",
+    tealBorder: "#14b8a6",
+    gold: "#f59e0b",
+    overdue: "#f59e0b",
+    completed: "#22c55e",
+    inProgress: "#60a5fa",
+    awaiting: "#fb923c",
+    cardHover: "#2d2d2d",
+    inputBg: "#1f2937",
+    inputBorder: "#374151",
+    ring: "#818cf8",
+    overlay: "rgba(0, 0, 0, 0.75)",
+    sidebar: "#1e1e1e",
+    sidebarBorder: "#374151",
+    sidebarActive: "#2d2d2d",
+  },
 };
-
-const getRawCachedPeople = () => {
-  const cache = window.globalPeopleCache;
-  return Array.isArray(cache)
-    ? cache
-    : Array.isArray(cache?.data)
-      ? cache.data
-      : [];
-};
-
-const getCachedPeople = () => getRawCachedPeople().map(normalizePerson);
-
-const hasCachedPeople = () => getRawCachedPeople().length > 0;
-
-function Modal({ isOpen, onClose, children, isDarkMode }) {
-  if (!isOpen) return null;
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        backgroundColor: "rgba(0, 0, 0, 0.75)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-      }}
-      onClick={onClose}
-    >
-      <div
-        style={{
-          backgroundColor: isDarkMode ? "#1e1e1e" : "white",
-          color: isDarkMode ? "#fff" : "#1a1a24",
-          padding: "clamp(25px, 4vw, 40px)",
-          borderRadius: "16px",
-          maxWidth: "clamp(200px, 85vw, 480px)",
-          width: "90%",
-          maxHeight: "90vh",
-          overflowY: "auto",
-          position: "relative",
-          boxShadow: isDarkMode
-            ? "0 12px 40px rgba(255,255,255,0.12)"
-            : "0 12px 40px rgba(0,0,0,0.35)",
-          border: `1px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <button
-          style={{
-            position: "absolute",
-            top: "16px",
-            right: "16px",
-            background: "none",
-            border: "none",
-            fontSize: "clamp(20px,4vw,28px)",
-            cursor: "pointer",
-            color: isDarkMode ? "#aaa" : "#6b7280",
-            fontWeight: "bold",
-          }}
-          onClick={onClose}
-          aria-label="Close modal"
-        >
-          ×
-        </button>
-        <div style={{ marginTop: "clamp(8px,2vw,16px)" }}>{children}</div>
-      </div>
-    </div>
-  );
-}
-
-// Spinner component
-const toDateInputValue = (date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-
-const bulkButtonStyle = (isDarkMode, backgroundColor, color, outlined = false) => ({
-  padding: "7px 12px",
-  borderRadius: "8px",
-  border: outlined
-    ? `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`
-    : "none",
-  backgroundColor,
-  color,
-  fontSize: "12px",
-  fontWeight: "700",
-  cursor: "pointer",
-  opacity: 1,
-});
 
 function Spinner({ size = 16, color = "#6b7280" }) {
   return (
@@ -134,12 +110,620 @@ function Spinner({ size = 16, color = "#6b7280" }) {
   );
 }
 
+function StatusBadge({ status, colors }) {
+  const normalizedStatus = String(status || "open").toLowerCase();
+  const backgroundColor = normalizedStatus === "completed"
+    ? `${colors.completed}20`
+    : normalizedStatus === "in-progress"
+      ? `${colors.inProgress}20`
+      : normalizedStatus === "overdue"
+        ? `${colors.overdue}20`
+        : `${colors.border}80`;
+  const color = normalizedStatus === "completed"
+    ? colors.completed
+    : normalizedStatus === "in-progress"
+      ? colors.inProgress
+      : normalizedStatus === "overdue"
+        ? colors.overdue
+        : colors.mutedForeground;
+
+  return (
+    <span style={{ borderRadius: 999, padding: "6px 10px", backgroundColor, color, fontSize: 12, fontWeight: 600 }}>
+      {status || "Open"}
+    </span>
+  );
+}
+
+function CallTaskModal({ isOpen, onClose, taskData, handleChange, taskTypes, handleSubmit, submitting }) {
+  const availableTaskTypes = taskTypes.length
+    ? taskTypes.map((taskType) => typeof taskType === "string" ? taskType : taskType.name).filter(Boolean)
+    : ["Awaiting Call", "Service Invitation", "Service Follow Up", "Follow Up", "New Member Care"];
+
+  return (
+    <Dialog open={isOpen} onClose={onClose} fullWidth maxWidth="sm">
+      <form onSubmit={handleSubmit}>
+        <DialogTitle>Create Task</DialogTitle>
+        <DialogContent sx={{ display: "grid", gap: 2, pt: "12px !important" }}>
+          <TextField
+            select
+            required
+            label="Task type"
+            name="taskType"
+            value={taskData.taskType}
+            onChange={handleChange}
+          >
+            {availableTaskTypes.map((taskType) => (
+              <MenuItem key={taskType} value={taskType}>{taskType}</MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            label="Assigned to"
+            name="assignedTo"
+            value={taskData.assignedTo}
+            onChange={handleChange}
+          />
+          <TextField
+            label="Assignee email"
+            name="assignedEmail"
+            type="email"
+            value={taskData.assignedEmail}
+            onChange={handleChange}
+          />
+          <TextField
+            required
+            label="Due date"
+            name="dueDate"
+            type="datetime-local"
+            value={taskData.dueDate}
+            onChange={handleChange}
+            InputLabelProps={{ shrink: true }}
+          />
+          <TextField
+            select
+            label="Status"
+            name="taskStage"
+            value={taskData.taskStage}
+            onChange={handleChange}
+          >
+            {["Open", "In Progress", "Completed"].map((status) => (
+              <MenuItem key={status} value={status}>{status}</MenuItem>
+            ))}
+          </TextField>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="contained" disabled={submitting}>
+            {submitting ? "Creating..." : "Create Task"}
+          </Button>
+        </DialogActions>
+      </form>
+    </Dialog>
+  );
+}
+
+function NewTaskTypeModal({ isOpen, onClose, newTaskTypeName, setNewTaskTypeName, createTaskType, addingTaskType }) {
+  return (
+    <Dialog open={isOpen} onClose={onClose} fullWidth maxWidth="xs">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          createTaskType();
+        }}
+      >
+        <DialogTitle>New Task Type</DialogTitle>
+        <DialogContent sx={{ pt: "12px !important" }}>
+          <TextField
+            autoFocus
+            required
+            fullWidth
+            label="Task type name"
+            value={newTaskTypeName}
+            onChange={(event) => setNewTaskTypeName(event.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="contained" disabled={addingTaskType || !newTaskTypeName.trim()}>
+            {addingTaskType ? "Adding..." : "Add Type"}
+          </Button>
+        </DialogActions>
+      </form>
+    </Dialog>
+  );
+}
+
+// Person Filter Modal Component
+function PersonFilterModal({ 
+  open, 
+  onClose, 
+  teamMembers, 
+  selectedPeople, 
+  onSelectionChange,
+  isDarkMode 
+}) {
+  const [searchResults, setSearchResults] = useState([]);
+  const [localSearch, setLocalSearch] = useState("");
+
+  // Reset the search each time the picker opens so the full list is visible.
+  useEffect(() => {
+    if (open) setLocalSearch("");
+  }, [open]);
+
+  useEffect(() => {
+    if (localSearch.trim().length >= 1) {
+      const q = localSearch.toLowerCase().trim();
+      const results = teamMembers
+        .filter((p) => {
+          const name = `${p.name || ""} ${p.surname || ""}`.toLowerCase().trim();
+          const email = (p.email || "").toLowerCase().trim();
+          return name.includes(q) || email.includes(q);
+        })
+        .slice(0, 50)
+        .map((p) => ({
+          email: (p.email || "").toLowerCase().trim(),
+          name: `${p.name || ""} ${p.surname || ""}`.trim(),
+          _id: p._id,
+        }));
+      setSearchResults(results);
+    } else {
+      setSearchResults(teamMembers.slice(0, 50).map((p) => ({
+        email: (p.email || "").toLowerCase().trim(),
+        name: `${p.name || ""} ${p.surname || ""}`.trim(),
+        _id: p._id,
+      })));
+    }
+  }, [localSearch, teamMembers]);
+
+  const handleToggle = (person) => {
+    const newSelection = selectedPeople.some((p) => p.email === person.email)
+      ? selectedPeople.filter((p) => p.email !== person.email)
+      : [...selectedPeople, person];
+    onSelectionChange(newSelection);
+  };
+
+  const isSelected = (person) => selectedPeople.some((p) => p.email === person.email);
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth sx={{ "& .MuiDialog-paper": { maxHeight: "90vh" } }}>
+      <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <Box>
+          <Typography variant="h6">Select People</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {teamMembers.length} {teamMembers.length === 1 ? "person" : "people"} under you
+          </Typography>
+        </Box>
+        <IconButton onClick={onClose} size="small" aria-label="close">
+          <X />
+        </IconButton>
+      </DialogTitle>
+      <DialogContent dividers sx={{ maxHeight: "60vh", overflow: "auto" }}>
+        <Box sx={{ mb: 2, display: "flex", gap: 1, flexWrap: "wrap" }}>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => onSelectionChange(teamMembers)}
+            startIcon={<Check />}
+          >
+            Select All ({teamMembers.length})
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => onSelectionChange([])}
+            startIcon={<X />}
+          >
+            Clear All
+          </Button>
+        </Box>
+        
+        <Box sx={{ mb: 2 }}>
+          <TextField
+            fullWidth
+            size="small"
+            autoFocus
+            placeholder="Search by name or email, e.g. Kenny Gloire"
+            value={localSearch}
+            onChange={(e) => setLocalSearch(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search color="action" />
+                </InputAdornment>
+              ),
+            }}
+          />
+        </Box>
+
+        <Divider />
+        
+        <List dense>
+          {searchResults.map((person) => (
+            <ListItem
+              key={person.email}
+              button
+              onClick={() => handleToggle(person)}
+              sx={{
+                backgroundColor: isSelected(person) 
+                  ? (isDarkMode ? "rgba(25, 118, 210, 0.12)" : "rgba(25, 118, 210, 0.08)") 
+                  : "transparent",
+                "&:hover": {
+                  backgroundColor: isDarkMode 
+                    ? "rgba(25, 118, 210, 0.08)" 
+                    : "rgba(25, 118, 210, 0.04)",
+                },
+              }}
+            >
+              <ListItemIcon>
+                <Checkbox
+                  checked={isSelected(person)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </ListItemIcon>
+              <ListItemText
+                primary={person.name}
+                secondary={person.email}
+              />
+            </ListItem>
+          ))}
+        </List>
+        
+        {searchResults.length === 0 && (
+          <Box sx={{ p: 3, textAlign: "center", color: "text.secondary" }}>
+            {teamMembers.length === 0
+              ? "No people found under you. Check that your name is set as Leader @1/@12/@144/@1728 on the People page."
+              : "No people match your search."}
+          </Box>
+        )}
+      </DialogContent>
+      <DialogActions sx={{ p: 2 }}>
+        <Typography variant="body2" color="text.secondary">
+          {selectedPeople.length} of {teamMembers.length} selected
+        </Typography>
+        <Button onClick={onClose} variant="outlined">Done</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+// Advanced Filter Panel Modal
+function FilterPanelModal({
+  open,
+  onClose,
+  onApply,
+  isDarkMode,
+  canViewTeam,
+  isAdmin,
+  // pending values
+  pendingViewFilter,
+  setPendingViewFilter,
+  pendingFilterType,
+  setPendingFilterType,
+  selectedPeople,
+  teamPeopleObjects,
+  onOpenPersonModal,
+  onClearPeople,
+  onRemovePerson,
+  batchSize,
+  setBatchSize,
+  taskTypes,
+}) {
+  const isSmallScreen = useMediaQuery("(max-width:600px)");
+
+  const typeOptions = [
+    { value: "all", label: "All Types" },
+    { value: "call", label: "Call" },
+    { value: "visit", label: "Visit" },
+    { value: "follow up", label: "Follow Up" },
+    { value: "consolidation", label: "Consolidation" },
+  ];
+
+  const viewOptions = [
+    { value: "personal", label: "Personal", description: "Only your own tasks" },
+    ...(isAdmin ? [{ value: "all", label: "All", description: "Every task in your organization" }] : []),
+    ...(canViewTeam
+      ? [{ value: "team", label: "Team", description: "Tasks for your disciples and hierarchy" }]
+      : []),
+  ];
+
+  const clearAllFilters = () => {
+    setPendingViewFilter(isAdmin ? "all" : "personal");
+    setPendingFilterType("all");
+    onClearPeople();
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="sm"
+      fullWidth
+      fullScreen={isSmallScreen}
+      PaperProps={{
+        sx: {
+          borderRadius: isSmallScreen ? 0 : "18px",
+          background: isDarkMode ? "#1a1a1e" : "#fff",
+          color: isDarkMode ? "#fff" : "#1a1a24",
+        },
+      }}
+    >
+      <DialogTitle
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          fontWeight: 700,
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Filter size={20} />
+          <span>Filter Tasks</span>
+        </Box>
+        <IconButton onClick={onClose} size="small" aria-label="close filters">
+          <X size={20} />
+        </IconButton>
+      </DialogTitle>
+
+      <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 3, py: 3 }}>
+        {/* View selector */}
+        {canViewTeam && (
+          <Box>
+            <Typography
+              variant="overline"
+              sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
+            >
+              View
+            </Typography>
+            <Box sx={{ display: "flex", gap: 1, mt: 1, flexWrap: "wrap" }}>
+              {viewOptions.map((option) => {
+                const isActive = pendingViewFilter === option.value;
+                return (
+                  <Button
+                    key={option.value}
+                    size="small"
+                    variant={isActive ? "contained" : "outlined"}
+                    onClick={() => {
+                      setPendingViewFilter(option.value);
+                      if (option.value === "team") {
+                        // Keep current person selection; open picker below
+                      } else if (option.value === "personal") {
+                        onClearPeople();
+                      }
+                    }}
+                    sx={{
+                      textTransform: "none",
+                      fontWeight: 600,
+                      borderRadius: "10px",
+                      background: isActive
+                        ? isDarkMode
+                          ? "#fff"
+                          : "#111"
+                        : "transparent",
+                      color: isActive
+                        ? isDarkMode
+                          ? "#111"
+                          : "#fff"
+                        : isDarkMode
+                          ? "#e5e7eb"
+                          : "#374151",
+                      borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
+                      "&:hover": {
+                        background: isActive
+                          ? isDarkMode
+                            ? "#f3f4f6"
+                            : "#000"
+                          : isDarkMode
+                            ? "rgba(255,255,255,0.08)"
+                            : "rgba(17,17,17,0.06)",
+                      },
+                    }}
+                  >
+                    {option.label}
+                  </Button>
+                );
+              })}
+            </Box>
+            <Typography variant="caption" sx={{ display: "block", mt: 1, color: isDarkMode ? "#9ca3af" : "#6b7280" }}>
+              {viewOptions.find((o) => o.value === pendingViewFilter)?.description}
+            </Typography>
+
+            {/* Person filter — only meaningful for team view */}
+            {pendingViewFilter === "team" && (
+              <Box
+                sx={{
+                  mt: 2,
+                  p: 2,
+                  borderRadius: "12px",
+                  border: `1px solid ${isDarkMode ? "#374151" : "#e5e7eb"}`,
+                  background: isDarkMode ? "rgba(255,255,255,0.03)" : "#f9fafb",
+                }}
+              >
+                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                      People
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {teamPeopleObjects.length === 0
+                        ? "No team members found under your hierarchy"
+                        : selectedPeople.length === 0
+                          ? `All ${teamPeopleObjects.length} team member(s) included`
+                          : `${selectedPeople.length} of ${teamPeopleObjects.length} selected`}
+                    </Typography>
+                  </Box>
+                  <Box sx={{ display: "flex", gap: 1 }}>
+                    {selectedPeople.length > 0 && (
+                      <Button size="small" onClick={onClearPeople} sx={{ textTransform: "none" }}>
+                        Clear
+                      </Button>
+                    )}
+                    <Button
+                      size="small"
+                      variant="contained"
+                      onClick={onOpenPersonModal}
+                      startIcon={<Users size={16} />}
+                      disabled={teamPeopleObjects.length === 0}
+                      sx={{
+                        textTransform: "none",
+                        fontWeight: 600,
+                        borderRadius: "10px",
+                        background: isDarkMode ? "#fff" : "#111",
+                        color: isDarkMode ? "#111" : "#fff",
+                        "&:hover": { background: isDarkMode ? "#f3f4f6" : "#000" },
+                        "&.Mui-disabled": {
+                          background: isDarkMode ? "#374151" : "#e5e7eb",
+                          color: isDarkMode ? "#6b7280" : "#9ca3af",
+                        },
+                      }}
+                    >
+                      Choose People
+                    </Button>
+                  </Box>
+                </Box>
+
+                {selectedPeople.length > 0 && (
+                  <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mt: 1.5 }}>
+                    {selectedPeople.slice(0, 8).map((person) => (
+                      <Chip
+                        key={person.email}
+                        label={person.name || person.email}
+                        size="small"
+                        onDelete={() => onRemovePerson && onRemovePerson(person)}
+                        sx={{ maxWidth: 180 }}
+                      />
+                    ))}
+                    {selectedPeople.length > 8 && (
+                      <Chip label={`+${selectedPeople.length - 8} more`} size="small" />
+                    )}
+                  </Box>
+                )}
+              </Box>
+            )}
+          </Box>
+        )}
+
+        <Divider />
+
+        {/* Task type */}
+        <Box>
+          <Typography
+            variant="overline"
+            sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
+          >
+            Task Type
+          </Typography>
+          <FormControl fullWidth size="small" sx={{ mt: 1 }}>
+            <Select
+              value={pendingFilterType}
+              onChange={(e) => setPendingFilterType(e.target.value)}
+              sx={{ borderRadius: "10px" }}
+            >
+              {typeOptions.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {option.label}
+                </MenuItem>
+              ))}
+              {/* Include any custom task types loaded from backend */}
+              {taskTypes
+                .map((t) => (t.name || "").toLowerCase().trim())
+                .filter(
+                  (name) =>
+                    name &&
+                    !typeOptions.some((o) => o.value === name) &&
+                    !["service follow up", "new_person", "new person"].includes(name),
+                )
+                .map((name) => (
+                  <MenuItem key={name} value={name}>
+                    {name.charAt(0).toUpperCase() + name.slice(1)}
+                  </MenuItem>
+                ))}
+            </Select>
+          </FormControl>
+        </Box>
+
+        <Divider />
+
+        {/* Batch size */}
+        <Box>
+          <Typography
+            variant="overline"
+            sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
+          >
+            Tasks Per Fetch
+          </Typography>
+          <Box sx={{ display: "flex", gap: 1, mt: 1, flexWrap: "wrap" }}>
+            {[25, 50, 100, 200, 500].map((size) => {
+              const isActive = batchSize === size;
+              return (
+                <Button
+                  key={size}
+                  size="small"
+                  variant={isActive ? "contained" : "outlined"}
+                  onClick={() => setBatchSize(size)}
+                  sx={{
+                    textTransform: "none",
+                    fontWeight: 600,
+                    borderRadius: "10px",
+                    minWidth: 64,
+                    background: isActive ? (isDarkMode ? "#fff" : "#111") : "transparent",
+                    color: isActive ? (isDarkMode ? "#111" : "#fff") : isDarkMode ? "#e5e7eb" : "#374151",
+                    borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
+                    "&:hover": {
+                      background: isActive
+                        ? isDarkMode
+                          ? "#f3f4f6"
+                          : "#000"
+                        : isDarkMode
+                          ? "rgba(255,255,255,0.08)"
+                          : "rgba(17,17,17,0.06)",
+                    },
+                  }}
+                >
+                  {size}
+                </Button>
+              );
+            })}
+          </Box>
+        </Box>
+      </DialogContent>
+
+      <DialogActions sx={{ p: 2, gap: 1 }}>
+        <Button
+          onClick={clearAllFilters}
+          sx={{ textTransform: "none", fontWeight: 600, color: isDarkMode ? "#9ca3af" : "#6b7280" }}
+        >
+          Reset
+        </Button>
+        <Box sx={{ flex: 1 }} />
+        <Button onClick={onClose} sx={{ textTransform: "none", fontWeight: 600 }}>
+          Cancel
+        </Button>
+        <Button
+          variant="contained"
+          onClick={onApply}
+          startIcon={<Check size={16} />}
+          sx={{
+            textTransform: "none",
+            fontWeight: 700,
+            borderRadius: "10px",
+            background: isDarkMode ? "#fff" : "#111",
+            color: isDarkMode ? "#111" : "#fff",
+            "&:hover": { background: isDarkMode ? "#f3f4f6" : "#000" },
+          }}
+        >
+          Apply Filters
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 export default function DailyTasks() {
   if (!window.globalPeopleCache) window.globalPeopleCache = [];
   if (!window.globalCacheTimestamp) window.globalCacheTimestamp = 0;
 
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
+  const colors = isDarkMode ? COLORS.dark : COLORS.light;
 
   const { user, authFetch } = useContext(AuthContext);
   const { updateCount } = useTaskUpdate();
@@ -147,1514 +731,341 @@ export default function DailyTasks() {
   const [tasks, setTasks] = useState([]);
   const [taskTypes, setTaskTypes] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [selectedTask, setSelectedTask] = useState({});
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAddTypeModalOpen, setIsAddTypeModalOpen] = useState(false);
-  const [formType, setFormType] = useState("");
-  const [dateRange, setDateRange] = useState("today");
-  const [filterType, setFilterType] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [customStartDate, setCustomStartDate] = useState(() => {
-    const start = new Date();
-    start.setDate(start.getDate() - 30);
-    return toDateInputValue(start);
-  });
-  const [customEndDate, setCustomEndDate] = useState(() =>
-    toDateInputValue(new Date()),
-  );
-  const [selectedTaskIds, setSelectedTaskIds] = useState([]);
-  const [bulkActionLoading, setBulkActionLoading] = useState("");
+  const [dateRange, setDateRange] = useState("This Week");
+  const [filter, setFilter] = useState("overdue");
   const [newTaskTypeName, setNewTaskTypeName] = useState("");
   const [addingTaskType, setAddingTaskType] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
-  const [isLoadingPeople, setIsLoadingPeople] = useState(false);
-  const [isEditTypeModalOpen, setIsEditTypeModalOpen] = useState(false);
-  const [editTaskTypeName, setEditTaskTypeName] = useState("");
-  const [updatingTaskType, setUpdatingTaskType] = useState(false);
-  const [typeMenuOpen, setTypeMenuOpen] = useState(false);
-  const [selectedTypeToManage, setSelectedTypeToManage] = useState(null);
-  const isAdmin = user?.role?.toLowerCase() === "admin";
 
-  const [deletingTaskType, setDeletingTaskType] = useState(false);
+  // Advanced filter state
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [pendingViewFilter, setPendingViewFilter] = useState("personal"); // personal, team, all
+  const [pendingFilterType, setPendingFilterType] = useState("all");
+  const [selectedPeople, setSelectedPeople] = useState([]);
+  const [teamPeopleObjects, setTeamPeopleObjects] = useState([]);
+  const [batchSize, setBatchSize] = useState(50);
+  const [canViewTeam, setCanViewTeam] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalTasks, setTotalTasks] = useState(0);
+
+  // ─── Helper: Calculate date range for presets ─────────────────────────────
+  const getDateRangeParams = useCallback((range) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfToday = new Date(today);
+    endOfToday.setHours(23, 59, 59, 999);
+
+    switch (range) {
+      case "Today": {
+        const start = today.toISOString().split("T")[0];
+        const end = endOfToday.toISOString().split("T")[0];
+        return { start_date: start, end_date: end };
+      }
+      case "This Week": {
+        // Start from Monday
+        const day = today.getDay();
+        const diff = day === 0 ? -6 : 1 - day; // Monday = 1
+        const start = new Date(today);
+        start.setDate(today.getDate() + diff);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        end.setHours(23, 59, 59, 999);
+        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
+      }
+      case "This Month": {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        end.setHours(23, 59, 59, 999);
+        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
+      }
+      case "This Year": {
+        const start = new Date(now.getFullYear(), 0, 1);
+        const end = new Date(now.getFullYear(), 11, 31);
+        end.setHours(23, 59, 59, 999);
+        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
+      }
+      default:
+        return { all_dates: true };
+    }
+  }, []);
+
+  // ─── Helper: Resolve team hierarchy from People cache ─────────────────────
+  const resolveTeamHierarchy = useCallback(async () => {
+    if (!user?.email) return [];
+    try {
+      // Fetch all people in org (using cache endpoint for efficiency)
+      const res = await authFetch(`${API_URL}/cache/people`);
+      if (!res.ok) throw new Error("Failed to fetch people cache");
+      const data = await res.json();
+      const allPeople = data.cached_data || data.people || [];
+      
+      const userName = `${user.name || ""} ${user.surname || ""}`.trim();
+      const userEmail = user.email.toLowerCase().trim();
+      
+      // Find people where current user is in Leader @1, @12, @144, or @1728
+      const teamMembers = allPeople.filter((p) => {
+        const leaderFields = [
+          p["Leader @1"],
+          p["Leader @12"],
+          p["Leader @144"],
+          p["Leader @1728"],
+        ].map((l) => (l || "").toLowerCase().trim());
+        
+        return leaderFields.includes(userName.toLowerCase()) || leaderFields.includes(userEmail);
+      });
+      
+      return teamMembers.map((p) => ({
+        email: (p.Email || "").toLowerCase().trim(),
+        name: `${p.Name || ""} ${p.Surname || ""}`.trim(),
+        _id: p._id,
+      }));
+    } catch (err) {
+      console.error("Error resolving team hierarchy:", err.message);
+      return [];
+    }
+  }, [user, authFetch, API_URL]);
+
+  // ─── Load team hierarchy on mount ─────────────────────────────────────────
+  useEffect(() => {
+    if (user) {
+      // Check if user can view team (has people under them in hierarchy)
+      resolveTeamHierarchy().then((members) => {
+        setTeamPeopleObjects(members);
+        setCanViewTeam(members.length > 0);
+        
+        // Check if admin
+        const role = (user.role || "").toLowerCase();
+        setIsAdmin(["admin", "leader", "manager", "org_admin", "super_admin"].includes(role));
+      });
+    }
+  }, [user, resolveTeamHierarchy]);
+
+  // ─── Dynamic filter counts from actual tasks ──────────────────────────────
+  const filterCounts = useMemo(() => {
+    const counts = tasks.reduce(
+      (acc, t) => {
+        const status = String(t.status || "open").toLowerCase();
+        acc.all++;
+        if (status === "completed") acc.completed++;
+        else if (status === "in-progress") acc["in-progress"]++;
+        else if (status === "overdue") acc.overdue++;
+        return acc;
+      },
+      { all: 0, completed: 0, "in-progress": 0, overdue: 0 },
+    );
+    return counts;
+  }, [tasks]);
+
+  const FILTERS = useMemo(
+    () => [
+      { key: "all", label: `All (${filterCounts.all})` },
+      { key: "completed", label: `Completed (${filterCounts.completed})` },
+      { key: "in-progress", label: `In Progress (${filterCounts["in-progress"]})` },
+      { key: "overdue", label: `Overdue (${filterCounts.overdue})` },
+    ],
+    [filterCounts],
+  );
+
+  const [taskData, setTaskData] = useState({
+    taskType: "",
+    assignedTo: user ? `${user.name || ""} ${user.surname || ""}`.trim() : "",
+    assignedEmail: user?.email || "",
+    dueDate: new Date().toISOString().slice(0, 16),
+    status: "Open",
+    taskStage: "Open",
+  });
+  const [submitting, setSubmitting] = useState(false);
+
   const API_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 
-  const getCurrentDateTime = () => {
-    const now = new Date();
-    const offset = now.getTimezoneOffset();
-    const localDate = new Date(now.getTime() - offset * 60000);
-    return localDate.toISOString().slice(0, 16);
-  };
+  const fetchTaskTypes = useCallback(async () => {
+    if (!user?.email) return;
+    try {
+      const res = await authFetch(`${API_URL}/task-types`);
+      if (!res.ok) throw new Error("Failed to fetch task types");
+      const data = await res.json();
+      const types = Array.isArray(data) ? data : data.taskTypes || [];
+      setTaskTypes(types);
+    } catch (err) {
+      console.error("Error fetching task types:", err.message);
+    }
+  }, [user, authFetch, API_URL]);
 
   const getInitialTaskData = () => ({
     taskType: "",
-    recipient: null,
-    recipientDisplay: "",
     assignedTo: user ? `${user.name || ""} ${user.surname || ""}`.trim() : "",
     assignedEmail: user?.email || "",
-    dueDate: getCurrentDateTime(),
+    dueDate: new Date().toISOString().slice(0, 16),
     status: "Open",
     taskStage: "Open",
   });
 
-  const [taskData, setTaskData] = useState(getInitialTaskData());
-  const [searchResults, setSearchResults] = useState([]);
-  const [assignedResults, setAssignedResults] = useState([]);
-  const [submitting, setSubmitting] = useState(false);
-  const [allPeople, setAllPeople] = useState(getCachedPeople);
-  const isFetchingRef = useRef(false);
-  const peopleFetchPromiseRef = useRef(null);
-  const fetchPeopleDebounceRef = useRef(null);
-  const RECIPIENT_DEBOUNCE = 100;
-  const PEOPLE_TOAST_ID = "loading-people";
-  const parseDate = (dateStr) => {
-    if (!dateStr) return null;
-    const date = new Date(dateStr);
-    return isNaN(date.getTime()) ? null : date;
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setTaskData((prev) => ({ ...prev, [name]: value }));
   };
-
-  const isSameDay = (date1, date2) => {
-    return (
-      date1.getFullYear() === date2.getFullYear() &&
-      date1.getMonth() === date2.getMonth() &&
-      date1.getDate() === date2.getDate()
-    );
-  };
-
-  const isDateInRange = (date, startDate, endDate) => {
-    return date >= startDate && date <= endDate;
-  };
-
-  const getStartOfWeek = (date) => {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    return new Date(d.setDate(diff));
-  };
-
-  const getEndOfWeek = (date) => {
-    const start = getStartOfWeek(date);
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
-    end.setHours(23, 59, 59, 999);
-    return end;
-  };
-
-  const getStartOfMonth = (date) => {
-    return new Date(date.getFullYear(), date.getMonth(), 1);
-  };
-
-  const getEndOfMonth = (date) => {
-    return new Date(
-      date.getFullYear(),
-      date.getMonth() + 1,
-      0,
-      23,
-      59,
-      59,
-      999,
-    );
-  };
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return "";
-    const date = new Date(dateStr);
-    const months = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
-    return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
-  };
-
-  const formatDateTime = (dateStr) => {
-    if (!dateStr) return "";
-    const date = new Date(dateStr);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-  };
-
-  const fetchTaskTypes = async () => {
-    try {
-      const res = await authFetch(`${API_URL}/tasktypes`);
-      if (!res.ok) throw new Error("Failed to fetch task types");
-      const data = await res.json();
-      setTaskTypes(Array.isArray(data) ? data : data.taskTypes || []);
-    } catch (err) {
-      console.error("Error fetching task types:", err.message);
-      toast.error(err.message);
-    }
-  };
-
-  const createTaskType = async () => {
-    if (!newTaskTypeName.trim()) {
-      toast.warning("Please enter a task type name");
-      return;
-    }
-    setAddingTaskType(true);
-    try {
-      const res = await authFetch(`${API_URL}/tasktypes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newTaskTypeName.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok)
-        throw new Error(data.message || "Failed to create task type");
-      setTaskTypes([...taskTypes, data.taskType || data]);
-      setNewTaskTypeName("");
-      setIsAddTypeModalOpen(false);
-    } catch (err) {
-      console.error("Error creating task type:", err.message);
-      toast.error("Failed to create task type: " + err.message);
-    } finally {
-      setAddingTaskType(false);
-    }
-  };
-  const updateTaskType = async () => {
-    if (!selectedTypeToManage) {
-      toast.error("No task type selected");
-      return;
-    }
-
-    const taskTypeId = selectedTypeToManage._id || selectedTypeToManage.id;
-    if (!taskTypeId) {
-      toast.error("Missing task type ID");
-      return;
-    }
-
-    const newName = editTaskTypeName.trim();
-    if (!newName) {
-      toast.warning("Please enter a task type name");
-      return;
-    }
-
-    if (newName === selectedTypeToManage.name) {
-      toast.info("No changes to save");
-      setIsEditTypeModalOpen(false);
-      return;
-    }
-
-    setUpdatingTaskType(true);
-
-    try {
-      const res = await authFetch(`${API_URL}/tasktypes/${taskTypeId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.message || "Failed to update task type");
-      }
-
-      setTaskTypes((prev) =>
-        prev.map((t) => {
-          const tid = t._id || t.id;
-          if (tid === taskTypeId) {
-            return { ...t, name: newName };
-          }
-          return t;
-        }),
-      );
-
-      toast.success("Task type updated!");
-
-      setIsEditTypeModalOpen(false);
-      setTypeMenuOpen(false);
-      setSelectedTypeToManage(null);
-      setEditTaskTypeName("");
-    } catch (err) {
-      console.error("Update error:", err);
-      toast.error(err.message || "Could not update task type");
-    } finally {
-      setUpdatingTaskType(false);
-    }
-  };
-
-  const deleteTaskType = async (taskTypeId) => {
-    if (!taskTypeId || typeof taskTypeId !== "string") {
-      toast.error("No valid task type ID provided");
-      console.warn("Invalid ID passed to deleteTaskType:", taskTypeId);
-      return;
-    }
-
-    console.log("Deleting TaskType ID:", taskTypeId);
-
-    setDeletingTaskType(true);
-
-    try {
-      const res = await authFetch(`${API_URL}/tasktypes/${taskTypeId}`, {
-        method: "DELETE",
-      });
-
-      const data = await res.json();
-
-      console.log("Delete response:", data);
-      console.log("Delete status:", res.status);
-
-      if (!res.ok) {
-        throw new Error(data.message || "Failed to delete task type");
-      }
-
-      toast.success("Task type deleted!");
-
-      setTaskTypes((prev) =>
-        prev.filter((t) => (t._id || t.id) !== taskTypeId),
-      );
-
-      setTypeMenuOpen(false);
-      setSelectedTypeToManage(null);
-    } catch (err) {
-      console.error(err);
-      toast.error(err.message || "Error deleting task type");
-    } finally {
-      setDeletingTaskType(false);
-    }
-  };
-
-  const fetchUserTasks = useCallback(async () => {
-    if (!user?.email) return;
-    const controller = new AbortController();
-    const signal = controller.signal;
-
-    try {
-      setLoading(true);
-      const normalizedEmail = (user.email || "").trim().toLowerCase();
-
-      const taskParams = new URLSearchParams({ email: normalizedEmail });
-      if (dateRange === "custom" && customStartDate && customEndDate) {
-        taskParams.set("start_date", customStartDate);
-        taskParams.set("end_date", customEndDate);
-      }
-
-      // Fetch regular tasks and special tasks in parallel
-      const [regularRes, specialRes] = await Promise.all([
-        authFetch(`${API_URL}/tasks?${taskParams.toString()}`, { signal }),
-        authFetch(`${API_URL}/tasks/my-special-tasks`, { signal }),
-      ]);
-
-      const regularData = regularRes.ok ? await regularRes.json() : {};
-      const specialData = specialRes.ok ? await specialRes.json() : {};
-
-      const regularTasks = Array.isArray(regularData)
-        ? regularData
-        : regularData.tasks || [];
-
-      const specialTasks = Array.isArray(specialData)
-        ? specialData
-        : specialData.tasks || [];
-
-      // Merge and deduplicate by _id / id
-      const tasksMap = new Map();
-
-      [...regularTasks, ...specialTasks].forEach((task) => {
-        const key = String(task._id || task.id || task.taskId || "");
-        if (key && !tasksMap.has(key)) {
-          tasksMap.set(key, task);
-        }
-      });
-
-      const normalizeTask = (task) => {
-        const taskId = task._id || task.id || task.taskId || "";
-        const normalizedTaskType = (task.taskType || "").toLowerCase().trim();
-
-        const isConsolidation =
-          normalizedTaskType === "consolidation" ||
-          task.is_consolidation_task === true;
-
-        const isNewPerson =
-          ["service follow up", "new_person", "new person"].includes(
-            normalizedTaskType,
-          ) || task.is_new_person_task === true;
-
-        let assignedTo = "";
-        if (isConsolidation || isNewPerson) {
-          assignedTo =
-            task.leader_name ||
-            task.leader_assigned ||
-            task.name ||
-            `${user.name || ""} ${user.surname || ""}`.trim();
-          if (assignedTo.includes("@")) {
-            assignedTo = isNewPerson
-              ? "New Person Leader"
-              : "Consolidation Leader";
-          }
-        } else {
-          assignedTo = task.name || "";
-        }
-
-        const resolvedDate =
-          task.followup_date ||
-          task.date ||
-          task.completedAt ||
-          task.completed_at ||
-          task.createdAt ||
-          task.created_at ||
-          null;
-
-        const resolvedType =
-          task.type ||
-          (isNewPerson
-            ? "follow up"
-            : isConsolidation
-              ? "consolidation"
-              : normalizedTaskType.includes("visit")
-                ? "visit"
-                : normalizedTaskType.includes("follow")
-                  ? "follow up"
-                  : "call");
-
-        return {
-          ...task,
-          _id: String(taskId),
-          assignedTo,
-          date: resolvedDate,
-          followup_date: task.followup_date || resolvedDate,
-          status: (task.status || "open").toLowerCase(),
-          taskType: normalizedTaskType,
-          taskName: task.name || task.taskName || "",
-          type: resolvedType,
-          leader_name: task.leader_name || task.leader_assigned || "",
-          leader_assigned: task.leader_assigned || "",
-          is_consolidation_task: isConsolidation,
-          is_new_person_task: isNewPerson,
-          created_by_email: task.created_by_email || "",
-        };
-      };
-
-      const normalizedTasks = Array.from(tasksMap.values()).map(normalizeTask);
-
-      // Filter: regular tasks by assignedfor/assigned_to_email
-      // Special tasks already scoped by backend — just ensure they belong to user
-      const myTasks = normalizedTasks.filter((task) => {
-        const assignedFor = (task.assignedfor || "").trim().toLowerCase();
-        const assignedTo = (task.assigned_to_email || "").trim().toLowerCase();
-        const leaderEmail = (task.leader_assigned || "").trim().toLowerCase();
-
-        return (
-          assignedFor === normalizedEmail ||
-          assignedTo === normalizedEmail ||
-          leaderEmail === normalizedEmail
-        );
-      });
-
-      setTasks(myTasks);
-    } catch (err) {
-      if (err.name !== "AbortError") {
-        console.error("Error fetching user tasks:", err.message);
-      }
-    } finally {
-      if (!signal.aborted) setLoading(false);
-    }
-
-    return () => controller.abort();
-  }, [user, authFetch, API_URL, dateRange, customStartDate, customEndDate]);
-
-  const pollIntervalRef = useRef(null);
-
-  const pollUntilCacheComplete = useCallback(
-    (mapPerson) => {
-      // Clear any existing poll
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-
-      let attempts = 0;
-      const MAX_ATTEMPTS = 30; // 30 * 2s = 60s max
-
-      pollIntervalRef.current = setInterval(async () => {
-        attempts++;
-        try {
-          const res = await authFetch(`${API_URL}/cache/people/status`);
-          if (!res?.ok) return;
-          const status = await res.json();
-          const cacheStatus = status?.cache || {};
-
-          const isComplete =
-            status?.is_complete === true || cacheStatus.is_loading === false;
-
-          if (isComplete) {
-            const dataRes = await authFetch(`${API_URL}/cache/people`);
-            if (dataRes?.ok) {
-              const data = await dataRes.json();
-              const rawPeople = data?.cached_data || [];
-              if (rawPeople.length > 0) {
-                const mapped = rawPeople.map(mapPerson);
-                window.globalPeopleCache = mapped;
-                window.globalCacheTimestamp = Date.now();
-                setAllPeople(mapped);
-              }
-            }
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-            setIsLoadingPeople(false);
-            if (cacheStatus.last_error) {
-              toast.error(`People cache failed to load: ${cacheStatus.last_error}`);
-            }
-            return;
-          }
-
-          if (attempts >= MAX_ATTEMPTS) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-            setIsLoadingPeople(false);
-          }
-        } catch (err) {
-          console.error("Poll error:", err);
-          if (attempts >= MAX_ATTEMPTS) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-            setIsLoadingPeople(false);
-          }
-        }
-      }, 2000); // poll every 2 seconds
-    },
-    [API_URL, authFetch],
-  );
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      if (fetchPeopleDebounceRef.current)
-        clearTimeout(fetchPeopleDebounceRef.current);
-    };
-  }, []);
-
-  // Fix fetchAllPeople — add finally safety and prevent re-entry properly
-
-  const fetchAllPeople = useCallback(
-    async (forceRefresh = false) => {
-      const now = Date.now();
-      const cache = window.globalPeopleCache;
-      const cachedPeople = getCachedPeople();
-      const cacheTimestamp = window.globalCacheTimestamp || cache?.timestamp;
-      const cacheDuration = cache?.expiry || CACHE_DURATION;
-
-      // Cache still valid — use it
-      if (
-        !forceRefresh &&
-        cachedPeople.length > 0 &&
-        cacheTimestamp &&
-        now - cacheTimestamp < cacheDuration
-      ) {
-        setAllPeople(cachedPeople);
-        return cachedPeople;
-      }
-
-      if (isFetchingRef.current && peopleFetchPromiseRef.current) {
-        return await peopleFetchPromiseRef.current;
-      }
-      if (isFetchingRef.current) return cachedPeople;
-
-      isFetchingRef.current = true;
-      setIsLoadingPeople(true);
-
-      peopleFetchPromiseRef.current = (async () => {
-        try {
-          // Single request to /cache/people
-          const res = await authFetch(`${API_URL}/cache/people`);
-          if (!res?.ok) throw new Error("Failed to fetch people cache");
-          const data = await res.json();
-
-          const rawPeople = data?.cached_data || [];
-          const isComplete = data?.is_complete ?? true;
-
-          // Load whatever we have immediately
-          if (rawPeople.length > 0) {
-            const mapped = rawPeople.map(normalizePerson);
-            window.globalPeopleCache = mapped;
-            window.globalCacheTimestamp = Date.now();
-            setAllPeople(mapped);
-
-            // If backend is still loading, poll until complete
-            if (!isComplete) {
-              pollUntilCacheComplete(normalizePerson);
-            } else {
-              setIsLoadingPeople(false);
-            }
-
-            return mapped;
-          }
-
-          // Cache empty on backend — poll for it
-          pollUntilCacheComplete(normalizePerson);
-          return [];
-        } catch (err) {
-          console.error("Fetch people error:", err);
-          setIsLoadingPeople(false);
-          return getCachedPeople();
-        } finally {
-          isFetchingRef.current = false;
-          peopleFetchPromiseRef.current = null;
-        }
-      })();
-
-      return await peopleFetchPromiseRef.current;
-    },
-    [API_URL, authFetch],
-  );
-
-  useEffect(() => {
-    if (!user) return;
-    const cachedPeople = getCachedPeople();
-    if (cachedPeople.length > 0 && allPeople.length === 0) {
-      setAllPeople(cachedPeople);
-    }
-    if (cachedPeople.length === 0 && !isFetchingRef.current) {
-      fetchAllPeople(false).catch(() => {});
-    }
-  }, [user, fetchAllPeople, allPeople.length]);
-
-  // === SEARCH PEOPLE FUNCTION (exactly as you requested, but safer) ===
-  const searchPeople = useCallback((peopleList, searchValue) => {
-    if (!searchValue?.trim() || !Array.isArray(peopleList)) return [];
-    const searchLower = searchValue.toLowerCase().trim();
-    return peopleList.filter(
-      (person) =>
-        (person.fullNameLower || "").includes(searchLower) ||
-        (person.email || "").toLowerCase().includes(searchLower) ||
-        (person.phone || "").toLowerCase().includes(searchLower),
-    );
-  }, []);
-
-  // === FETCH PEOPLE (fixed argument passing) ===
-  // Fix fetchPeople — use cache directly, don't re-fetch if cache exists
-  const fetchPeople = useCallback(
-    async (q) => {
-      if (!q?.trim() || q.trim().length < 2) {
-        setSearchResults([]);
-        setIsSearching(false);
-        return;
-      }
-
-      setIsSearching(true);
-
-      try {
-        // Cache ready — search instantly, no network
-        const cachedPeople = getCachedPeople();
-        const localSource = cachedPeople.length > 0 ? cachedPeople : allPeople;
-
-        if (localSource.length > 0) {
-          const results = searchPeople(localSource, q);
-          setSearchResults(results.slice(0, 50));
-          return;
-        }
-
-        // Cache empty — hit /people/search-fast directly
-        const res = await authFetch(
-          `${API_URL}/people/search-fast?query=${encodeURIComponent(q.trim())}&limit=25`,
-        );
-
-        if (res.ok) {
-          const data = await res.json();
-          const mapped = (data.results || []).map((raw) => ({
-            _id: raw._id,
-            name: raw.Name || "",
-            surname: raw.Surname || "",
-            email: raw.Email || "",
-            phone: raw.Number || "",
-            fullNameLower: (raw.FullName || `${raw.Name} ${raw.Surname}`)
-              .toLowerCase()
-              .trim(),
-          }));
-          setSearchResults(mapped);
-        }
-      } catch (err) {
-        console.error("Search error:", err);
-        setSearchResults([]);
-      } finally {
-        setIsSearching(false);
-      }
-    },
-    [allPeople, searchPeople, authFetch, API_URL],
-  );
-
-  // === FETCH ASSIGNED (fixed argument passing) ===
-  const fetchAssigned = useCallback(
-    async (q) => {
-      if (!q?.trim()) {
-        setAssignedResults([]);
-        return;
-      }
-
-      const cachedPeople = getCachedPeople();
-      const localSource = cachedPeople.length > 0 ? cachedPeople : allPeople;
-
-      if (localSource.length > 0) {
-        const results = searchPeople(localSource, q.trim());
-        setAssignedResults(results.slice(0, 50));
-      } else {
-        setAssignedResults([]);
-      }
-    },
-    [allPeople, searchPeople],
-    // No fetchAllPeople dependency — cache only
-  );
-
-  // === HANDLE RECIPIENT INPUT (fixed argument passing + minor safety) ===
-  // Fix handleRecipientInput — don't call fetchPeople if cache exists
-  const handleRecipientInput = useCallback(
-    (value) => {
-      setTaskData((prev) => ({
-        ...prev,
-        recipientDisplay: value,
-        recipient: null,
-      }));
-
-      if (!value?.trim()) {
-        setSearchResults([]);
-        setIsSearching(false);
-        return;
-      }
-
-      // Cache ready — instant local search
-      const cachedPeople = getCachedPeople();
-      const localSource = cachedPeople.length > 0 ? cachedPeople : allPeople;
-
-      if (localSource.length > 0) {
-        const quick = searchPeople(localSource, value);
-        setSearchResults(quick.slice(0, 50));
-        setIsSearching(false);
-        return;
-      }
-
-      // Cache not ready — fire search-fast immediately after 2 chars
-      // Don't show "loading" banner, just search
-      if (value.trim().length < 2) {
-        setSearchResults([]);
-        return;
-      }
-
-      if (fetchPeopleDebounceRef.current)
-        clearTimeout(fetchPeopleDebounceRef.current);
-      fetchPeopleDebounceRef.current = setTimeout(
-        () => fetchPeople(value),
-        250,
-      );
-    },
-    [allPeople, searchPeople, fetchPeople],
-  );
-
-  const createTask = async (taskPayload) => {
-    try {
-      const res = await authFetch(`${API_URL}/tasks`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(taskPayload),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to create task");
-
-      if (data.task) {
-        // Normalize emails for case-insensitive comparison
-        const userEmailLower = (user.email || "").trim().toLowerCase();
-        const taskAssignedForLower = (data.task.assignedfor || "")
-          .trim()
-          .toLowerCase();
-        const taskAssignedToEmailLower = (data.task.assigned_to_email || "")
-          .trim()
-          .toLowerCase();
-
-        const isAssignedToMe =
-          taskAssignedForLower === userEmailLower ||
-          taskAssignedToEmailLower === userEmailLower;
-
-        // Only add to local state if assigned to current user
-        if (isAssignedToMe) {
-          setTasks((prev) => [
-            {
-              ...data.task,
-              assignedTo: data.task.name || `${user.name} ${user.surname}`,
-              date: data.task.followup_date,
-              status: (data.task.status || "Open").toLowerCase(),
-              taskName: data.task.name,
-              type: data.task.type,
-            },
-            ...prev,
-          ]);
-        }
-      }
-      return data;
-    } catch (err) {
-      console.error("Error creating task:", err.message);
-      throw err;
-    }
-  };
-
-  useEffect(() => {
-    if (user) {
-      fetchUserTasks();
-      fetchTaskTypes();
-    }
-  }, [user, fetchUserTasks]);
 
   const handleOpen = (type) => {
-    setFormType(type);
     setIsModalOpen(true);
     const initialData = getInitialTaskData();
-
-    // Match by normalized name
-    const findTypeId = (name) => {
-      const match = taskTypes.find(
-        (t) =>
-          (t.name || "").toLowerCase().trim() === name.toLowerCase().trim(),
-      );
-      return match ? String(match._id || match.id) : "";
-    };
-
-    if (type === "visit") {
-      initialData.taskType = findTypeId("visit");
-    } else if (type === "call") {
-      initialData.taskType = findTypeId("call");
-    } else if (type === "consolidation") {
-      initialData.taskType = findTypeId("consolidation");
-    } else if (type === "follow up") {
-      // Try "follow up" then "Follow Up" then "service follow up"
-      initialData.taskType =
-        findTypeId("follow up") || findTypeId("service follow up") || "";
+    if (type === "call" || type === "visit") {
+      initialData.taskType = type === "call" ? "Awaiting Call" : "Service Invitation";
     }
-
     setTaskData(initialData);
-    setSearchResults([]);
-    setAssignedResults([]);
-    setSelectedTask({});
-
-    if (
-      getCachedPeople().length === 0 && !isFetchingRef.current
-    ) {
-      toast.info("Loading people…", {
-        toastId: PEOPLE_TOAST_ID,
-        autoClose: false,
-      });
-      fetchAllPeople(false)
-        .then(() => toast.dismiss(PEOPLE_TOAST_ID))
-        .catch(() => toast.dismiss(PEOPLE_TOAST_ID));
-    }
+    setSubmitting(false);
   };
 
   const handleClose = () => {
     setIsModalOpen(false);
-    setTaskData(getInitialTaskData());
-    setSearchResults([]);
-    setAssignedResults([]);
-    setSelectedTask({});
-    setFormType("");
+    setIsAddTypeModalOpen(false);
   };
 
-  const handleChange = (e) => {
-    setTaskData({ ...taskData, [e.target.name]: e.target.value });
-  };
-
-  const updateTask = async (taskId, updatedData) => {
+  const createTaskType = async () => {
+    if (!newTaskTypeName.trim() || addingTaskType) return;
+    setAddingTaskType(true);
     try {
-      const isConsolidationTask =
-        selectedTask?.taskType === "consolidation" ||
-        selectedTask?.is_consolidation_task;
-
-      if (isConsolidationTask) {
-        const leaderName =
-          updatedData.leader_name ||
-          updatedData.name ||
-          updatedData.assignedTo ||
-          selectedTask.leader_name ||
-          selectedTask.name ||
-          "";
-        const leaderAssigned =
-          updatedData.leader_assigned ||
-          updatedData.assignedfor ||
-          updatedData.assigned_to_email ||
-          selectedTask.leader_assigned ||
-          "";
-
-        updatedData.name = leaderName;
-        updatedData.leader_name = leaderName;
-        updatedData.leader_assigned = leaderAssigned;
-        updatedData.assignedfor = updatedData.assignedfor || leaderAssigned;
-        updatedData.assigned_to_email =
-          updatedData.assigned_to_email || leaderAssigned;
-        updatedData.assignedTo = leaderName;
-      }
-
-      if (updatedData.status?.toLowerCase() === "completed") {
-        updatedData.completedAt = new Date().toISOString();
-      }
-
-      const res = await authFetch(`${API_URL}/tasks/${taskId}`, {
-        method: "PUT",
+      const res = await authFetch(`${API_URL}/task-types`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedData),
+        body: JSON.stringify({ name: newTaskTypeName.trim() }),
       });
+      if (!res.ok) throw new Error("Failed to create task type");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to update task");
-
-      setTasks((prev) =>
-        prev.map((t) =>
-          t._id === taskId
-            ? {
-                ...t,
-                ...data.updatedTask,
-                date: data.updatedTask.followup_date,
-                ...(isConsolidationTask && {
-                  leader_name: updatedData.leader_name || selectedTask.leader_name || "",
-                  leader_assigned:
-                    updatedData.leader_assigned || selectedTask.leader_assigned || "",
-                  assignedTo: updatedData.assignedTo || updatedData.leader_name || "",
-                  assignedfor: updatedData.assignedfor || "",
-                  assigned_to_email: updatedData.assigned_to_email || "",
-                }),
-              }
-            : t,
-        ),
-      );
-
-      await fetchUserTasks();
-      handleClose();
+      if (data.taskType) {
+        setTaskTypes((prev) => [...prev, data.taskType]);
+        toast.success("Task type created successfully");
+      }
+      setIsAddTypeModalOpen(false);
+      setNewTaskTypeName("");
     } catch (err) {
-      console.error("Error updating task:", err.message);
-      toast.error("Failed to update task: " + err.message);
+      toast.error(err.message || "Failed to create task type");
+    } finally {
+      setAddingTaskType(false);
     }
-  };
-
-  const handleEdit = (task) => {
-    if (task.status?.toLowerCase() === "completed") {
-      toast.info(
-        "This task has been marked as completed and cannot be edited.",
-      );
-      return;
-    }
-
-    setSelectedTask(task);
-    setFormType(task.type);
-    setIsModalOpen(true);
-
-    const nameParts = (task.contacted_person?.name || "").split(" ");
-    const firstName = nameParts[0] || "";
-    const lastName = nameParts.slice(1).join(" ") || "";
-
-    // Resolve taskType _id from taskTypes list — match by name or _id
-    const taskTypeNormalized = (task.taskType || "").toLowerCase().trim();
-    const matchedType = taskTypes.find((t) => {
-      const tId = String(t._id || t.id || "");
-      const tName = (t.name || "").toLowerCase().trim();
-      return (
-        tId === task.taskType || // exact _id match
-        tName === taskTypeNormalized // name match (case-insensitive)
-      );
-    });
-
-    const resolvedTaskTypeId = matchedType
-      ? String(matchedType._id || matchedType.id)
-      : task.taskType || "";
-
-    setTaskData({
-      taskType: resolvedTaskTypeId,
-      recipient: {
-        Name: firstName,
-        Surname: lastName,
-        Phone:
-          task.contacted_person?.phone || task.contacted_person?.Number || "",
-        Email: task.contacted_person?.email || "",
-      },
-      recipientDisplay: task.contacted_person?.name || "",
-      assignedTo:
-        task.assignedTo ||
-        task.leader_name ||
-        task.leader_assigned ||
-        task.name ||
-        (user ? `${user.name} ${user.surname}` : ""),
-      assignedEmail:
-        task.assignedfor ||
-        task.assigned_to_email ||
-        task.leader_assigned ||
-        user?.email ||
-        "",
-      dueDate: formatDateTime(task.date || task.followup_date),
-      status: task.status,
-      taskStage: task.status,
-    });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     try {
-      if (!user?.id) throw new Error("Logged-in user ID not found");
-
-      const person = taskData.recipient;
-      if (!person || !person.Name) {
-        throw new Error(
-          "Person details not found. Please select a valid recipient.",
-        );
-      }
-
-      const isConsolidationTask =
-        selectedTask?.taskType === "consolidation" ||
-        selectedTask?.is_consolidation_task;
-      const fallbackAssigneeName =
-        taskData.assignedTo || (user ? `${user.name} ${user.surname}` : "");
-      const fallbackAssigneeEmail = taskData.assignedEmail || user?.email || "";
-
-      let assigneeName = fallbackAssigneeName.trim();
-      let assigneeEmail = fallbackAssigneeEmail.trim();
-
-      if (!assigneeEmail && assigneeName) {
-        const matchedPerson = allPeople.find((person) => {
-          const fullName = `${person.name || ""} ${person.surname || ""}`.trim().toLowerCase();
-          const searchValue = assigneeName.toLowerCase();
-          return (
-            fullName === searchValue ||
-            fullName.includes(searchValue) ||
-            (person.email || "").toLowerCase() === searchValue
-          );
-        });
-        assigneeEmail = matchedPerson?.email || "";
-      }
-
-      if (!assigneeName) {
-        assigneeName = user ? `${user.name || ""} ${user.surname || ""}`.trim() : "";
-      }
-      if (!assigneeEmail) {
-        assigneeEmail = user?.email || "";
-      }
-
-      const taskPayload = {
-        memberID: user.id,
-        name: assigneeName,
-        assignedTo: assigneeName,
-        taskType:
-          taskTypes.find(
-            (t) => String(t._id || t.id) === String(taskData.taskType),
-          )?.name ||
-          taskData.taskType ||
-          (isConsolidationTask
-            ? "consolidation"
-            : formType === "call"
-              ? "Call Task"
-              : "Visit Task"),
-        contacted_person: {
-          name: `${person.Name} ${person.Surname || ""}`.trim(),
-          phone: person.Phone || person.Number || "",
-          email: person.Email || "",
-        },
-        followup_date: new Date(taskData.dueDate).toISOString(),
+      // Build task payload
+      const payload = {
+        ...taskData,
+        taskType: taskData.taskType,
         status: taskData.taskStage || "Open",
-        type: formType || "call",
-        assignedfor: assigneeEmail,
-        assigned_to_email: assigneeEmail,
-        created_by_email: user.email,
-        created_by_name: `${user.name} ${user.surname}`.trim(),
       };
-
-      if (isConsolidationTask) {
-        taskPayload.leader_name = assigneeName;
-        taskPayload.leader_assigned = assigneeEmail || assigneeName;
-        taskPayload.is_consolidation_task = true;
-      }
-
-      if (selectedTask && selectedTask._id) {
-        await updateTask(selectedTask._id, taskPayload);
-        toast.info(
-          `Task for ${person.Name} ${person.Surname} updated successfully!`,
-        );
-      } else {
-        await createTask(taskPayload);
-
-        const isAssignedToSomeoneElse =
-          taskData.assignedEmail &&
-          taskData.assignedEmail.toLowerCase() !== user.email.toLowerCase();
-
-        if (isAssignedToSomeoneElse) {
-          toast.success(
-            `You have successfully assigned a task to ${taskData.assignedTo} for ${person.Name} ${person.Surname}`,
-          );
-        } else {
-          toast.success(
-            `You have successfully captured ${person.Name} ${person.Surname}`,
-          );
-        }
-      }
+      // Submit to backend
+      const res = await authFetch(`${API_URL}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error("Failed to create task");
+      toast.success("Task created successfully");
       handleClose();
+      await fetchUserTasks();
     } catch (err) {
-      console.error("Error adding task:", err.message);
-      toast.error("Failed to create task: " + err.message);
+      toast.error(err.message || "Failed to create task");
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Helper function to get consolidation/new person chip info
-  const getTaskChipInfo = (task) => {
-    const isConsolidation = task.is_consolidation_task;
-    const isNewPerson = task.is_new_person_task;
-
-    if (!isConsolidation && !isNewPerson) return null;
-    if (task.source_display === "Manual") return null;
-
-    // Get the service date from the task - try multiple field names
-    const serviceDate = task.decision_date || task.created_at || task.date;
-    if (!serviceDate) {
-      if (isConsolidation || isNewPerson) {
-        console.warn("No service date found for task:", task);
-      }
-      return null;
-    }
-
-    const date = new Date(serviceDate);
-    if (isNaN(date.getTime())) {
-      console.warn("Invalid date for task:", serviceDate);
-      return null;
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const diffTime = today.getTime() - date.getTime();
-    const diffHours = diffTime / (1000 * 60 * 60);
-    const isCompleted = ["completed", "done"].includes(
-      task.status?.toLowerCase(),
-    );
-    const isOverdue = !isCompleted && diffHours > 24;
-
-    // Format the date
-    const monthNames = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
-    const formattedDate = `${monthNames[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
-
-    let text, backgroundColor, color;
-
-    if (isNewPerson) {
-      text = isOverdue
-        ? `Overdue New Person - ${formattedDate}`
-        : `New Person - ${formattedDate}`;
-      backgroundColor = isOverdue ? "#dbeafe" : "#bfdbfe";
-      color = isOverdue ? "#1e40af" : "#1e3a8a";
-    } else {
-      text = isOverdue
-        ? `Overdue Consolidation - ${formattedDate}`
-        : `Consolidation - ${formattedDate}`;
-      backgroundColor = isOverdue ? "#fee2e2" : "#fce7f3";
-      color = isOverdue ? "#991b1b" : "#be185d";
-    }
-
-    return {
-      text,
-      backgroundColor,
-      color,
-      isOverdue,
-    };
-  };
-
-  const filteredTasks = tasks.filter((task) => {
-  const normalizedStatus = (task.status || "").toLowerCase();
-  const isCompleted = normalizedStatus === "completed";
-  const isAwaiting = normalizedStatus.includes("await");
-  const isCancelled = ["cancelled", "canceled", "deleted"].includes(normalizedStatus);
-  const isOpen = !isCompleted && !isAwaiting && !isCancelled;
-  const isConsolidationOrFollowUp =
-    task.is_consolidation_task === true || task.is_new_person_task === true;
-
-  const matchesType =
-    filterType === "all" ||
-    task.type === filterType ||
-    (filterType === "consolidation" && isConsolidationOrFollowUp);
-
-  if (!matchesType) return false;
-
-  const matchesStatus =
-    statusFilter === "all" ||
-    (statusFilter === "open" && isOpen) ||
-    (statusFilter === "awaiting" && isAwaiting) ||
-    (statusFilter === "completed" && isCompleted);
-
-  if (!matchesStatus) return false;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // OPEN tasks: overdue ones always show, future/today ones show normally
-  if (!isCompleted) {
-    const followupDate = parseDate(task.followup_date || task.date);
-    // No date at all — show open consolidation/followup, hide others
-    if (!followupDate) return isConsolidationOrFollowUp;
-    // Overdue open tasks always show regardless of date filter
-    if (followupDate < today) return true;
-    // Not overdue — apply normal date filter below
-  }
-
-  // COMPLETED tasks and non-overdue open tasks: apply date filter
-  // Completed tasks use completedAt date; open non-overdue use followup_date
-  const completedDate = parseDate(task.completedAt || task.completed_at);
-  const followupDate = parseDate(task.followup_date || task.date);
-  const fallbackDate = parseDate(task.createdAt || task.created_at);
-
-  const dateToCheck = isCompleted
-    ? (completedDate || followupDate || fallbackDate)
-    : (followupDate || fallbackDate);
-
-  if (!dateToCheck) return false;
-
-  switch (dateRange) {
-    case "today":
-      // Completed: show if completed today OR (no completedAt) followup was today
-      if (isCompleted) {
-        return (
-          (completedDate && isSameDay(completedDate, today)) ||
-          (!completedDate && followupDate && isSameDay(followupDate, today))
-        );
-      }
-      return isSameDay(dateToCheck, today);
-
-    case "thisWeek": {
-      const start = getStartOfWeek(today);
-      const end = getEndOfWeek(today);
-      if (isCompleted) {
-        return (
-          (completedDate && isDateInRange(completedDate, start, end)) ||
-          (!completedDate && followupDate && isDateInRange(followupDate, start, end))
-        );
-      }
-      return isDateInRange(dateToCheck, start, end);
-    }
-
-    case "thisMonth": {
-      const start = getStartOfMonth(today);
-      const end = getEndOfMonth(today);
-      return isDateInRange(dateToCheck, start, end);
-    }
-
-    case "previousWeek": {
-      const lastWeekDate = new Date(today);
-      lastWeekDate.setDate(today.getDate() - 7);
-      return isDateInRange(
-        dateToCheck,
-        getStartOfWeek(lastWeekDate),
-        getEndOfWeek(lastWeekDate)
-      );
-    }
-
-    case "previousMonth": {
-      const lastMonthDate = new Date(today);
-      lastMonthDate.setMonth(today.getMonth() - 1);
-      return isDateInRange(
-        dateToCheck,
-        getStartOfMonth(lastMonthDate),
-        getEndOfMonth(lastMonthDate)
-      );
-    }
-
-    case "custom": {
-      const start = parseDate(customStartDate);
-      const end = parseDate(customEndDate);
-      if (!start || !end) return true;
-      start.setHours(0, 0, 0, 0);
-      end.setHours(23, 59, 59, 999);
-      return isDateInRange(dateToCheck, start, end);
-    }
-
-    default:
-      return true;
-  }
-});
-
-  const downloadFilteredTasks = () => {
+  // ─── Fetch user tasks with filters ───────────────────────────────────
+  const fetchUserTasks = useCallback(async (pageNum = 1, append = false) => {
+    if (!user?.email) return;
+    setLoading(true);
     try {
-      if (!filteredTasks || filteredTasks.length === 0) {
-        toast.info("No data to download.");
-        return;
+      const dateParams = getDateRangeParams(dateRange);
+      const params = new URLSearchParams({
+        email: user.email,
+        page: pageNum.toString(),
+        limit: batchSize.toString(),
+      });
+      
+      // Date range filters
+      if (dateParams.start_date) params.append("start_date", dateParams.start_date);
+      if (dateParams.end_date) params.append("end_date", dateParams.end_date);
+      if (dateParams.all_dates) params.append("all_dates", "true");
+      
+      // Status filter (from quick filter pills)
+      if (filter !== "all") {
+        params.append("status", filter);
       }
-
-      const formattedTasks = filteredTasks.map((task) => ({
-        "Member ID": task.memberID || user.id || "",
-        Name: task.name || user.name || "",
-        "Task Type": task.taskType || "",
-        "Contact Person": task.contacted_person?.name || "",
-        "Contact Phone":
-          task.contacted_person?.phone || task.contacted_person?.Number || "",
-        "Contact Email": task.contacted_person?.email || "",
-        "Follow-up Date": task.followup_date
-          ? new Date(task.followup_date).toLocaleString()
-          : "",
-        Status: task.status || "",
-        Type: task.type || "",
-        "Assigned For": task.assignedfor || user.email || "",
+      
+      // Task type filter (from advanced modal)
+      if (pendingFilterType !== "all") {
+        params.append("task_type", pendingFilterType);
+      }
+      
+      // View filter (personal/team/all)
+      if (pendingViewFilter === "all") {
+        params.append("view_all", "true");
+      } else if (pendingViewFilter === "team" && selectedPeople.length > 0) {
+        // Send selected people emails
+        selectedPeople.forEach((p) => params.append("email", p.email));
+      }
+      // For "personal" view, only the user's email is sent (already in params)
+      
+      const res = await authFetch(`${API_URL}/tasks?${params.toString()}`);
+      if (!res.ok) throw new Error("Failed to fetch tasks");
+      const data = await res.json();
+      const fetchedTasks = Array.isArray(data) ? data : data.tasks || [];
+      
+      // Normalize tasks
+      const normalized = fetchedTasks.map((task) => ({
+        ...task,
+        name: task.name || task.taskName || "Unknown",
+        person: task.contacted_person?.name || task.person_name || "Unknown",
+        type: task.taskType || task.type || "Unknown",
+        status: (task.status || "open").toLowerCase(),
+        date: task.followup_date || task.date || task.created_at || new Date().toISOString(),
       }));
-
-      const headers = Object.keys(formattedTasks[0]);
-
-      const columnWidths = headers.map((header) => {
-        let maxLength = header.length;
-        formattedTasks.forEach((task) => {
-          const value = String(task[header] || "");
-          if (value.length > maxLength) {
-            maxLength = value.length;
-          }
-        });
-        return Math.min(Math.max(maxLength * 7 + 5, 65), 350);
-      });
-
-      let html = `
-        <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
-          <head>
-            <meta charset="utf-8">
-            <!--[if gte mso 9]>
-            <xml>
-              <x:ExcelWorkbook>
-                <x:ExcelWorksheets>
-                  <x:ExcelWorksheet>
-                    <x:Name>Filtered Tasks</x:Name>
-                    <x:WorksheetOptions>
-                      <x:DisplayGridlines/>
-                    </x:WorksheetOptions>
-                    <x:WorksheetColumns>
-      ${columnWidths.map((width, index) => `                    <x:Column ss:Index="${index + 1}" ss:AutoFitWidth="0" ss:Width="${width}"/>`).join("\n")}
-                    </x:WorksheetColumns>
-                  </x:ExcelWorksheet>
-                </x:ExcelWorksheets>
-              </x:ExcelWorkbook>
-            </xml>
-            <![endif]-->
-            <style>
-              table {
-                border-collapse: collapse;
-                width: 100%;
-                font-family: Calibri, Arial, sans-serif;
-              }
-              th {
-                background-color: #a3aca3ff;
-                color: white;
-                font-weight: bold;
-                padding: 12px 8px;
-                text-align: center;
-                border: 1px solid #ddd;
-                font-size: 11pt;
-                white-space: nowrap;
-              }
-              td {
-                padding: 8px;
-                border: 1px solid #ddd;
-                font-size: 10pt;
-                text-align: left;
-              }
-              tr:nth-child(even) {
-                background-color: #f2f2f2;
-              }
-            </style>
-          </head>
-          <body>
-            <table border="1">
-              <thead>
-                <tr>
-      `;
-
-      headers.forEach((header) => {
-        html += `                <th>${header}</th>\n`;
-      });
-
-      html += `              </tr>\n            </thead>\n            <tbody>\n`;
-
-      formattedTasks.forEach((task) => {
-        html += `              <tr>\n`;
-        headers.forEach((header) => {
-          const value = task[header] || "";
-          html += `                <td>${value}</td>\n`;
-        });
-        html += `              </tr>\n`;
-      });
-
-      html += `            </tbody>
-            </table>
-          </body>
-        </html>`;
-
-      const blob = new Blob([html], {
-        type: "application/vnd.ms-excel;charset=utf-8;",
-      });
-
-      const link = document.createElement("a");
-      const url = URL.createObjectURL(blob);
-      const fileName = `filtered_tasks_${user?.name || "user"}_${new Date().toISOString().split("T")[0]}.xls`;
-
-      link.href = url;
-      link.download = fileName;
-      link.style.display = "none";
-      document.body.appendChild(link);
-      link.click();
-
-      setTimeout(() => {
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }, 100);
-
-      console.log("Download successful!");
-    } catch (error) {
-      console.error("Error downloading Excel file:", error);
-      toast.error("Error creating Excel file: " + error.message);
-    }
-  };
-
-  const [totalCount, setTotalCount] = useState(0);
-
-  useEffect(() => {
-    const count = filteredTasks.filter(
-      (t) =>
-        (t.status || "").toLowerCase() === "completed" ||
-        (t.status || "").toLowerCase() === "awaiting task",
-    ).length;
-
-    setTotalCount(count);
-  }, [filteredTasks]);
-
-  useEffect(() => {
-    setSelectedTaskIds((current) =>
-      current.filter((taskId) =>
-        tasks.some((task) => String(task._id) === taskId),
-      ),
-    );
-  }, [tasks]);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const handleTaskUpdated = (event) => {
-      console.log("Task updated event received:", event.detail);
-      fetchUserTasks();
-
-      if (event.detail?.action === "tasksDeleted") {
-        toast.info(`${event.detail.count} task(s) removed`);
-      } else if (event.detail?.action === "consolidationCreated") {
-        toast.info("New consolidation task added");
+      
+      if (append) {
+        setTasks((prev) => [...prev, ...normalized]);
+      } else {
+        setTasks(normalized);
       }
-    };
+      
+      setHasMore(data.has_more || false);
+      setTotalTasks(data.total || data.total_tasks || normalized.length);
+      setPage(pageNum);
+    } catch (err) {
+      console.error("Error fetching tasks:", err.message);
+      // Don't update state on error to avoid infinite retry loops
+    } finally {
+      setLoading(false);
+    }
+  }, [user, authFetch, API_URL, dateRange, filter, pendingFilterType, pendingViewFilter, selectedPeople, batchSize, getDateRangeParams]);
 
-    window.addEventListener("taskUpdated", handleTaskUpdated);
+  // Load tasks on mount and when filters change
+  useEffect(() => {
+    if (user) {
+      setPage(1);
+      fetchUserTasks(1, false);
+      fetchTaskTypes();
+    }
+  }, [user, fetchUserTasks, fetchTaskTypes]);
 
-    return () => {
-      window.removeEventListener("taskUpdated", handleTaskUpdated);
-    };
-  }, [user, fetchUserTasks]);
-
-  // Listen for task updates from TaskUpdateContext
   useEffect(() => {
     if (updateCount > 0) {
-      console.log("Task update from context:", updateCount);
-      fetchUserTasks();
+      setPage(1);
+      fetchUserTasks(1, false);
     }
   }, [updateCount, fetchUserTasks]);
 
-  const toggleTaskSelection = (taskId) => {
-    setSelectedTaskIds((current) =>
-      current.includes(taskId)
-        ? current.filter((id) => id !== taskId)
-        : [...current, taskId],
-    );
-  };
+  // Filter tasks based on status filter (client-side fallback if needed)
+  const visibleTasks = tasks.filter((t) => filter === "all" || t.status === filter);
+  const totalCount = tasks.length;
 
-  const selectAllVisibleTasks = () => {
-    const visibleIds = filteredTasks.map((task) => String(task._id));
-    const allSelected =
-      visibleIds.length > 0 &&
-      visibleIds.every((taskId) => selectedTaskIds.includes(taskId));
-    setSelectedTaskIds(allSelected ? [] : visibleIds);
-  };
-
-  const runBulkAction = async (action) => {
-    if (!selectedTaskIds.length || bulkActionLoading) return;
-    if (
-      action === "delete" &&
-      !window.confirm(
-        `Delete ${selectedTaskIds.length} selected task${
-          selectedTaskIds.length === 1 ? "" : "s"
-        }? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-
-    setBulkActionLoading(action);
-    try {
-      const response = await authFetch(`${API_URL}/tasks/bulk`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          task_ids: selectedTaskIds,
-          action,
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.detail || `HTTP ${response.status}`);
-      }
-
-      const affectedIds = new Set(selectedTaskIds.map(String));
-      const nowIso = new Date().toISOString();
-      setTasks((current) =>
-        action === "delete"
-          ? current.filter((task) => !affectedIds.has(String(task._id)))
-          : current.map((task) =>
-              affectedIds.has(String(task._id))
-                ? {
-                    ...task,
-                    status: action === "complete" ? "completed" : "open",
-                    completedAt: action === "complete" ? nowIso : null,
-                  }
-                : task,
-            ),
-      );
-
-      setSelectedTaskIds([]);
-      toast.success(
-        action === "delete"
-          ? `Deleted ${payload.updated_count ?? selectedTaskIds.length} task(s)`
-          : action === "complete"
-            ? `Completed ${payload.updated_count ?? selectedTaskIds.length} task(s)`
-            : `Reopened ${payload.updated_count ?? selectedTaskIds.length} task(s)`,
-      );
-      window.dispatchEvent(
-        new CustomEvent("taskUpdated", {
-          detail: {
-            action: "bulkTasksUpdated",
-            bulkAction: action,
-            count: payload.updated_count,
-          },
-        }),
-      );
-      await fetchUserTasks();
-    } catch (err) {
-      console.error("Bulk task action failed:", err);
-      toast.error(err.message || "Bulk action failed");
-    } finally {
-      setBulkActionLoading("");
-    }
-  };
-
-  // Whether people are still being loaded for the first time
-  const peopleNotLoadedYet = !hasCachedPeople() && allPeople.length === 0;
-
+  // ─── Main Render ────────────────────────────────────────────────────
   return (
     <div
       style={{
@@ -1662,1470 +1073,395 @@ export default function DailyTasks() {
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: isDarkMode ? "#1e1e1e" : "#f8f9fa",
-        paddingTop: "5rem",
+        backgroundColor: colors.background,
       }}
     >
-      {/* Header section */}
-      <div
-        style={{
-          maxWidth: "1200px",
-          margin: "0 auto",
-          padding: "16px 16px 0 16px",
-          width: "100%",
-          flexShrink: 0,
-          boxSizing: "border-box",
-        }}
-      >
-        <div
+      {/* Main column */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {/* Top bar */}
+        <header
           style={{
-            backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
-            color: isDarkMode ? "#fff" : "#1a1a24",
-            borderRadius: "16px",
-            padding: "24px 16px",
-            textAlign: "center",
-            boxShadow: isDarkMode
-              ? "0 2px 8px rgba(255,255,255,0.1)"
-              : "0 4px 24px rgba(0, 0, 0, 0.08)",
-            border: `1px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "32px 40px 16px 40px",
+            backgroundColor: colors.background,
           }}
         >
-          <h1
-            style={{
-              fontSize: "clamp(48px, 8vw, 72px)",
-              fontWeight: "700",
-              margin: 0,
-              letterSpacing: "-2px",
-              lineHeight: "1.2",
-            }}
-          >
-            {totalCount}
+          <h1 style={{ fontSize: "20px", fontWeight: "600", letterSpacing: "-0.02em", color: colors.foreground }}>
+            Daily Tasks Overview
           </h1>
-          <p
-            style={{
-              marginTop: "8px",
-              fontSize: "14px",
-              letterSpacing: "1px",
-              textTransform: "uppercase",
-              color: isDarkMode ? "#aaa" : "#6b7280",
-              fontWeight: "600",
-            }}
-          >
-            Tasks Complete
-          </p>
-
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              gap: "12px",
-              marginTop: "24px",
-              flexWrap: "wrap",
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <div
+              style={{
+                width: "40px",
+                height: "40px",
+                borderRadius: "50%",
+                backgroundColor: colors.gold,
+              }}
+            />
             <button
               style={{
+                width: "40px",
+                height: "40px",
+                borderRadius: "8px",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                gap: "8px",
-                backgroundColor: isDarkMode ? "#fff" : "#000",
-                color: isDarkMode ? "#000" : "#fff",
-                fontWeight: "600",
-                padding: "12px 20px",
-                borderRadius: "10px",
+                backgroundColor: "transparent",
                 border: "none",
                 cursor: "pointer",
-                fontSize: "14px",
-                boxShadow: isDarkMode
-                  ? "0 2px 8px rgba(18, 163, 37, 0.1)"
-                  : "0 4px 24px rgba(0, 0, 0, 0.08)",
-                width: "140px",
-                minHeight: "44px",
+                color: colors.mutedForeground,
               }}
-              onClick={() => handleOpen("call")}
+              aria-label="More options"
             >
-              <Phone size={18} /> Call Task
+              <MoreVertical size={20} />
             </button>
-            <button
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                backgroundColor: isDarkMode ? "#fff" : "#000",
-                color: isDarkMode ? "#000" : "#fff",
-                fontWeight: "600",
-                padding: "12px 20px",
-                borderRadius: "10px",
-                border: "none",
-                cursor: "pointer",
-                fontSize: "14px",
-                boxShadow: isDarkMode
-                  ? "0 2px 8px rgba(255,255,255,0.1)"
-                  : "0 4px 24px rgba(0, 0, 0, 0.08)",
-                width: "140px",
-                minHeight: "44px",
-              }}
-              onClick={() => handleOpen("visit")}
-            >
-              <UserPlus size={18} /> Visit Task
-            </button>
+          </div>
+        </header>
 
-            {isAdmin && (
+        <main style={{ flex: 1, padding: "0 40px 64px 40px" }}>
+          {/* Heading + action buttons */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "24px" }}>
+            <h2 style={{ fontSize: "36px", fontWeight: "700", letterSpacing: "-0.02em", color: colors.foreground }}>
+              Daily Tasks
+            </h2>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
               <button
+                onClick={() => handleOpen("call")}
                 style={{
-                  display: "flex",
+                  display: "inline-flex",
                   alignItems: "center",
-                  justifyContent: "center",
                   gap: "8px",
-                  backgroundColor: isDarkMode ? "#fff" : "#000",
-                  color: isDarkMode ? "#000" : "#fff",
-                  fontWeight: "600",
-                  padding: "12px 20px",
                   borderRadius: "10px",
-                  border: "none",
-                  cursor: "pointer",
+                  backgroundColor: colors.primary,
+                  color: colors.primaryForeground,
+                  fontWeight: "500",
+                  padding: "12px 20px",
                   fontSize: "14px",
-                  boxShadow: isDarkMode
-                    ? "0 2px 8px rgba(255,255,255,0.1)"
-                    : "0 4px 24px rgba(0, 0, 0, 0.08)",
-                  width: "140px",
-                  minHeight: "44px",
+                  border: `1px solid ${colors.primaryBorder}`,
+                  cursor: "pointer",
                 }}
+              >
+                <Phone size={16} />
+                Call Task
+              </button>
+              <button
+                onClick={() => handleOpen("visit")}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  borderRadius: "10px",
+                  backgroundColor: colors.card,
+                  color: colors.foreground,
+                  fontWeight: "500",
+                  padding: "12px 20px",
+                  fontSize: "14px",
+                  border: `1px solid ${colors.border}`,
+                  cursor: "pointer",
+                }}
+              >
+                <MapPin size={16} />
+                Visit Task
+              </button>
+              <button
                 onClick={() => {
-                  console.log(
-                    "New Task Type button clicked – setter exists:",
-                    !!setNewTaskTypeName,
-                  );
                   setIsAddTypeModalOpen(true);
                   setNewTaskTypeName("");
                 }}
-              >
-                <Plus size={18} /> New Task Type
-              </button>
-            )}
-          </div>
-
-          <div
-            style={{
-              marginTop: "20px",
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              flexWrap: "wrap",
-            }}
-          >
-            <select
-              style={{
-                padding: "10px 16px",
-                borderRadius: "10px",
-                border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
-                color: isDarkMode ? "#fff" : "#1a1a24",
-                fontSize: "14px",
-                cursor: "pointer",
-                fontWeight: "500",
-                outline: "none",
-                width: "100%",
-                maxWidth: "280px",
-              }}
-              value={dateRange}
-              onChange={(e) => setDateRange(e.target.value)}
-            >
-              <option value="today">Today</option>
-              <option value="thisWeek">This Week</option>
-              <option value="thisMonth">This Month</option>
-              <option value="previousWeek">Previous Week</option>
-              <option value="previousMonth">Previous Month</option>
-              <option value="custom">Custom range</option>
-            </select>
-            {dateRange === "custom" && (
-              <div
                 style={{
-                  display: "flex",
+                  display: "inline-flex",
                   alignItems: "center",
                   gap: "8px",
-                  flexWrap: "wrap",
+                  borderRadius: "10px",
+                  border: `1px solid ${colors.tealBorder}`,
+                  backgroundColor: "transparent",
+                  color: colors.teal,
+                  fontWeight: "500",
+                  padding: "12px 20px",
+                  fontSize: "14px",
+                  cursor: "pointer",
                 }}
               >
-                <input
-                  type="date"
-                  aria-label="Task range start date"
-                  value={customStartDate}
-                  max={customEndDate}
-                  onChange={(e) => setCustomStartDate(e.target.value)}
-                  style={{
-                    padding: "9px 12px",
-                    borderRadius: "10px",
-                    border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                    backgroundColor: isDarkMode ? "#2d2d2d" : "#fff",
-                    color: isDarkMode ? "#fff" : "#1a1a24",
-                  }}
-                />
-                <span style={{ color: isDarkMode ? "#aaa" : "#6b7280" }}>to</span>
-                <input
-                  type="date"
-                  aria-label="Task range end date"
-                  value={customEndDate}
-                  min={customStartDate}
-                  onChange={(e) => setCustomEndDate(e.target.value)}
-                  style={{
-                    padding: "9px 12px",
-                    borderRadius: "10px",
-                    border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                    backgroundColor: isDarkMode ? "#2d2d2d" : "#fff",
-                    color: isDarkMode ? "#fff" : "#1a1a24",
-                  }}
-                />
-              </div>
-            )}
+                <Plus size={16} />
+                New Task Type
+              </button>
+            </div>
           </div>
-
-          <div style={{ marginTop: "12px" }}>
-            <button
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                backgroundColor: isDarkMode ? "#fff" : "#000",
-                color: isDarkMode ? "#000" : "#fff",
-                fontWeight: "600",
-                padding: "12px 20px",
-                borderRadius: "10px",
-                border: "none",
-                cursor: "pointer",
-                fontSize: "14px",
-                boxShadow: isDarkMode
-                  ? "0 2px 8px rgba(255,255,255,0.1)"
-                  : "0 4px 24px rgba(0, 0, 0, 0.08)",
-                width: "100%",
-                maxWidth: "280px",
-                margin: "0 auto",
-              }}
-              onClick={downloadFilteredTasks}
-            >
-              Download Filtered Tasks
-            </button>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            gap: "8px",
-            marginTop: "20px",
-            flexWrap: "wrap",
-            overflowX: "auto",
-            paddingBottom: "8px",
-          }}
-        >
-          {["all", "call", "visit", "consolidation"].map((type) => (
-            <button
-              key={type}
-              style={{
-                padding: "8px 16px",
-                borderRadius: "20px",
-                border:
-                  filterType === type
-                    ? "none"
-                    : `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                fontWeight: "600",
-                cursor: "pointer",
-                backgroundColor:
-                  filterType === type
-                    ? isDarkMode
-                      ? "#fff"
-                      : "#000"
-                    : isDarkMode
-                      ? "#2d2d2d"
-                      : "#ffffff",
-                color:
-                  filterType === type
-                    ? isDarkMode
-                      ? "#000"
-                      : "#fff"
-                    : isDarkMode
-                      ? "#fff"
-                      : "#1a1a24",
-                fontSize: "13px",
-                boxShadow:
-                  filterType === type
-                    ? isDarkMode
-                      ? "0 2px 8px rgba(255,255,255,0.1)"
-                      : "0 4px 24px rgba(0, 0, 0, 0.08)"
-                    : "none",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
-              }}
-              onClick={() => setFilterType(type)}
-            >
-              {type === "all"
-                ? "All"
-                : type.charAt(0).toUpperCase() + type.slice(1)}
-            </button>
-          ))}
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            gap: "8px",
-            marginTop: "10px",
-            flexWrap: "wrap",
-          }}
-        >
-          <span
+          {/* Filter Panel Button */}
+          <button
+            onClick={() => setFilterPanelOpen(true)}
             style={{
-              fontSize: "12px",
-              fontWeight: "700",
-              color: isDarkMode ? "#aaa" : "#6b7280",
-              textTransform: "uppercase",
-              letterSpacing: "0.5px",
-              marginRight: "4px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              borderRadius: "10px",
+              backgroundColor: colors.card,
+              color: colors.foreground,
+              fontWeight: "500",
+              padding: "12px 20px",
+              fontSize: "14px",
+              border: `1px solid ${colors.border}`,
+              cursor: "pointer",
             }}
           >
-            Status
-          </span>
-          {[
-            { value: "all", label: "All" },
-            { value: "open", label: "Open only" },
-            { value: "awaiting", label: "Awaiting" },
-            { value: "completed", label: "Completed" },
-          ].map((status) => (
-            <button
-              key={status.value}
-              style={{
-                padding: "6px 14px",
-                borderRadius: "18px",
-                border:
-                  statusFilter === status.value
-                    ? "none"
-                    : `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                fontWeight: "600",
-                cursor: "pointer",
-                fontSize: "12px",
-                backgroundColor:
-                  statusFilter === status.value
-                    ? isDarkMode
-                      ? "#fff"
-                      : "#000"
-                    : isDarkMode
-                      ? "#2d2d2d"
-                      : "#ffffff",
-                color:
-                  statusFilter === status.value
-                    ? isDarkMode
-                      ? "#000"
-                      : "#fff"
-                    : isDarkMode
-                      ? "#fff"
-                      : "#1a1a24",
-              }}
-              onClick={() => setStatusFilter(status.value)}
-            >
-              {status.label}
-            </button>
-          ))}
+            <Filter size={16} />
+            Filters
+          </button>
         </div>
-      </div>
 
-      {/* Task list container */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          maxWidth: "1200px",
-          margin: "0 auto",
-          padding: "0 16px 16px 16px",
-          width: "100%",
-          boxSizing: "border-box",
-        }}
-      >
-        <div style={{ marginTop: "16px" }}>
-          {selectedTaskIds.length > 0 && (
+        {/* Stat card + filter pills + right controls */}
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "16px", marginTop: "32px" }}>
             <div
               style={{
-                position: "sticky",
-                top: 0,
-                zIndex: 2,
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                flexWrap: "wrap",
-                padding: "10px 12px",
-                marginBottom: "12px",
-                borderRadius: "12px",
-                border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
-                backgroundColor: isDarkMode ? "#111827" : "#eef6f8",
-                boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+                borderRadius: "14px",
+                border: `1px solid ${colors.border}`,
+                backgroundColor: colors.card,
+                padding: "24px 32px",
               }}
             >
-              <strong style={{ fontSize: "13px", marginRight: "4px" }}>
-                {selectedTaskIds.length} selected
-              </strong>
-              <button
-                style={bulkButtonStyle(isDarkMode, "#000", "#fff")}
-                onClick={selectAllVisibleTasks}
-              >
-                {filteredTasks.length > 0 &&
-                filteredTasks.every((task) =>
-                  selectedTaskIds.includes(String(task._id)),
-                )
-                  ? "Clear selection"
-                  : "Select all visible"}
-              </button>
-              <button
-                style={bulkButtonStyle(isDarkMode, "#166534", "#fff")}
-                onClick={() => runBulkAction("complete")}
-                disabled={!!bulkActionLoading}
-              >
-                {bulkActionLoading === "complete" ? "Completing..." : "Mark complete"}
-              </button>
-              <button
-                style={bulkButtonStyle(isDarkMode, "#92400e", "#fff")}
-                onClick={() => runBulkAction("reopen")}
-                disabled={!!bulkActionLoading}
-              >
-                {bulkActionLoading === "reopen" ? "Reopening..." : "Reopen"}
-              </button>
-              <button
-                style={bulkButtonStyle(isDarkMode, "#991b1b", "#fff")}
-                onClick={() => runBulkAction("delete")}
-                disabled={!!bulkActionLoading}
-              >
-                {bulkActionLoading === "delete" ? "Deleting..." : "Delete"}
-              </button>
-              <button
-                style={bulkButtonStyle(isDarkMode, "transparent", isDarkMode ? "#fff" : "#111827", true)}
-                onClick={() => setSelectedTaskIds([])}
-                disabled={!!bulkActionLoading}
-              >
-                Clear
-              </button>
+              <div style={{ fontSize: "48px", fontWeight: "700", lineHeight: "1", color: colors.foreground }}>
+                {totalCount}
+              </div>
+              <div style={{ marginTop: "8px", fontSize: "11px", fontWeight: "500", letterSpacing: "0.18em", textTransform: "uppercase", color: colors.mutedForeground }}>
+                TASKS COMPLETE
+              </div>
             </div>
-          )}
-          {loading ? (
-            <p
-              style={{
-                textAlign: "center",
-                color: isDarkMode ? "#aaa" : "#6b7280",
-                fontStyle: "italic",
-                padding: "20px",
-              }}
-            >
-              Loading tasks...
-            </p>
-          ) : filteredTasks.length === 0 ? (
-            <p
-              style={{
-                textAlign: "center",
-                color: isDarkMode ? "#aaa" : "#6b7280",
-                padding: "20px",
-              }}
-            >
-              No tasks yet.
-            </p>
-          ) : (
-            filteredTasks.map((task) => {
-              const recipientName = task.contacted_person?.name || "";
-              const isConsolidation =
-                task.taskType === "consolidation" || task.is_consolidation_task;
-              const isNewPerson =
-                task.taskType === "service follow up" ||
-                task.taskType === "Service follow up" ||
-                task.taskType === "new_person" ||
-                task.is_new_person_task;
 
-              // Debug consolidation and new person tasks
-              if (isConsolidation || isNewPerson) {
-                console.log(
-                  `${isNewPerson ? "New Person" : "Consolidation"} task found:`,
-                  {
-                    name: recipientName,
-                    is_consolidation_task: task.is_consolidation_task,
-                    is_new_person_task: task.is_new_person_task,
-                    decision_date: task.decision_date,
-                    created_at: task.created_at,
-                    date: task.date,
-                  },
-                );
-              }
-
-              const assignedDisplay = task.assignedTo || "";
-              const sourceDisplay = task.source_display || "Manual";
-
-              return (
-                <div
-                  key={task._id}
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" }}>
+              {FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  onClick={() => setFilter(f.key)}
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
-                    padding: "16px",
-                    borderRadius: "12px",
-                    border: `1px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                    marginBottom: "10px",
+                    borderRadius: "10px",
+                    padding: "10px 16px",
+                    fontSize: "13px",
+                    fontWeight: "500",
                     cursor: "pointer",
-                    boxShadow: isDarkMode
-                      ? "0 2px 8px rgba(255,255,255,0.1)"
-                      : "0 4px 24px rgba(0, 0, 0, 0.08)",
+                    transition: "all 0.2s",
+                    backgroundColor: filter === f.key ? colors.primary : colors.card,
+                    color: filter === f.key ? colors.primaryForeground : colors.foreground,
+                    border: filter === f.key ? "none" : `1px solid ${colors.border}`,
                   }}
                 >
-                  <input
-                    type="checkbox"
-                    aria-label={`Select ${recipientName || "task"}`}
-                    checked={selectedTaskIds.includes(String(task._id))}
-                    onChange={() => toggleTaskSelection(String(task._id))}
-                    onClick={(event) => event.stopPropagation()}
-                    style={{
-                      width: 18,
-                      height: 18,
-                      marginRight: 12,
-                      flexShrink: 0,
-                      cursor: "pointer",
-                      accentColor: "#12a5b5",
-                    }}
-                  />
-                  <div
-                    style={{
-                      cursor: "pointer",
-                      flex: 1,
-                      minWidth: 0,
-                    }}
-                    onClick={() => handleEdit(task)}
-                  >
-                    {(() => {
-                      const chipInfo = getTaskChipInfo(task);
-                      return chipInfo ? (
-                        <div style={{ marginBottom: "6px" }}>
-                          <span
-                            style={{
-                              fontSize: "11px",
-                              fontWeight: "700",
-                              backgroundColor: chipInfo.backgroundColor,
-                              color: chipInfo.color,
-                              padding: "4px 8px",
-                              borderRadius: "4px",
-                              display: "inline-block",
-                              textTransform: "capitalize",
-                              letterSpacing: "0.3px",
-                            }}
-                          >
-                            {chipInfo.text}
-                          </span>
-                        </div>
-                      ) : null;
-                    })()}
-
-                    <p
-                      style={{
-                        fontWeight: "700",
-                        color: isDarkMode ? "#fff" : "#1a1a24",
-                        margin: "0 0 4px 0",
-                        fontSize: "15px",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {recipientName || "No recipient"}
-                    </p>
-
-                    <p
-                      style={{
-                        fontSize: "13px",
-                        color: isDarkMode ? "#fff" : "#1a1a24",
-                        margin: "0 0 4px 0",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {assignedDisplay || "Not assigned"}
-                    </p>
-
-                    {isConsolidation &&
-                      sourceDisplay &&
-                      sourceDisplay !== "Manual" && (
-                        <span
-                          style={{
-                            fontSize: "10px",
-                            fontWeight: "700",
-                            backgroundColor:
-                              sourceDisplay === "Service"
-                                ? "#dcfce7"
-                                : sourceDisplay === "Cell"
-                                  ? "#fef3c7"
-                                  : "#e0e7ff",
-                            color:
-                              sourceDisplay === "Service"
-                                ? "#166534"
-                                : sourceDisplay === "Cell"
-                                  ? "#92400e"
-                                  : "#3730a3",
-                            padding: "2px 6px",
-                            borderRadius: "4px",
-                            display: "inline-block",
-                            marginTop: "4px",
-                            marginRight: "6px",
-                            textTransform: "uppercase",
-                            letterSpacing: "0.5px",
-                          }}
-                        >
-                          {sourceDisplay} Consolidation
-                        </span>
-                      )}
-
-                    {task.isRecurring && (
-                      <span
-                        style={{
-                          fontSize: "10px",
-                          fontWeight: "700",
-                          backgroundColor: "#fde047",
-                          color: "#854d0e",
-                          padding: "2px 6px",
-                          borderRadius: "4px",
-                          display: "inline-block",
-                          marginTop: "6px",
-                          textTransform: "uppercase",
-                          letterSpacing: "0.5px",
-                        }}
-                      >
-                        Recurring
-                      </span>
-                    )}
-                  </div>
-
-                  <div
-                    style={{
-                      textAlign: "right",
-                      marginLeft: "12px",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: "inline-block",
-                        padding: "5px 12px",
-                        borderRadius: "16px",
-                        fontSize: "12px",
-                        fontWeight: "600",
-                        textTransform: "capitalize",
-                        border: "2px solid",
-                        cursor: "pointer",
-                        backgroundColor:
-                          task.status === "open"
-                            ? isDarkMode
-                              ? "#2d2d2d"
-                              : "#ffffff"
-                            : task.status === "completed"
-                              ? isDarkMode
-                                ? "#fff"
-                                : "#000"
-                              : isDarkMode
-                                ? "#3a3a3a"
-                                : "#e5e5e5",
-                        color:
-                          task.status === "open"
-                            ? isDarkMode
-                              ? "#fff"
-                              : "#000"
-                            : task.status === "completed"
-                              ? isDarkMode
-                                ? "#000"
-                                : "#fff"
-                              : isDarkMode
-                                ? "#fff"
-                                : "#1a1a24",
-                        borderColor:
-                          task.status === "open"
-                            ? isDarkMode
-                              ? "#fff"
-                              : "#000"
-                            : task.status === "completed"
-                              ? isDarkMode
-                                ? "#fff"
-                                : "#000"
-                              : isDarkMode
-                                ? "#444"
-                                : "#6b7280",
-                      }}
-                      onClick={() => handleEdit(task)}
-                    >
-                      {task.status}
-                    </span>
-                    <div
-                      style={{
-                        fontSize: "11px",
-                        color: isDarkMode ? "#aaa" : "#6b7280",
-                        marginTop: "6px",
-                        fontWeight: "500",
-                      }}
-                    >
-                      {formatDate(task.date)}
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-
-      {isEditTypeModalOpen && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(0,0,0,0.75)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 2000,
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: isDarkMode ? "#1e1e1e" : "#fff",
-              color: isDarkMode ? "#fff" : "#1a1a24",
-              padding: "32px",
-              borderRadius: "16px",
-              width: "90%",
-              maxWidth: "480px",
-              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)",
-              position: "relative",
-            }}
-          >
-            <h2 style={{ margin: "0 0 24px 0", textAlign: "center" }}>
-              Edit Task Type
-            </h2>
-
-            <input
-              type="text"
-              value={editTaskTypeName}
-              onChange={(e) => setEditTaskTypeName(e.target.value)}
-              placeholder="Task type name"
-              autoFocus
-              style={{
-                width: "100%",
-                padding: "12px 16px",
-                fontSize: "16px",
-                borderRadius: "10px",
-                border: `2px solid ${isDarkMode ? "#555" : "#d1d5db"}`,
-                backgroundColor: isDarkMode ? "#2a2a2a" : "#f9fafb",
-                color: isDarkMode ? "#fff" : "#111827",
-                marginBottom: "24px",
-              }}
-            />
-
-            <div style={{ display: "flex", gap: "16px" }}>
-              <button
-                onClick={updateTaskType}
-                disabled={updatingTaskType || !editTaskTypeName.trim()}
-                style={{
-                  flex: 1,
-                  padding: "12px",
-                  backgroundColor: "#2563eb",
-                  color: "white",
-                  borderRadius: "10px",
-                  border: "none",
-                  fontWeight: "600",
-                  cursor: updatingTaskType ? "not-allowed" : "pointer",
-                  opacity: updatingTaskType ? 0.7 : 1,
-                }}
-              >
-                {updatingTaskType ? "Saving..." : "Save Changes"}
-              </button>
-
-              <button
-                onClick={() => {
-                  setIsEditTypeModalOpen(false);
-                  setEditTaskTypeName("");
-                }}
-                style={{
-                  flex: 1,
-                  padding: "12px",
-                  backgroundColor: "#6b7280",
-                  color: "white",
-                  borderRadius: "10px",
-                  border: "none",
-                  fontWeight: "600",
-                  cursor: "pointer",
-                }}
-              >
-                Cancel
-              </button>
+                  {f.label}
+                </button>
+              ))}
             </div>
-          </div>
-        </div>
-      )}
 
-      <Modal
-        isOpen={isModalOpen}
-        onClose={handleClose}
-        isDarkMode={isDarkMode}
-        contentStyle={{
-          width: "90%",
-          maxWidth: "900px",
-          maxHeight: "85vh",
-          overflowY: "auto",
-          padding: "20px",
-          borderRadius: "16px",
-          backgroundColor: isDarkMode ? "#1a1a1e" : "#ffffff",
-        }}
-      >
-        <form
-          style={{ display: "flex", flexDirection: "column", gap: "16px" }}
-          onSubmit={handleSubmit}
-        >
-          <h3
-            style={{
-              fontSize: "20px",
-              fontWeight: "bold",
-              color: isDarkMode ? "#fff" : "#1a1a24",
-              margin: 0,
-              textAlign: "center",
-            }}
-          >
-            {selectedTask?.taskType === "consolidation" ||
-            selectedTask?.is_consolidation_task
-              ? "Consolidation Task"
-              : formType === "call"
-                ? "Call Task"
-                : "Visit Task"}
-          </h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            <label
-              style={{
-                display: "block",
-                fontSize: "13px",
-                fontWeight: "600",
-                color: isDarkMode ? "#fff" : "#1a1a24",
-                marginBottom: "13px",
-              }}
-            >
-              Task Type
-            </label>
-
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <select
-                name="taskType"
-                value={taskData.taskType}
-                onChange={handleChange}
-                required
-                style={{
-                  flex: 1,
-                  padding: "10px 12px",
-                  borderRadius: "10px",
-                  border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                  fontSize: "14px",
-                  backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
-                  color: isDarkMode ? "#fff" : "#1a1a24",
-                  outline: "none",
-                }}
-              >
-                <option value="">Select a task type</option>
-                {taskTypes.map((opt) => (
-                  <option key={opt._id || opt.id} value={opt._id || opt.id}>
-                    {opt.name}
-                  </option>
-                ))}
-              </select>
-
-              {isAdmin && (
-                <div style={{ position: "relative" }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!taskData.taskType) {
-                        toast.info("Please select a task type first");
-                        return;
-                      }
-
-                      const selectedValue = taskData.taskType.trim();
-
-                      let selected = taskTypes.find(
-                        (t) => String(t._id || t.id) === selectedValue,
-                      );
-
-                      if (!selected) {
-                        selected = taskTypes.find(
-                          (t) => t.name === selectedValue,
-                        );
-                      }
-
-                      if (!selected) {
-                        toast.error("Cannot find the selected task type");
-                        return;
-                      }
-
-                      setSelectedTypeToManage(selected);
-                      setTypeMenuOpen(true);
-                    }}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: "10px",
-                      border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                      backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
-                      color: isDarkMode ? "#fff" : "#000",
-                      fontWeight: "800",
-                      cursor: "pointer",
-                      fontSize: "18px",
-                      lineHeight: "1",
-                    }}
-                  >
-                    :
-                  </button>
-
-                  {typeMenuOpen && selectedTypeToManage && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        right: 0,
-                        top: "48px",
-                        backgroundColor: isDarkMode ? "#1e1e1e" : "#fff",
-                        border: `1px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                        borderRadius: "10px",
-                        width: "160px",
-                        boxShadow: isDarkMode
-                          ? "0 8px 24px rgba(255,255,255,0.1)"
-                          : "0 8px 24px rgba(0,0,0,0.2)",
-                        zIndex: 99,
-                        overflow: "hidden",
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!selectedTypeToManage) return;
-                          setEditTaskTypeName(selectedTypeToManage.name || "");
-                          setIsEditTypeModalOpen(true);
-                          setTypeMenuOpen(false);
-                        }}
-                        style={{
-                          width: "100%",
-                          padding: "12px",
-                          border: "none",
-                          background: "transparent",
-                          cursor: "pointer",
-                          textAlign: "left",
-                          fontWeight: "600",
-                          color: isDarkMode ? "#fff" : "#000",
-                        }}
-                      >
-                        Edit
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const id =
-                            selectedTypeToManage?._id ||
-                            selectedTypeToManage?.id;
-                          if (!id) {
-                            toast.error("Cannot delete — missing task type ID");
-                            return;
-                          }
-                          deleteTaskType(id);
-                        }}
-                        disabled={deletingTaskType || !selectedTypeToManage}
-                        style={{
-                          width: "100%",
-                          padding: "12px",
-                          border: "none",
-                          background: "transparent",
-                          cursor: deletingTaskType ? "not-allowed" : "pointer",
-                          textAlign: "left",
-                          fontWeight: "700",
-                          color: "#ef4444",
-                        }}
-                      >
-                        {deletingTaskType ? "Deleting..." : "Delete"}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Recipient field with loading state */}
-          {/* Recipient field with loading state */}
-          <div style={{ position: "relative" }}>
-            <label
-              style={{
-                display: "block",
-                fontSize: "13px",
-                fontWeight: "600",
-                color: isDarkMode ? "#fff" : "#1a1a24",
-                marginBottom: "6px",
-              }}
-            >
-              Recipient
-            </label>
-
-            {/* Banner shown when people haven't loaded yet */}
-            {isLoadingPeople && peopleNotLoadedYet && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  backgroundColor: isDarkMode ? "#2a2a2a" : "#f0f9ff",
-                  border: `1px solid ${isDarkMode ? "#555" : "#bae6fd"}`,
-                  borderRadius: "8px",
-                  padding: "10px 14px",
-                  marginBottom: "10px",
-                  fontSize: "13px",
-                  color: isDarkMode ? "#a5b4fc" : "#0369a1",
-                  fontWeight: "500",
-                }}
-              >
-                <Spinner size={16} color={isDarkMode ? "#a5b4fc" : "#3b82f6"} />
-                Loading people data, please wait…
-              </div>
-            )}
-
-            <div style={{ position: "relative" }}>
-              <input
-                type="text"
-                name="recipientDisplay"
-                value={taskData.recipientDisplay || ""}
-                onChange={(e) => handleRecipientInput(e.target.value)}
-                autoComplete="off"
-                required
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  paddingRight: isSearching ? "44px" : "14px",
-                  borderRadius: "10px",
-                  border: `2px solid ${isDarkMode ? "#555" : "#e5e7eb"}`,
-                  fontSize: "15px",
-                  backgroundColor: isDarkMode ? "#2d2d2d" : "#f8fafc",
-                  color: isDarkMode ? "#fff" : "#1a1a24",
-                  outline: "none",
-                  boxSizing: "border-box",
-                }}
-                placeholder={
-                  isLoadingPeople && peopleNotLoadedYet
-                    ? "Loading people…"
-                    : "Type name to search..."
-                }
-              />
-
-              {/* Spinner inside input when actively searching */}
-              {isSearching && (
-                <div
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "12px" }}>
+              <div style={{ position: "relative" }}>
+                <select
+                  defaultValue="This Week"
+                  onChange={(e) => setDateRange(e.target.value)}
+                  style={{
+                    appearance: "none",
+                    borderRadius: "10px",
+                    backgroundColor: colors.card,
+                    padding: "10px 40px 10px 16px",
+                    fontSize: "13px",
+                    fontWeight: "500",
+                    color: colors.foreground,
+                    border: `1px solid ${colors.border}`,
+                    outline: "none",
+                    cursor: "pointer",
+                  }}
+                  aria-label="Date range"
+                >
+                  <option>This Week</option>
+                  <option>Today</option>
+                  <option>This Month</option>
+                  <option>This Year</option>
+                </select>
+                <ChevronDown
                   style={{
                     position: "absolute",
-                    right: "14px",
+                    right: "12px",
                     top: "50%",
                     transform: "translateY(-50%)",
+                    pointerEvents: "none",
+                    width: "16px",
+                    height: "16px",
+                    color: colors.mutedForeground,
                   }}
-                >
-                  <Spinner
-                    size={18}
-                    color={isDarkMode ? "#94a3b8" : "#64748b"}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Search results dropdown - NICER STYLING */}
-            {searchResults.length > 0 && (
-              <ul
-                style={{
-                  position: "absolute",
-                  zIndex: 20,
-                  width: "100%",
-                  backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
-                  border: `2px solid ${isDarkMode ? "#555" : "#e5e7eb"}`,
-                  borderRadius: "12px",
-                  marginTop: "6px",
-                  maxHeight: "260px",
-                  overflowY: "auto",
-                  listStyle: "none",
-                  padding: "6px 0",
-                  boxShadow: isDarkMode
-                    ? "0 10px 30px rgba(0,0,0,0.6)"
-                    : "0 10px 30px rgba(0,0,0,0.15)",
-                }}
-              >
-                {searchResults.map((person) => {
-                  const displayName =
-                    `${person?.name || ""} ${person?.surname || ""}`.trim();
-                  if (!displayName) return null;
-
-                  return (
-                    <li
-                      key={person._id || Math.random()}
-                      style={{
-                        padding: "12px 16px",
-                        cursor: "pointer",
-                        fontSize: "15px",
-                        color: isDarkMode ? "#e2e8f0" : "#1e2937",
-                        borderBottom: `1px solid ${isDarkMode ? "#333" : "#f1f5f9"}`,
-                      }}
-                      onClick={() => {
-                        setTaskData({
-                          ...taskData,
-                          recipient: {
-                            Name: person.name || "",
-                            Surname: person.surname || "",
-                            Phone: person.phone || "",
-                            Email: person.email || "",
-                          },
-                          recipientDisplay: displayName,
-                        });
-                        setSearchResults([]);
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = isDarkMode
-                          ? "#334155"
-                          : "#f8fafc";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = "transparent";
-                      }}
-                    >
-                      {displayName}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-
-            {/* No results message */}
-            {!isSearching &&
-              taskData.recipientDisplay?.trim().length > 2 &&
-              searchResults.length === 0 &&
-              taskData.recipient === null &&
-              !isLoadingPeople && (
-                <p
-                  style={{
-                    fontSize: "13px",
-                    color: isDarkMode ? "#94a3b8" : "#64748b",
-                    margin: "8px 4px 0",
-                    fontStyle: "italic",
-                  }}
-                >
-                  No matching people found.
-                </p>
-              )}
-          </div>
-
-          <div style={{ position: "relative" }}>
-            <label
-              style={{
-                display: "block",
-                fontSize: "13px",
-                fontWeight: "600",
-                color: isDarkMode ? "#fff" : "#1a1a24",
-                marginBottom: "6px",
-              }}
-            >
-              {selectedTask?.taskType === "consolidation" ||
-              selectedTask?.is_consolidation_task
-                ? "Leader Assigned"
-                : "Assigned To"}
-            </label>
-            <input
-              type="text"
-              name="assignedTo"
-              value={taskData.assignedTo}
-              onChange={(e) => {
-                const value = e.target.value;
-                setTaskData({
-                  ...taskData,
-                  assignedTo: value,
-                  assignedEmail: "",
-                });
-                fetchAssigned(value);
-              }}
-              autoComplete="off"
-              required
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: "10px",
-                border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                fontSize: "14px",
-                backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
-                color: isDarkMode ? "#fff" : "#1a1a24",
-                outline: "none",
-                cursor: "text",
-              }}
-              placeholder="Search and select assignee..."
-            />
-            {assignedResults.length > 0 && (
-                <ul
-                  style={{
-                    position: "absolute",
-                    zIndex: 10,
-                    width: "100%",
-                    backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
-                    border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                    borderRadius: "10px",
-                    marginTop: "4px",
-                    maxHeight: "200px",
-                    overflowY: "auto",
-                    listStyle: "none",
-                    padding: 0,
-                    margin: "4px 0 0 0",
-                    boxShadow: isDarkMode
-                      ? "0 2px 8px rgba(255,255,255,0.1)"
-                      : "0 4px 24px rgba(0, 0, 0, 0.08)",
-                  }}
-                >
-                  {assignedResults.map((person) => (
-                    <li
-                      key={person._id}
-                      style={{
-                        padding: "10px 12px",
-                        cursor: "pointer",
-                        borderBottom: `1px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                        color: isDarkMode ? "#fff" : "#1a1a24",
-                      }}
-                      onClick={() => {
-                        setTaskData({
-                          ...taskData,
-                          assignedTo: `${person.name} ${person.surname}`,
-                          assignedEmail: person.email || "",
-                        });
-                        setAssignedResults([]);
-                      }}
-                      onMouseEnter={(e) =>
-                        (e.target.style.backgroundColor = isDarkMode
-                          ? "#2d2d2d"
-                          : "#f3f4f6")
-                      }
-                      onMouseLeave={(e) =>
-                        (e.target.style.backgroundColor = "transparent")
-                      }
-                    >
-                      {person.name} {person.surname}
-                    </li>
-                  ))}
-                </ul>
-              )}
-          </div>
-
-          <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: "13px",
-                fontWeight: "600",
-                color: isDarkMode ? "#fff" : "#1a1a24",
-                marginBottom: "6px",
-              }}
-            >
-              Due Date & Time
-            </label>
-            <input
-              type="datetime-local"
-              name="dueDate"
-              value={taskData.dueDate}
-              onChange={handleChange}
-              disabled
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: "10px",
-                border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
-                fontSize: "14px",
-                color: isDarkMode ? "#aaa" : "#6b7280",
-                outline: "none",
-              }}
-            />
-          </div>
-
-          <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: "13px",
-                fontWeight: "600",
-                color: isDarkMode ? "#fff" : "#1a1a24",
-                marginBottom: "6px",
-              }}
-            >
-              Task Stage
-            </label>
-            <select
-              name="taskStage"
-              value={taskData.taskStage}
-              onChange={handleChange}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: "10px",
-                border: `2px solid ${isDarkMode ? "#444" : "#e5e7eb"}`,
-                fontSize: "14px",
-                backgroundColor: isDarkMode ? "#2d2d2d" : "#f3f4f6",
-                color: isDarkMode ? "#fff" : "#1a1a24",
-                outline: "none",
-              }}
-            >
-              <option value="Open">Open</option>
-              <option value="Awaiting task">Awaiting task</option>
-              <option value="Completed">Completed</option>
-            </select>
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              gap: "10px",
-              paddingTop: "12px",
-            }}
-          >
-            <button
-              type="button"
-              style={{
-                padding: "10px 20px",
-                borderRadius: "10px",
-                backgroundColor: isDarkMode ? "#2d2d2d" : "#e5e5e5",
-                color: isDarkMode ? "#fff" : "#1a1a24",
-                fontWeight: "600",
-                border: `1px solid ${isDarkMode ? "#444" : "transparent"}`,
-                cursor: "pointer",
-                fontSize: "14px",
-                flex: 1,
-              }}
-              onClick={handleClose}
-              disabled={submitting}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              style={{
-                padding: "10px 20px",
-                borderRadius: "10px",
-                backgroundColor: submitting
-                  ? "#666"
-                  : isDarkMode
-                    ? "#fff"
-                    : "#000",
-                color: submitting ? "#fff" : isDarkMode ? "#000" : "#fff",
-                fontWeight: "600",
-                border: "none",
-                cursor: submitting ? "not-allowed" : "pointer",
-                fontSize: "14px",
-                flex: 1,
-              }}
-              disabled={submitting}
-            >
-              {submitting ? "Saving..." : "Save Task"}
-            </button>
-          </div>
-        </form>
-      </Modal>
-      {isAddTypeModalOpen && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(0,0,0,0.75)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 2000,
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: isDarkMode ? "#1e1e1e" : "#ffffff",
-              color: isDarkMode ? "#ffffff" : "#1a1a24",
-              padding: "32px",
-              borderRadius: "16px",
-              width: "90%",
-              maxWidth: "480px",
-              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)",
-              position: "relative",
-            }}
-          >
-            <h2
-              style={{
-                margin: "0 0 24px 0",
-                textAlign: "center",
-                fontSize: "24px",
-              }}
-            >
-              Add New Task Type
-            </h2>
-
-            <input
-              type="text"
-              value={newTaskTypeName}
-              onChange={(e) => setNewTaskTypeName(e.target.value)}
-              placeholder="Enter task type name"
-              autoFocus
-              style={{
-                width: "100%",
-                padding: "14px 16px",
-                fontSize: "16px",
-                borderRadius: "10px",
-                border: `2px solid ${isDarkMode ? "#555" : "#d1d5db"}`,
-                backgroundColor: isDarkMode ? "#2a2a2a" : "#f9fafb",
-                color: isDarkMode ? "#fff" : "#111827",
-                marginBottom: "24px",
-                outline: "none",
-              }}
-            />
-
-            <div style={{ display: "flex", gap: "16px" }}>
+                />
+              </div>
               <button
-                onClick={createTaskType}
-                disabled={addingTaskType || !newTaskTypeName.trim()}
                 style={{
-                  flex: 1,
-                  padding: "14px",
-                  backgroundColor: "#2563eb",
-                  color: "white",
                   borderRadius: "10px",
-                  border: "none",
+                  backgroundColor: colors.foreground,
+                  color: colors.background,
                   fontWeight: "600",
-                  fontSize: "16px",
-                  cursor: addingTaskType ? "not-allowed" : "pointer",
-                  opacity: addingTaskType ? 0.7 : 1,
-                }}
-              >
-                {addingTaskType ? "Adding..." : "Add"}
-              </button>
-
-              <button
-                onClick={() => {
-                  setIsAddTypeModalOpen(false);
-                  setNewTaskTypeName("");
-                }}
-                style={{
-                  flex: 1,
-                  padding: "14px",
-                  backgroundColor: "#6b7280",
-                  color: "white",
-                  borderRadius: "10px",
+                  padding: "10px 16px",
+                  fontSize: "13px",
                   border: "none",
-                  fontWeight: "600",
-                  fontSize: "16px",
                   cursor: "pointer",
                 }}
               >
-                Cancel
+                Download Filtered Tasks
               </button>
             </div>
           </div>
-        </div>
+
+          {/* Task rows */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginTop: "40px" }}>
+            {loading ? (
+              <div style={{ textAlign: "center", padding: "40px", color: colors.mutedForeground }}>
+                <Spinner size={32} color={colors.primary} />
+                <div style={{ marginTop: "16px" }}>Loading tasks...</div>
+              </div>
+            ) : visibleTasks.length === 0 ? (
+              <div
+                style={{
+                  borderRadius: "14px",
+                  border: `1px solid ${colors.border}`,
+                  backgroundColor: colors.card,
+                  padding: "40px",
+                  textAlign: "center",
+                  fontSize: "14px",
+                  color: colors.mutedForeground,
+                }}
+              >
+                No tasks in this view.
+              </div>
+            ) : (
+              visibleTasks.map((task) => (
+                <div
+                  key={task.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "20px",
+                    borderRadius: "14px",
+                    border: `1px solid ${colors.border}`,
+                    backgroundColor: colors.card,
+                    padding: "24px",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "48px",
+                      height: "48px",
+                      flexShrink: 0,
+                      borderRadius: "50%",
+                      backgroundColor: colors.border,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "18px",
+                      fontWeight: "600",
+                      color: colors.mutedForeground,
+                    }}
+                  >
+                    {task.name.charAt(0)}
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: "18px", fontWeight: "600", color: colors.foreground }}>
+                      {task.name}
+                    </div>
+                    <div style={{ marginTop: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: "14px", color: colors.mutedForeground }}>
+                      {task.person} <span style={{ margin: "0 8px" }}>•</span> {task.type}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: "32px", marginLeft: "auto" }}>
+                            <StatusBadge status={task.status} colors={colors} />
+                    <span style={{ fontSize: "13px", color: colors.mutedForeground }}>
+                      {task.date}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
+            {/* Load More */}
+            {hasMore && !loading && (
+              <button
+                onClick={() => fetchUserTasks(page + 1, true)}
+                style={{
+                  marginTop: "24px",
+                  padding: "12px 24px",
+                  borderRadius: "10px",
+                  backgroundColor: colors.primary,
+                  color: colors.primaryForeground,
+                  fontWeight: "600",
+                  fontSize: "14px",
+                  border: "none",
+                  cursor: "pointer",
+                  alignSelf: "center",
+                }}
+              >
+                Load More ({totalCount} of {totalTasks})
+              </button>
+            )}
+          </div>
+        </main>
+      </div>
+
+      {/* Modals */}
+      {isModalOpen && (
+        <CallTaskModal
+          isOpen={isModalOpen}
+          onClose={handleClose}
+          taskData={taskData}
+          handleChange={handleChange}
+          taskTypes={taskTypes}
+          handleSubmit={handleSubmit}
+          submitting={submitting}
+        />
       )}
+
+      {isAddTypeModalOpen && (
+        <NewTaskTypeModal
+          isOpen={isAddTypeModalOpen}
+          onClose={() => {
+            setIsAddTypeModalOpen(false);
+            setNewTaskTypeName("");
+          }}
+          newTaskTypeName={newTaskTypeName}
+          setNewTaskTypeName={setNewTaskTypeName}
+          createTaskType={createTaskType}
+          addingTaskType={addingTaskType}
+        />
+      )}
+
+      {/* Person Filter Modal */}
+      <PersonFilterModal
+        open={pendingViewFilter === "team" && filterPanelOpen}
+        onClose={() => setFilterPanelOpen(false)}
+        teamMembers={teamPeopleObjects}
+        selectedPeople={selectedPeople}
+        onSelectionChange={setSelectedPeople}
+        isDarkMode={isDarkMode}
+      />
+
+      {/* Advanced Filter Panel Modal */}
+      <FilterPanelModal
+        open={filterPanelOpen}
+        onClose={() => setFilterPanelOpen(false)}
+        onApply={() => {
+          setFilterPanelOpen(false);
+          setPage(1);
+          fetchUserTasks(1, false);
+        }}
+        isDarkMode={isDarkMode}
+        canViewTeam={canViewTeam}
+        isAdmin={isAdmin}
+        pendingViewFilter={pendingViewFilter}
+        setPendingViewFilter={setPendingViewFilter}
+        pendingFilterType={pendingFilterType}
+        setPendingFilterType={setPendingFilterType}
+        selectedPeople={selectedPeople}
+        teamPeopleObjects={teamPeopleObjects}
+        onOpenPersonModal={() => {}}
+        onClearPeople={() => setSelectedPeople([])}
+        onRemovePerson={(person) => setSelectedPeople((prev) => prev.filter((p) => p.email !== person.email))}
+        batchSize={batchSize}
+        setBatchSize={setBatchSize}
+        taskTypes={taskTypes}
+      />
+
+      {/* Toast container */}
       <ToastContainer
         position="top-right"
         autoClose={3000}
