@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState, useCallback, useMemo } from "react";
+import { useContext, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Phone, Plus, Filter, X, Check, Search, Users, ChevronDown, MapPin, Calendar } from "lucide-react";
 import { useTheme } from "@mui/material/styles";
 import { ToastContainer, toast } from "react-toastify";
@@ -93,6 +93,112 @@ const COLORS = {
   },
 };
 
+// ─── People cache helpers (mirrors the working Daily Tasks branch) ────────────
+const CACHE_DURATION = 30 * 60 * 1000;
+
+const getRawCachedPeople = () => {
+  // Daily Tasks keeps its own lightweight cache so it never overwrites the
+  // richer person objects cached by the People page.
+  if (Array.isArray(window.dailyTasksPeopleCache) && window.dailyTasksPeopleCache.length > 0) {
+    return window.dailyTasksPeopleCache;
+  }
+  const cache = window.globalPeopleCache;
+  return Array.isArray(cache)
+    ? cache
+    : Array.isArray(cache?.data)
+      ? cache.data
+      : [];
+};
+
+const getPeopleCacheTimestamp = () =>
+  Array.isArray(window.dailyTasksPeopleCache) && window.dailyTasksPeopleCache.length > 0
+    ? window.dailyTasksPeopleCacheTimestamp || 0
+    : window.globalCacheTimestamp || 0;
+
+// Fallback data (people/all-minimal) is capped at 1000 people, so it must not
+// be treated as fresh — the full cache load should still upgrade it later.
+const isPeopleCachePartial = () =>
+  Array.isArray(window.dailyTasksPeopleCache) && window.dailyTasksPeopleCache.length > 0
+    ? window.dailyTasksPeopleCachePartial === true
+    : false;
+
+const normalizePerson = (raw = {}) => {
+  const fullName = (raw.FullName || raw.fullName || "").toString().trim();
+  const nameParts = fullName ? fullName.split(/\s+/) : [];
+  const name = (raw.Name || raw.name || nameParts[0] || "").toString().trim();
+  const surname = (raw.Surname || raw.surname || nameParts.slice(1).join(" "))
+    .toString()
+    .trim();
+  const displayName = `${name} ${surname}`.trim();
+
+  return {
+    _id: (raw._id || raw.id || raw.person_id || "").toString(),
+    name,
+    surname,
+    fullName: displayName,
+    fullNameLower: displayName.toLowerCase(),
+    email: (raw.Email || raw.email || "").toString().trim().toLowerCase(),
+    phone: (raw.Number || raw.phone || raw.Phone || "").toString().trim(),
+    leader1: (raw["Leader @1"] || raw.leader1 || "").toString().trim(),
+    leader12: (raw["Leader @12"] || raw.leader12 || "").toString().trim(),
+    leader144: (raw["Leader @144"] || raw.leader144 || "").toString().trim(),
+    leader1728: (raw["Leader @1728"] || raw.leader1728 || "").toString().trim(),
+  };
+};
+
+const getCachedPeople = () => getRawCachedPeople().map(normalizePerson);
+
+const searchPeopleLocal = (peopleList, searchValue) => {
+  if (!Array.isArray(peopleList)) return [];
+  const q = (searchValue || "").toLowerCase().trim();
+  if (!q) return peopleList;
+
+  return peopleList.filter((person) => {
+    const haystack = [
+      person.fullNameLower,
+      person.name,
+      person.surname,
+      person.email,
+      person.phone,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(q);
+  });
+};
+
+const COMPLETED_STAGES = ["completed", "done", "closed", "finished"];
+
+const toDateOnly = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+const isTaskCompleted = (task) => {
+  const stage = String(task?.taskStage ?? task?.status ?? "")
+    .toLowerCase()
+    .trim();
+  return COMPLETED_STAGES.includes(stage);
+};
+
+const isTaskOverdue = (task) => {
+  if (isTaskCompleted(task)) return false;
+  const rawDate = task?.followup_date || task?.date;
+  if (!rawDate) return false;
+  const due = new Date(rawDate);
+  return !Number.isNaN(due.getTime()) && due.getTime() < Date.now();
+};
+
+// Maps a task to one of the filter stage keys (completed/overdue/awaiting task/open).
+const getTaskStageKey = (task) => {
+  const stage = String(task?.taskStage ?? task?.status ?? "open")
+    .toLowerCase()
+    .trim();
+  if (COMPLETED_STAGES.includes(stage)) return "completed";
+  if (isTaskOverdue(task)) return "overdue";
+  if (stage === "awaiting task" || stage === "awaiting") return "awaiting task";
+  return stage || "open";
+};
+
 function Spinner({ size = 16, color = "#6b7280" }) {
   return (
     <div
@@ -112,104 +218,180 @@ function Spinner({ size = 16, color = "#6b7280" }) {
 
 function StatusBadge({ status, colors }) {
   const normalizedStatus = String(status || "open").toLowerCase();
+  const isAwaiting = normalizedStatus === "awaiting task" || normalizedStatus === "awaiting";
   const backgroundColor = normalizedStatus === "completed"
     ? `${colors.completed}20`
     : normalizedStatus === "in-progress"
       ? `${colors.inProgress}20`
       : normalizedStatus === "overdue"
         ? `${colors.overdue}20`
-        : `${colors.border}80`;
+        : isAwaiting
+          ? `${colors.awaiting}20`
+          : `${colors.border}80`;
   const color = normalizedStatus === "completed"
     ? colors.completed
     : normalizedStatus === "in-progress"
       ? colors.inProgress
       : normalizedStatus === "overdue"
         ? colors.overdue
-        : colors.mutedForeground;
+        : isAwaiting
+          ? colors.awaiting
+          : colors.mutedForeground;
+
+  const label = normalizedStatus === "awaiting task" || normalizedStatus === "awaiting"
+    ? "Awaiting Task"
+    : normalizedStatus === "in-progress"
+      ? "In Progress"
+      : normalizedStatus
+        ? normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1)
+        : "Open";
 
   return (
     <span style={{ borderRadius: 999, padding: "6px 10px", backgroundColor, color, fontSize: 12, fontWeight: 600 }}>
-      {status || "Open"}
+      {label}
     </span>
   );
 }
 
-function CallTaskModal({ isOpen, onClose, taskData, handleChange, taskTypes, handleSubmit, submitting, currentUser, allPeople, isAdmin, canViewTeam }) {
+function CallTaskModal({
+  isOpen,
+  onClose,
+  taskData,
+  handleChange,
+  taskTypes,
+  handleSubmit,
+  submitting,
+  recipientPeople,
+  assigneePeople,
+  isLoadingPeople,
+  modalType,
+}) {
   const availableTaskTypes = taskTypes.length
     ? taskTypes.map((taskType) => typeof taskType === "string" ? taskType : taskType.name).filter(Boolean)
     : ["Awaiting Call", "Service Invitation", "Service Follow Up", "Follow Up", "New Member Care"];
 
+  // Never let a preselected task type fall outside the select's options.
+  if (taskData.taskType && !availableTaskTypes.includes(taskData.taskType)) {
+    availableTaskTypes.unshift(taskData.taskType);
+  }
+
   const stageOptions = ["Awaiting Task", "Open", "Completed"];
 
-  // For assigned to: admin can assign to anyone, leaders to their hierarchy, others only themselves
-  const currentUserOption = { 
-    email: currentUser?.email, 
-    name: `${currentUser?.name || ""} ${currentUser?.surname || ""}`.trim() 
+  const [recipientSearch, setRecipientSearch] = useState(taskData.recipientDisplay || "");
+  const [recipientOpen, setRecipientOpen] = useState(false);
+  const [assigneeSearch, setAssigneeSearch] = useState(taskData.assignedTo || "");
+  const [assigneeOpen, setAssigneeOpen] = useState(false);
+
+  const recipientResults = useMemo(
+    () =>
+      searchPeopleLocal(recipientPeople || [], recipientSearch)
+        .filter((person) => person.fullName)
+        .slice(0, 50),
+    [recipientPeople, recipientSearch],
+  );
+
+  const assigneeResults = useMemo(
+    () =>
+      searchPeopleLocal(assigneePeople || [], assigneeSearch)
+        .filter((person) => person.fullName)
+        .slice(0, 50),
+    [assigneePeople, assigneeSearch],
+  );
+
+  const handleRecipientInput = (event) => {
+    const value = event.target.value;
+    setRecipientSearch(value);
+    setRecipientOpen(true);
+
+    // Typing invalidates a previously selected recipient.
+    if (taskData.recipient && value !== taskData.recipientDisplay) {
+      handleChange({ target: { name: "recipient", value: null } });
+    }
+    handleChange({ target: { name: "recipientDisplay", value } });
   };
-  
-  const getAssignablePeople = () => {
-    let people = [];
-    if (isAdmin || canViewTeam) {
-      people = allPeople;
-    }
-    const hasCurrentUser = people.some(p => p.email === currentUserOption.email);
-    if (!hasCurrentUser && currentUserOption.email) {
-      people = [currentUserOption, ...people];
-    }
-    return people;
-  };
-
-  const assignablePeople = getAssignablePeople();
-
-  // Recipient search state
-  const [recipientSearch, setRecipientSearch] = useState("");
-  const [recipientResults, setRecipientResults] = useState([]);
-  const [showRecipientDropdown, setShowRecipientDropdown] = useState(false);
-
-  // Search people for recipient
-  useEffect(() => {
-    if (recipientSearch.trim().length >= 1) {
-      const q = recipientSearch.toLowerCase().trim();
-      const results = allPeople
-        .filter((p) => {
-          const name = `${p.name || ""}`.toLowerCase().trim();
-          const email = (p.email || "").toLowerCase().trim();
-          return name.includes(q) || email.includes(q);
-        })
-        .slice(0, 20);
-      setRecipientResults(results);
-      setShowRecipientDropdown(true);
-    } else {
-      setRecipientResults(allPeople.slice(0, 20));
-      setShowRecipientDropdown(true);
-    }
-  }, [recipientSearch, allPeople]);
 
   const handleRecipientSelect = (person) => {
-    setRecipientSearch(person.name);
-    setShowRecipientDropdown(false);
-    handleChange({ target: { name: "recipient", value: person.email } });
-    // Also set contacted_person fields
-    handleChange({ target: { name: "contactedPersonName", value: person.name } });
+    setRecipientSearch(person.fullName);
+    setRecipientOpen(false);
+    handleChange({ target: { name: "recipient", value: person } });
+    handleChange({ target: { name: "recipientDisplay", value: person.fullName } });
+    handleChange({ target: { name: "contactedPersonName", value: person.fullName } });
     handleChange({ target: { name: "contactedPersonEmail", value: person.email } });
-    handleChange({ target: { name: "contactedPersonPhone", value: "" } });
+    handleChange({ target: { name: "contactedPersonPhone", value: person.phone } });
   };
 
-  const handleRecipientSearchChange = (e) => {
-    const value = e.target.value;
-    setRecipientSearch(value);
-    handleChange(e);
+  const handleAssigneeInput = (event) => {
+    const value = event.target.value;
+    setAssigneeSearch(value);
+    setAssigneeOpen(true);
+    handleChange({ target: { name: "assignedTo", value } });
+    handleChange({ target: { name: "assignedEmail", value: "" } });
   };
+
+  const handleAssigneeSelect = (person) => {
+    setAssigneeSearch(person.fullName);
+    setAssigneeOpen(false);
+    handleChange({ target: { name: "assignedTo", value: person.fullName } });
+    handleChange({ target: { name: "assignedEmail", value: person.email } });
+  };
+
+  const renderPeopleDropdown = (people, onSelect, emptyLabel) => (
+    <Box
+      sx={{
+        position: "absolute",
+        top: "calc(100% + 4px)",
+        left: 0,
+        right: 0,
+        zIndex: 1400,
+        maxHeight: 260,
+        overflowY: "auto",
+        bgcolor: "background.paper",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 2,
+        boxShadow: 6,
+      }}
+    >
+      {people.length === 0 ? (
+        <Box sx={{ px: 2, py: 1.5, fontSize: 13, color: "text.secondary" }}>
+          {emptyLabel}
+        </Box>
+      ) : (
+        people.map((person) => (
+          <MenuItem
+            key={`${person.email || person._id || person.fullName}-${person.fullName}`}
+            onClick={() => onSelect(person)}
+            sx={{ py: 1 }}
+          >
+            {person.fullName}
+          </MenuItem>
+        ))
+      )}
+    </Box>
+  );
 
   return (
-    <Dialog open={isOpen} onClose={onClose} fullWidth maxWidth="sm">
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      fullWidth
+      maxWidth="sm"
+      PaperProps={{
+        sx: {
+          borderRadius: "18px",
+          background: "background.paper",
+        },
+      }}
+    >
       <form onSubmit={handleSubmit}>
-        <DialogTitle>Call Task</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>
+          {modalType === "visit" ? "Visit Task" : "Call Task"}
+        </DialogTitle>
         <DialogContent sx={{ display: "grid", gap: 2, pt: "12px !important" }}>
           <TextField
             select
             required
-            label="Task type"
+            label="Task Type"
             name="taskType"
             value={taskData.taskType}
             onChange={handleChange}
@@ -218,76 +400,102 @@ function CallTaskModal({ isOpen, onClose, taskData, handleChange, taskTypes, han
               <MenuItem key={taskType} value={taskType}>{taskType}</MenuItem>
             ))}
           </TextField>
-          
-          {/* Recipient - who the task is for (searchable) */}
-          <TextField
-            required
-            label="Recipient"
-            name="recipient"
-            value={recipientSearch}
-            onChange={handleRecipientSearchChange}
-            onClick={() => setShowRecipientDropdown(true)}
-            InputProps={{
-              endAdornment: (
-                <InputAdornment position="end">
-                  <Search color="action" />
-                </InputAdornment>
-              ),
-            }}
-          />
-          {showRecipientDropdown && recipientResults.length > 0 && (
-            <Box
-              sx={{
-                position: "absolute",
-                zIndex: 10,
-                mt: 1,
-                maxHeight: 300,
-                overflow: "auto",
-                bgcolor: "background.paper",
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 2,
-                boxShadow: 3,
-                width: "100%",
-              }}
-            >
-              {recipientResults.map((person) => (
-                <MenuItem
-                  key={person.email}
-                  onClick={() => handleRecipientSelect(person)}
-                  style={{ padding: "8px 16px" }}
-                >
-                  {person.name}
-                </MenuItem>
-              ))}
-            </Box>
-          )}
 
-          {/* Assigned to - defaults to current user but can be changed */}
-          <TextField
-            select
-            label="Assigned to"
-            name="assignedTo"
-            value={taskData.assignedTo || currentUser?.email || ""}
-            onChange={handleChange}
-          >
-            {assignablePeople.map((person) => (
-              <MenuItem key={person.email} value={person.email}>
-                {person.name}
-              </MenuItem>
-            ))}
-          </TextField>
-          
-          <TextField
-            required
-            label="Due date"
-            name="dueDate"
-            type="datetime-local"
-            value={taskData.dueDate}
-            onChange={handleChange}
-            InputLabelProps={{ shrink: true }}
-          />
-          
+          {/* Recipient — who the task is for */}
+          <Box sx={{ position: "relative" }}>
+            <TextField
+              required
+              fullWidth
+              autoComplete="off"
+              label="Recipient"
+              placeholder="Type name to search..."
+              value={recipientSearch}
+              onChange={handleRecipientInput}
+              onFocus={() => setRecipientOpen(true)}
+              onBlur={() => setTimeout(() => setRecipientOpen(false), 150)}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    {isLoadingPeople && recipientPeople.length === 0 ? (
+                      <Spinner size={16} />
+                    ) : (
+                      <Search size={18} color="action" />
+                    )}
+                  </InputAdornment>
+                ),
+              }}
+            />
+            {recipientOpen &&
+              renderPeopleDropdown(
+                recipientResults,
+                handleRecipientSelect,
+                isLoadingPeople && recipientPeople.length === 0
+                  ? "Loading people…"
+                  : recipientSearch.trim()
+                    ? "No matching people found."
+                    : "Start typing a name…",
+              )}
+          </Box>
+
+          {/* Assigned To — searchable, defaults to the current user */}
+          <Box sx={{ position: "relative" }}>
+            <TextField
+              required
+              fullWidth
+              autoComplete="off"
+              label="Assigned To"
+              placeholder="Search and select assignee..."
+              value={assigneeSearch}
+              onChange={handleAssigneeInput}
+              onFocus={() => setAssigneeOpen(true)}
+              onBlur={() => setTimeout(() => setAssigneeOpen(false), 150)}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Search size={18} color="action" />
+                  </InputAdornment>
+                ),
+              }}
+            />
+            {assigneeOpen &&
+              renderPeopleDropdown(
+                assigneeResults,
+                handleAssigneeSelect,
+                assigneeSearch.trim()
+                  ? "No matching people found."
+                  : "Start typing a name…",
+              )}
+          </Box>
+
+          {/* Due date is automatic; only the time is editable */}
+          <Box>
+            <Typography
+              variant="caption"
+              sx={{ display: "block", mb: 1, fontWeight: 700, color: "text.secondary" }}
+            >
+              Due Date &amp; Time
+            </Typography>
+            <Box sx={{ display: "flex", gap: 1.5 }}>
+              <TextField
+                label="Due Date"
+                type="date"
+                value={taskData.dueDate || ""}
+                disabled
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                label="Time"
+                type="time"
+                name="dueTime"
+                value={taskData.dueTime || ""}
+                onChange={handleChange}
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+              />
+            </Box>
+          </Box>
+
           {/* Task Stage instead of Status */}
           <TextField
             select
@@ -301,13 +509,8 @@ function CallTaskModal({ isOpen, onClose, taskData, handleChange, taskTypes, han
               <MenuItem key={stage} value={stage}>{stage}</MenuItem>
             ))}
           </TextField>
-          
-          {/* Hidden fields for contacted_person */}
-          <input type="hidden" name="contactedPersonName" value={taskData.contactedPersonName || ""} onChange={handleChange} />
-          <input type="hidden" name="contactedPersonEmail" value={taskData.contactedPersonEmail || ""} onChange={handleChange} />
-          <input type="hidden" name="contactedPersonPhone" value={taskData.contactedPersonPhone || ""} onChange={handleChange} />
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="contained" disabled={submitting}>
             {submitting ? "Saving..." : "Save Task"}
@@ -356,7 +559,8 @@ function PersonFilterModal({
   teamMembers, 
   selectedPeople, 
   onSelectionChange,
-  isDarkMode 
+  isDarkMode,
+  isAdmin,
 }) {
   const [searchResults, setSearchResults] = useState([]);
   const [localSearch, setLocalSearch] = useState("");
@@ -400,13 +604,19 @@ function PersonFilterModal({
 
   const isSelected = (person) => selectedPeople.some((p) => p.email === person.email);
 
+  // Keep the request URL manageable when an admin selects a whole organization.
+  const selectAllLimit = 200;
+  const selectAllPeople = teamMembers.slice(0, selectAllLimit);
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth sx={{ "& .MuiDialog-paper": { maxHeight: "90vh" } }}>
       <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <Box>
           <Typography variant="h6">Select People</Typography>
           <Typography variant="caption" color="text.secondary">
-            {teamMembers.length} {teamMembers.length === 1 ? "person" : "people"} under you
+            {isAdmin
+              ? `${teamMembers.length} ${teamMembers.length === 1 ? "person" : "people"} in your organization`
+              : `${teamMembers.length} ${teamMembers.length === 1 ? "person" : "people"} under you`}
           </Typography>
         </Box>
         <IconButton onClick={onClose} size="small" aria-label="close">
@@ -418,10 +628,10 @@ function PersonFilterModal({
           <Button
             variant="outlined"
             size="small"
-            onClick={() => onSelectionChange(teamMembers)}
+            onClick={() => onSelectionChange(selectAllPeople)}
             startIcon={<Check />}
           >
-            Select All ({teamMembers.length})
+            Select All ({selectAllPeople.length}{teamMembers.length > selectAllLimit ? ` of ${teamMembers.length}` : ""})
           </Button>
           <Button
             variant="outlined"
@@ -558,8 +768,14 @@ function FilterPanelModal({
 
   const viewOptions = [
     { value: "personal", label: "Personal", description: "Only your own tasks" },
-    ...(canViewTeam
-      ? [{ value: "disciples", label: "Disciples", description: "Tasks for your disciples and hierarchy" }]
+    ...(canViewTeam || isAdmin
+      ? [{
+          value: "disciples",
+          label: "Disciples",
+          description: isAdmin
+            ? "Tasks for any person you select in your organization"
+            : "Tasks for your disciples and hierarchy",
+        }]
       : []),
     ...(isAdmin ? [{ value: "all", label: "All", description: "Every task in your organization" }] : []),
   ];
@@ -665,8 +881,8 @@ function FilterPanelModal({
             {viewOptions.find((o) => o.value === pendingViewFilter)?.description}
           </Typography>
 
-          {/* Person filter — only for disciples/all view, not personal */}
-          {(pendingViewFilter === "disciples" || pendingViewFilter === "all") && (
+          {/* Person filter — only for the disciples view, not personal/all */}
+          {pendingViewFilter === "disciples" && (
             <Box
               sx={{
                 mt: 2,
@@ -959,9 +1175,6 @@ function FilterPanelModal({
 }
 
 export default function DailyTasks() {
-  if (!window.globalPeopleCache) window.globalPeopleCache = [];
-  if (!window.globalCacheTimestamp) window.globalCacheTimestamp = 0;
-
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
   // Use sidebar background color for main content
@@ -972,11 +1185,29 @@ export default function DailyTasks() {
   const { user, authFetch } = useContext(AuthContext);
   const { updateCount } = useTaskUpdate();
 
+  const userOrgKey = (user?.org_id || user?.Organization || user?.organization || "")
+    .toString()
+    .toLowerCase()
+    .trim();
+
+  const loadInitialPeople = () => {
+    const cachedOrg = window.dailyTasksPeopleCacheOrg || "";
+    if (cachedOrg && userOrgKey && cachedOrg !== userOrgKey) {
+      window.dailyTasksPeopleCache = null;
+      window.dailyTasksPeopleCacheTimestamp = 0;
+      window.dailyTasksPeopleCacheOrg = "";
+    }
+    return getCachedPeople();
+  };
+
   const [tasks, setTasks] = useState([]);
   const [taskTypes, setTaskTypes] = useState([]);
-  const [allPeople, setAllPeople] = useState([]);
+  const [allPeople, setAllPeople] = useState(loadInitialPeople);
+  const [isLoadingPeople, setIsLoadingPeople] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalType, setModalType] = useState("call");
+  const [editingTask, setEditingTask] = useState(null);
   const [isAddTypeModalOpen, setIsAddTypeModalOpen] = useState(false);
   const [newTaskTypeName, setNewTaskTypeName] = useState("");
   const [addingTaskType, setAddingTaskType] = useState(false);
@@ -1007,72 +1238,237 @@ export default function DailyTasks() {
 
   const API_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 
-  // ─── Helper: Resolve team hierarchy from People cache ─────────────────────
-  const resolveTeamHierarchy = useCallback(async () => {
-    if (!user?.email) return { teamMembers: [], allPeople: [] };
-    try {
-      // Fetch all people in org (using cache endpoint for efficiency)
-      const res = await authFetch(`${API_URL}/cache/people`);
-      if (!res.ok) throw new Error("Failed to fetch people cache");
-      const data = await res.json();
-      const allPeopleData = data.cached_data || data.people || [];
-      
-      const userName = `${user.name || ""} ${user.surname || ""}`.trim();
-      const userEmail = user.email.toLowerCase().trim();
-      
-      // Find people where current user is in Leader @1, @12, @144, or @1728
-      const teamMembers = allPeopleData.filter((p) => {
-        const leaderFields = [
-          p["Leader @1"],
-          p["Leader @12"],
-          p["Leader @144"],
-          p["Leader @1728"],
-        ].map((l) => (l || "").toLowerCase().trim());
-        
-        return leaderFields.includes(userName.toLowerCase()) || leaderFields.includes(userEmail);
-      });
-      
-      // Map all people for search (admin can search all, leaders search their hierarchy)
-      const mappedAllPeople = allPeopleData.map((p) => ({
-        email: (p.Email || "").toLowerCase().trim(),
-        name: `${p.Name || ""} ${p.Surname || ""}`.trim(),
-        _id: p._id,
-      }));
-      
-      const mappedTeamMembers = teamMembers.map((p) => ({
-        email: (p.Email || "").toLowerCase().trim(),
-        name: `${p.Name || ""} ${p.Surname || ""}`.trim(),
-        _id: p._id,
-      }));
-      
-      return { teamMembers: mappedTeamMembers, allPeople: mappedAllPeople };
-    } catch (err) {
-      console.error("Error resolving team hierarchy:", err.message);
-      return { teamMembers: [], allPeople: [] };
-    }
-  }, [user, authFetch, API_URL]);
+  // ─── People cache loading ───────────────────────────────────────────────────
+  const isFetchingPeopleRef = useRef(false);
+  const peopleFetchPromiseRef = useRef(null);
+  const peoplePollRef = useRef(null);
 
-  // ─── Load team hierarchy and all people on mount ───────────────────────────
-  useEffect(() => {
-    if (user) {
-      // Check if user can view team (has people under them in hierarchy)
-      resolveTeamHierarchy().then(({ teamMembers, allPeople }) => {
-        setTeamPeopleObjects(teamMembers);
-        setAllPeople(allPeople);
-        setCanViewTeam(teamMembers.length > 0);
-        
-        // Check if admin/super_admin
-        const role = (user.role || "").toLowerCase();
-        setIsAdmin(["admin", "super_admin"].includes(role));
-      });
+  const applyPeople = useCallback((rawPeople, { isPartial = false } = {}) => {
+    const mapped = (Array.isArray(rawPeople) ? rawPeople : []).map(normalizePerson);
+    if (mapped.length > 0) {
+      window.dailyTasksPeopleCache = mapped;
+      window.dailyTasksPeopleCacheTimestamp = Date.now();
+      window.dailyTasksPeopleCacheOrg = userOrgKey;
+      if (isPartial) {
+        window.dailyTasksPeopleCachePartial = true;
+      } else {
+        delete window.dailyTasksPeopleCachePartial;
+      }
+      setAllPeople(mapped);
     }
-  }, [user, resolveTeamHierarchy]);
+    return mapped;
+  }, [userOrgKey]);
+
+  // Fast single-query fallback so recipient/assignee search is usable right
+  // away while the full people cache is still loading in the background.
+  const fetchMinimalPeopleFallback = useCallback(async () => {
+    try {
+      const fallbackRes = await authFetch(`${API_URL}/people/all-minimal`);
+      if (fallbackRes?.ok) {
+        const fallbackData = await fallbackRes.json();
+        const mapped = applyPeople(fallbackData?.people || [], { isPartial: true });
+        if (mapped.length > 0) setIsLoadingPeople(false);
+        return mapped.length;
+      }
+    } catch (fallbackErr) {
+      console.error("People fallback failed:", fallbackErr.message);
+    }
+    return 0;
+  }, [API_URL, authFetch, applyPeople]);
+
+  const pollPeopleCache = useCallback(() => {
+    if (peoplePollRef.current) clearInterval(peoplePollRef.current);
+    let attempts = 0;
+    const MAX_ATTEMPTS = 90; // 3 minutes at 2s intervals
+    let pollInFlight = false;
+
+    peoplePollRef.current = setInterval(async () => {
+      attempts += 1;
+      if (pollInFlight) return;
+      pollInFlight = true;
+      try {
+        const res = await authFetch(`${API_URL}/cache/people`);
+        pollInFlight = false;
+        if (res?.ok) {
+          const data = await res.json();
+          const mapped = applyPeople(data?.cached_data || data?.people || []);
+
+          if (data?.is_complete !== false) {
+            clearInterval(peoplePollRef.current);
+            peoplePollRef.current = null;
+            setIsLoadingPeople(false);
+
+            // Last-resort fallback so recipient search still has data.
+            if (mapped.length === 0) {
+              await fetchMinimalPeopleFallback();
+            }
+            return;
+          }
+
+          // Dropdowns are empty — serve the fast fallback while the heavy
+          // cache load finishes in the background.
+          if (mapped.length === 0 && attempts <= 2) {
+            fetchMinimalPeopleFallback();
+          }
+          return;
+        }
+      } catch (err) {
+        pollInFlight = false;
+        console.error("People cache poll failed:", err.message);
+      }
+
+      if (attempts >= MAX_ATTEMPTS) {
+        clearInterval(peoplePollRef.current);
+        peoplePollRef.current = null;
+        setIsLoadingPeople(false);
+        await fetchMinimalPeopleFallback();
+      }
+    }, 2000);
+  }, [API_URL, authFetch, applyPeople, fetchMinimalPeopleFallback]);
+
+  const fetchAllPeople = useCallback(async (forceRefresh = false) => {
+    const cachedOrg = window.dailyTasksPeopleCacheOrg || "";
+    if (cachedOrg && userOrgKey && cachedOrg !== userOrgKey) {
+      window.dailyTasksPeopleCache = null;
+      window.dailyTasksPeopleCacheTimestamp = 0;
+      window.dailyTasksPeopleCacheOrg = "";
+    }
+
+    const cached = getCachedPeople();
+    const cacheTimestamp = getPeopleCacheTimestamp();
+    const cacheIsFresh =
+      cached.length > 0 &&
+      !isPeopleCachePartial() &&
+      cacheTimestamp &&
+      Date.now() - cacheTimestamp < CACHE_DURATION;
+
+    if (!forceRefresh && cacheIsFresh) {
+      setAllPeople(cached);
+      return cached;
+    }
+
+    if (isFetchingPeopleRef.current && peopleFetchPromiseRef.current) {
+      return peopleFetchPromiseRef.current;
+    }
+    if (isFetchingPeopleRef.current) return cached;
+
+    isFetchingPeopleRef.current = true;
+    setIsLoadingPeople(true);
+
+    peopleFetchPromiseRef.current = (async () => {
+      try {
+        const res = await authFetch(`${API_URL}/cache/people`);
+        if (!res?.ok) throw new Error("Failed to fetch people cache");
+        const data = await res.json();
+        const mapped = applyPeople(data?.cached_data || data?.people || []);
+
+        if (mapped.length > 0 && data?.is_complete !== false) {
+          setIsLoadingPeople(false);
+          return mapped;
+        }
+
+        // While the cache loads (partial or empty), kick off the quick
+        // minimal-people fetch so searches work immediately, then keep
+        // polling until the full cache lands.
+        if (mapped.length === 0) {
+          fetchMinimalPeopleFallback();
+        }
+        pollPeopleCache();
+        return mapped;
+      } catch (err) {
+        console.error("Fetch people error:", err.message);
+        setIsLoadingPeople(false);
+        // Serve whatever we have and get the minimal fallback loading.
+        await fetchMinimalPeopleFallback();
+        return getCachedPeople();
+      } finally {
+        isFetchingPeopleRef.current = false;
+        peopleFetchPromiseRef.current = null;
+      }
+    })();
+
+    return peopleFetchPromiseRef.current;
+  }, [API_URL, authFetch, applyPeople, pollPeopleCache, fetchMinimalPeopleFallback, userOrgKey]);
+
+  useEffect(() => {
+    if (!user) return;
+    fetchAllPeople(false).catch(() => {});
+  }, [user, fetchAllPeople]);
+
+  useEffect(() => {
+    return () => {
+      if (peoplePollRef.current) clearInterval(peoplePollRef.current);
+    };
+  }, []);
+
+  // ─── Resolve team hierarchy from the loaded People cache ───────────────────
+  useEffect(() => {
+    const userName = `${user?.name || ""} ${user?.surname || ""}`.trim().toLowerCase();
+    const userEmail = (user?.email || "").trim().toLowerCase();
+    if (!userName && !userEmail) return;
+
+    const team = allPeople.filter((person) => {
+      const leaderFields = [
+        person.leader1,
+        person.leader12,
+        person.leader144,
+        person.leader1728,
+      ].map((leader) => (leader || "").toLowerCase().trim());
+
+      return leaderFields.includes(userName) || leaderFields.includes(userEmail);
+    });
+
+    setTeamPeopleObjects(team);
+    setCanViewTeam(team.length > 0);
+  }, [allPeople, user]);
+
+  useEffect(() => {
+    const role = (user?.role || "").toLowerCase();
+    setIsAdmin(["admin", "super_admin"].includes(role));
+  }, [user]);
+
+  const currentUserFullName = `${user?.name || ""} ${user?.surname || ""}`.trim();
+
+  const currentUserPerson = useMemo(() => {
+    const person = normalizePerson({
+      _id: user?.id || user?.email || "",
+      Name: user?.name || "",
+      Surname: user?.surname || "",
+      Email: user?.email || "",
+      Number: user?.phone || user?.number || "",
+    });
+    if (!person.fullName) {
+      person.fullName = "Me";
+      person.fullNameLower = "me";
+    }
+    return person;
+  }, [user]);
+
+  const recipientPeople = useMemo(() => {
+    if (isAdmin) return allPeople;
+    if (canViewTeam) return teamPeopleObjects;
+    return allPeople;
+  }, [isAdmin, canViewTeam, allPeople, teamPeopleObjects]);
+
+  const assigneePeople = useMemo(() => {
+    const base = isAdmin ? allPeople : canViewTeam ? teamPeopleObjects : [];
+    const hasSelf = base.some(
+      (person) => person.email && person.email === currentUserPerson.email,
+    );
+    return hasSelf ? base : [currentUserPerson, ...base];
+  }, [isAdmin, canViewTeam, allPeople, teamPeopleObjects, currentUserPerson]);
+
+  // People an admin/leader may pick in the Disciples filter.
+  const selectablePeople = useMemo(
+    () => (isAdmin ? allPeople : teamPeopleObjects),
+    [isAdmin, allPeople, teamPeopleObjects],
+  );
 
   // ─── Dynamic filter counts from actual tasks ──────────────────────────────
   const filterCounts = useMemo(() => {
     const counts = tasks.reduce(
       (acc, t) => {
-        const stage = String(t.taskStage || t.status || "open").toLowerCase();
+        const stage = getTaskStageKey(t);
         acc.all++;
         if (stage === "completed") acc.completed++;
         else if (stage === "open") acc.open++;
@@ -1096,12 +1492,54 @@ export default function DailyTasks() {
     [filterCounts],
   );
 
+  const getTodayDateInput = () => toDateOnly(new Date());
+
+  const getCurrentTimeInput = () => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  };
+
+  const toLocalDateInput = (value) => {
+    const date = value ? new Date(value) : new Date();
+    if (Number.isNaN(date.getTime())) return getTodayDateInput();
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  };
+
+  const toLocalTimeInput = (value) => {
+    const date = value ? new Date(value) : new Date();
+    if (Number.isNaN(date.getTime())) return getCurrentTimeInput();
+    return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  };
+
+  const normalizeStage = (status) => {
+    const normalized = String(status || "Open").toLowerCase().trim();
+    if (normalized === "completed" || normalized === "done") return "Completed";
+    if (normalized === "awaiting task" || normalized === "awaiting") return "Awaiting Task";
+    return "Open";
+  };
+
+  const formatTaskDate = (value) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+
   const [taskData, setTaskData] = useState({
     taskType: "",
-    recipient: "", // who the task is for
-    assignedTo: user ? user.email : "", // defaults to current user
+    recipient: null, // selected recipient person
+    recipientDisplay: "",
+    contactedPersonName: "",
+    contactedPersonEmail: "",
+    contactedPersonPhone: "",
+    assignedTo: currentUserFullName || "Me", // defaults to current user
     assignedEmail: user?.email || "",
-    dueDate: new Date().toISOString().slice(0, 16),
+    dueDate: getTodayDateInput(), // fixed / read-only
+    dueTime: getCurrentTimeInput(),
     taskStage: "Open",
   });
   const [submitting, setSubmitting] = useState(false);
@@ -1121,12 +1559,15 @@ export default function DailyTasks() {
 
   const getInitialTaskData = () => ({
     taskType: "",
-    recipient: "",
+    recipient: null,
+    recipientDisplay: "",
     contactedPersonName: "",
     contactedPersonEmail: "",
     contactedPersonPhone: "",
-    assignedTo: user ? user.email : "",
-    dueDate: new Date().toISOString().slice(0, 16),
+    assignedTo: currentUserFullName || "Me",
+    assignedEmail: user?.email || "",
+    dueDate: getTodayDateInput(),
+    dueTime: getCurrentTimeInput(),
     taskStage: "Open",
   });
 
@@ -1136,35 +1577,114 @@ export default function DailyTasks() {
   };
 
   const handleOpen = (type) => {
-    setIsModalOpen(true);
+    const nextType = type === "visit" ? "visit" : "call";
+    setModalType(nextType);
+    setEditingTask(null);
+
     const initialData = getInitialTaskData();
-    if (type === "call" || type === "visit") {
-      initialData.taskType = type === "call" ? "Awaiting Call" : "Service Invitation";
-    }
+    const defaultTypeName = nextType === "call" ? "Awaiting Call" : "Service Invitation";
+    const matchingType = taskTypes.find(
+      (taskType) =>
+        (taskType?.name || taskType || "").toLowerCase().trim() ===
+        defaultTypeName.toLowerCase(),
+    );
+    initialData.taskType = matchingType?.name || defaultTypeName;
+
     setTaskData(initialData);
     setSubmitting(false);
+    setIsModalOpen(true);
+
+    if (allPeople.length === 0) {
+      fetchAllPeople(false).catch(() => {});
+    }
+  };
+
+  const handleEdit = (task) => {
+    if (isTaskCompleted(task)) {
+      toast.info("This task is completed and cannot be edited.");
+      return;
+    }
+
+    const recipientName = (
+      task.contacted_person?.name ||
+      task.person_name ||
+      ""
+    ).trim();
+    const nameParts = recipientName.split(/\s+/).filter(Boolean);
+    const recipientPerson = normalizePerson({
+      Name: nameParts[0] || "",
+      Surname: nameParts.slice(1).join(" "),
+      Email: task.contacted_person?.email || "",
+      Number: task.contacted_person?.phone || "",
+    });
+
+    const matchedType = taskTypes.find(
+      (taskType) =>
+        (taskType?.name || "").toLowerCase().trim() ===
+          (task.taskType || "").toLowerCase().trim() ||
+        String(taskType?._id || taskType?.id || "") === String(task.taskType || ""),
+    );
+
+    const currentStatus = normalizeStage(task.taskStage || task.status);
+    const assigneeEmail = task.assigned_to_email || task.assignedfor || user?.email || "";
+    const matchedAssignee = allPeople.find(
+      (person) => person.email && person.email === assigneeEmail.toLowerCase(),
+    );
+
+    // `task.type` holds the task-type label after normalization, so rely on
+    // the preserved kind or infer a visit from the task type.
+    const taskKindLabel = `${task.taskKind || ""} ${task.taskType || ""}`.toLowerCase();
+    const isVisitTask =
+      task.taskKind === "visit" ||
+      taskKindLabel.includes("visit") ||
+      taskKindLabel.includes("service invitation");
+
+    setEditingTask(task);
+    setModalType(isVisitTask ? "visit" : "call");
+    setTaskData({
+      taskType: matchedType?.name || task.taskType || "",
+      recipient: recipientPerson.fullName ? recipientPerson : null,
+      recipientDisplay: recipientPerson.fullName,
+      contactedPersonName: recipientPerson.fullName,
+      contactedPersonEmail: recipientPerson.email,
+      contactedPersonPhone: recipientPerson.phone,
+      assignedTo:
+        matchedAssignee?.fullName ||
+        (task.name && task.name !== "Unknown" ? task.name : "") ||
+        currentUserFullName ||
+        "Me",
+      assignedEmail: assigneeEmail,
+      dueDate: toLocalDateInput(task.followup_date || task.date),
+      dueTime: toLocalTimeInput(task.followup_date || task.date),
+      taskStage: currentStatus,
+    });
+    setSubmitting(false);
+    setIsModalOpen(true);
   };
 
   const handleClose = () => {
     setIsModalOpen(false);
     setIsAddTypeModalOpen(false);
+    setEditingTask(null);
   };
 
   const createTaskType = async () => {
     if (!newTaskTypeName.trim() || addingTaskType) return;
     setAddingTaskType(true);
     try {
-      const res = await authFetch(`${API_URL}/task-types`, {
+      const res = await authFetch(`${API_URL}/tasktypes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newTaskTypeName.trim() }),
       });
-      if (!res.ok) throw new Error("Failed to create task type");
-      const data = await res.json();
-      if (data.taskType) {
-        setTaskTypes((prev) => [...prev, data.taskType]);
-        toast.success("Task type created successfully");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to create task type");
+
+      const created = data.taskType || data;
+      if (created?.name) {
+        setTaskTypes((prev) => [...prev, created]);
       }
+      toast.success("Task type created successfully");
       setIsAddTypeModalOpen(false);
       setNewTaskTypeName("");
     } catch (err) {
@@ -1177,39 +1697,100 @@ export default function DailyTasks() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (submitting) return;
+
+    const person = taskData.recipient;
+    if (!person?.fullName) {
+      toast.error("Please select a recipient from the list.");
+      return;
+    }
+
+    const assigneeName = (taskData.assignedTo || "").trim();
+    if (!assigneeName) {
+      toast.error("Please select who the task is assigned to.");
+      return;
+    }
+
     setSubmitting(true);
     try {
-      // Build task payload with contacted_person object
+      let assigneeEmail = (taskData.assignedEmail || "").trim().toLowerCase();
+      let resolvedAssigneeName = assigneeName;
+
+      // If the user typed a name without picking a suggestion, resolve it.
+      if (!assigneeEmail) {
+        const normalizedAssigneeName = assigneeName.toLowerCase().trim();
+        const match = assigneePeople.find(
+          (candidate) =>
+            candidate.fullNameLower === normalizedAssigneeName ||
+            candidate.email === normalizedAssigneeName,
+        );
+        if (match) {
+          assigneeEmail = match.email;
+          resolvedAssigneeName = match.fullName;
+        } else if (
+          normalizedAssigneeName !==
+          (currentUserFullName || "Me").toLowerCase().trim()
+        ) {
+          throw new Error("Please select an assignee from the list.");
+        }
+      }
+      if (!assigneeEmail) {
+        assigneeEmail = (user?.email || "").trim().toLowerCase();
+        resolvedAssigneeName = currentUserFullName || "Me";
+      }
+
+      // Due date is fixed; combine it with the editable time.
+      const dueDatePart = taskData.dueDate || getTodayDateInput();
+      const dueTimePart = taskData.dueTime || getCurrentTimeInput();
+      const localDue = new Date(`${dueDatePart}T${dueTimePart}:00`);
+      const followupDate = Number.isNaN(localDue.getTime())
+        ? new Date().toISOString()
+        : localDue.toISOString();
+
       const payload = {
-        name: taskData.name || "",
+        memberID: user?.id || user?.email || "",
+        name: resolvedAssigneeName,
         taskType: taskData.taskType,
-        type: taskData.taskType?.toLowerCase().includes("call") ? "call" : "visit",
-        followup_date: taskData.dueDate,
+        type: modalType,
+        followup_date: followupDate,
         status: taskData.taskStage || "Open",
-        assignedfor: taskData.assignedTo || user?.email || "",
-        assigned_to_email: taskData.assignedTo || user?.email || "",
+        assignedfor: assigneeEmail,
+        assigned_to_email: assigneeEmail,
+        created_by_email: user?.email || "",
+        created_by_name: currentUserFullName,
         contacted_person: {
-          name: taskData.contactedPersonName || taskData.recipient || "",
-          email: taskData.contactedPersonEmail || "",
-          phone: taskData.contactedPersonPhone || "",
+          name: person.fullName,
+          email: person.email || "",
+          phone: person.phone || "",
         },
-        // Additional fields
         description: taskData.description || "",
-        memberID: taskData.memberID || "",
         priority: taskData.priority || "",
       };
-      // Submit to backend
-      const res = await authFetch(`${API_URL}/tasks`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error("Failed to create task");
-      toast.success("Task created successfully");
+
+      const res = await authFetch(
+        editingTask
+          ? `${API_URL}/tasks/${editingTask._id || editingTask.id}`
+          : `${API_URL}/tasks`,
+        {
+          method: editingTask ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || "Failed to save task");
+      }
+
+      toast.success(
+        editingTask
+          ? "Task updated successfully"
+          : `Task captured for ${person.fullName}`,
+      );
       handleClose();
-      await fetchUserTasks();
+      setPage(1);
+      await fetchUserTasks(1, false);
     } catch (err) {
-      toast.error(err.message || "Failed to create task");
+      toast.error(err.message || "Failed to save task");
     } finally {
       setSubmitting(false);
     }
@@ -1219,8 +1800,6 @@ export default function DailyTasks() {
   const getFilterDateRangeParams = useCallback((range, customRange) => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const endOfToday = new Date(today);
-    endOfToday.setHours(23, 59, 59, 999);
 
     switch (range) {
       case "this_week": {
@@ -1232,7 +1811,7 @@ export default function DailyTasks() {
         const end = new Date(start);
         end.setDate(start.getDate() + 6);
         end.setHours(23, 59, 59, 999);
-        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
+        return { start_date: toDateOnly(start), end_date: toDateOnly(end) };
       }
       case "last_week": {
         const day = today.getDay();
@@ -1244,19 +1823,19 @@ export default function DailyTasks() {
         const lastWeekEnd = new Date(lastWeekStart);
         lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
         lastWeekEnd.setHours(23, 59, 59, 999);
-        return { start_date: lastWeekStart.toISOString().split("T")[0], end_date: lastWeekEnd.toISOString().split("T")[0] };
+        return { start_date: toDateOnly(lastWeekStart), end_date: toDateOnly(lastWeekEnd) };
       }
       case "this_month": {
         const start = new Date(now.getFullYear(), now.getMonth(), 1);
         const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
         end.setHours(23, 59, 59, 999);
-        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
+        return { start_date: toDateOnly(start), end_date: toDateOnly(end) };
       }
       case "previous_month": {
         const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
         const end = new Date(now.getFullYear(), now.getMonth(), 0);
         end.setHours(23, 59, 59, 999);
-        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
+        return { start_date: toDateOnly(start), end_date: toDateOnly(end) };
       }
       case "custom": {
         if (customRange.start && customRange.end) {
@@ -1300,8 +1879,14 @@ export default function DailyTasks() {
       if (pendingViewFilter === "all") {
         params.append("view_all", "true");
       } else if (pendingViewFilter === "disciples" && selectedPeople.length > 0) {
-        // Send selected people emails
-        selectedPeople.forEach((p) => params.append("email", p.email));
+        // Send selected people emails as one comma-separated value so the
+        // backend receives every selected person (repeated params only keep one).
+        const discipleEmails = [
+          ...new Set(selectedPeople.map((person) => person.email).filter(Boolean)),
+        ];
+        if (discipleEmails.length > 0) {
+          params.set("email", discipleEmails.join(","));
+        }
       }
       // For "personal" view, only the user's email is sent (already in params)
       
@@ -1313,6 +1898,7 @@ export default function DailyTasks() {
       // Normalize tasks
       const normalized = fetchedTasks.map((task) => ({
         ...task,
+        taskKind: task.type === "visit" ? "visit" : "call",
         name: task.name || task.taskName || "Unknown",
         person: task.contacted_person?.name || task.person_name || "Unknown",
         type: task.taskType || task.type || "Unknown",
@@ -1353,9 +1939,15 @@ export default function DailyTasks() {
     }
   }, [updateCount, fetchUserTasks]);
 
-  // Filter tasks based on stage filter (client-side fallback if needed)
-  const visibleTasks = tasks.filter((t) => filter === "all" || String(t.taskStage || t.status || "").toLowerCase() === filter);
+  // Filter tasks based on stage filter (overdue is derived from the due date)
+  const visibleTasks = tasks.filter(
+    (t) => filter === "all" || getTaskStageKey(t) === filter,
+  );
   const totalCount = tasks.length;
+  // Design stat card: completed + awaiting tasks in the current view.
+  const completedTaskCount = visibleTasks.filter((t) =>
+    ["completed", "awaiting task"].includes(getTaskStageKey(t)),
+  ).length;
 
   // ─── Main Render ────────────────────────────────────────────────────
   return (
@@ -1488,7 +2080,7 @@ export default function DailyTasks() {
               }}
             >
               <div style={{ fontSize: "48px", fontWeight: "700", lineHeight: "1", color: colors.foreground }}>
-                {totalCount}
+                {completedTaskCount}
               </div>
               <div style={{ marginTop: "8px", fontSize: "11px", fontWeight: "500", letterSpacing: "0.18em", textTransform: "uppercase", color: colors.mutedForeground }}>
                 TASKS COMPLETE
@@ -1564,7 +2156,8 @@ export default function DailyTasks() {
             ) : (
               visibleTasks.map((task) => (
                 <div
-                  key={task.id}
+                  key={task._id || task.id || `${task.name}-${task.date}`}
+                  onClick={() => handleEdit(task)}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -1573,6 +2166,7 @@ export default function DailyTasks() {
                     border: `1px solid ${colors.border}`,
                     backgroundColor: colors.card,
                     padding: "24px",
+                    cursor: "pointer",
                   }}
                 >
                   <div
@@ -1590,22 +2184,22 @@ export default function DailyTasks() {
                       color: colors.mutedForeground,
                     }}
                   >
-                    {task.name.charAt(0)}
+                    {(task.person || task.name || "?").charAt(0)}
                   </div>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontSize: "18px", fontWeight: "600", color: colors.foreground }}>
-                      {task.name}
+                      {task.person || "No recipient"}
                     </div>
                     <div style={{ marginTop: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: "14px", color: colors.mutedForeground }}>
-                      {task.person} <span style={{ margin: "0 8px" }}>•</span> {task.type}
+                      {task.name} <span style={{ margin: "0 8px" }}>•</span> {task.type}
                     </div>
                   </div>
                   <div style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: "32px", marginLeft: "auto" }}>
-              <StatusBadge status={task.taskStage || task.status} colors={colors} />
-              <span style={{ fontSize: "13px", color: colors.mutedForeground }}>
-                {task.date}
-              </span>
-            </div>
+                    <StatusBadge status={getTaskStageKey(task)} colors={colors} />
+                    <span style={{ fontSize: "13px", color: colors.mutedForeground }}>
+                      {formatTaskDate(task.date)}
+                    </span>
+                  </div>
                 </div>
               ))
             )}
@@ -1643,12 +2237,10 @@ export default function DailyTasks() {
           taskTypes={taskTypes}
           handleSubmit={handleSubmit}
           submitting={submitting}
-          currentUser={user}
-          allPeople={allPeople}
-          isAdmin={isAdmin}
-          canViewTeam={canViewTeam}
-          authFetch={authFetch}
-          API_URL={API_URL}
+          recipientPeople={recipientPeople}
+          assigneePeople={assigneePeople}
+          isLoadingPeople={isLoadingPeople}
+          modalType={modalType}
         />
       )}
 
@@ -1670,10 +2262,11 @@ export default function DailyTasks() {
       <PersonFilterModal
         open={personFilterOpen}
         onClose={() => setPersonFilterOpen(false)}
-        teamMembers={teamPeopleObjects}
+        teamMembers={selectablePeople}
         selectedPeople={selectedPeople}
         onSelectionChange={setSelectedPeople}
         isDarkMode={isDarkMode}
+        isAdmin={isAdmin}
       />
 
       {/* Advanced Filter Panel Modal */}
@@ -1682,6 +2275,8 @@ export default function DailyTasks() {
         onClose={() => setFilterPanelOpen(false)}
         onApply={() => {
           setFilterPanelOpen(false);
+          // Keep the quick stage pills in sync with the advanced stage filter.
+          setFilter(pendingStageFilter);
           setPage(1);
           fetchUserTasks(1, false);
         }}
@@ -1699,7 +2294,7 @@ export default function DailyTasks() {
         customDateRange={customDateRange}
         setCustomDateRange={setCustomDateRange}
         selectedPeople={selectedPeople}
-        allPeople={allPeople}
+        allPeople={selectablePeople}
         onOpenPersonModal={() => setPersonFilterOpen(true)}
         onClearPeople={() => setSelectedPeople([])}
         onRemovePerson={(person) => setSelectedPeople((prev) => prev.filter((p) => p.email !== person.email))}

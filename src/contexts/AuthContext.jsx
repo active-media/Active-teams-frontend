@@ -15,10 +15,10 @@ const KEY_PROFILE_PIC = 'profilePic';
 const KEY_LEADERS     = 'leaders';
 const KEY_IS_LEADER   = 'isLeader';
 const KEY_JWT_TOKEN   = 'jwtToken';
-const KEY_PERSON_ID   = 'personId'; // FIX: was used in persistUser but never defined
+const KEY_PERSON_ID   = 'personId';
 
 const STALE_KEYS = [
-  KEY_USER, KEY_PROFILE_PIC, KEY_LEADERS, KEY_IS_LEADER, KEY_PERSON_ID, // FIX: clear on logout
+  KEY_USER, KEY_PROFILE_PIC, KEY_LEADERS, KEY_IS_LEADER, KEY_PERSON_ID,
   'customEventTypes', 'eventTypeMap',
 ];
 
@@ -92,9 +92,10 @@ export const AuthProvider = ({ children }) => {
     if (!u) { localStorage.removeItem(KEY_USER); return; }
     const withAvatar = ensureUserWithAvatar(u);
     localStorage.setItem(KEY_USER, JSON.stringify(withAvatar));
-    // if (withAvatar.org_id) {
-    //   localStorage.setItem(KEY_ORG_ID, withAvatar.org_id);
-    // }
+    // Writing org_id here used to reference an undefined KEY_ORG_ID constant,
+    // which threw on every sign-in / token refresh and broke auth entirely.
+    // It has no consumers (org comes from the user object), matching the
+    // working branch which dropped the write.
     if (withAvatar.person_id) {
       localStorage.setItem(KEY_PERSON_ID, withAvatar.person_id);
     }
