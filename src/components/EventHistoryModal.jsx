@@ -87,6 +87,35 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
     };
   }, [data]);
 
+  const commitmentSummary = useMemo(() => {
+    const rows = normalizedData.consolidations || [];
+    return rows.reduce(
+      (summary, item) => {
+        const raw = [
+          item?.decision_type,
+          item?.decision_display_name,
+          item?.consolidation_type,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        summary.total += 1;
+        if (raw.includes('first')) summary.first_time += 1;
+        else if (
+          raw.includes('recommit') ||
+          raw.includes('re-commit') ||
+          raw.includes('rededic')
+        ) {
+          summary.recommitment += 1;
+        } else {
+          summary.other += 1;
+        }
+        return summary;
+      },
+      { total: 0, first_time: 0, recommitment: 0, other: 0 },
+    );
+  }, [normalizedData.consolidations]);
+
   const tabData = useMemo(() => {
     switch (activeTab) {
       case 1:
@@ -320,6 +349,41 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
             return <Tab key={label} label={`${label} (${count})`} />;
           })}
         </Tabs>
+
+        {activeTab === 2 && (
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: {
+                xs: 'repeat(2, minmax(0, 1fr))',
+                sm: 'repeat(4, minmax(0, 1fr))',
+              },
+              gap: 1.25,
+              mb: 2,
+            }}
+          >
+            {[
+              { key: 'total', label: 'Total decisions', value: commitmentSummary.total, color: 'primary.main' },
+              { key: 'first_time', label: 'First-time', value: commitmentSummary.first_time, color: 'success.main' },
+              { key: 'recommitment', label: 'Recommitment', value: commitmentSummary.recommitment, color: 'info.main' },
+              { key: 'other', label: 'Other / unspecified', value: commitmentSummary.other, color: 'warning.main' },
+            ].map((card) => (
+              <Card key={card.key} variant="outlined" sx={{ boxShadow: 0 }}>
+                <CardContent sx={{ p: 1.4, '&:last-child': { pb: 1.4 } }}>
+                  <Typography
+                    variant="h5"
+                    sx={{ fontWeight: 700, color: card.color, lineHeight: 1.1 }}
+                  >
+                    {card.value}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {card.label}
+                  </Typography>
+                </CardContent>
+              </Card>
+            ))}
+          </Box>
+        )}
 
         <TextField
           size="small"

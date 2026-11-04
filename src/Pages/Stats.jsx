@@ -234,6 +234,131 @@ const peopleFilterAvatarSx = (index) => ({
   bgcolor: ["#9b5cf6", "#ff7a18", "#3986f6", "#d845e8", "#f0a300", "#10b981", "#ef4444"][index % 7],
 });
 
+const DiscipleshipRollup = React.memo(({ sections }) => {
+  const sectionColors = ["#12a5b5", "#7c5cf6", "#f59e0b"];
+
+  return (
+    <Stack spacing={1.5}>
+      {sections.map((section, sectionIndex) => {
+        const totals = section.rows.reduce(
+          (acc, row) => ({
+            total: acc.total + row.total,
+            completed: acc.completed + row.completed,
+            incomplete: acc.incomplete + row.incomplete,
+          }),
+          { total: 0, completed: 0, incomplete: 0 },
+        );
+        return (
+          <Paper
+            key={section.key}
+            variant="outlined"
+            sx={{ p: 1.5, borderRadius: 2, borderColor: "divider" }}
+          >
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+              <Box
+                sx={{
+                  width: 9,
+                  height: 9,
+                  borderRadius: "50%",
+                  bgcolor: sectionColors[sectionIndex % sectionColors.length],
+                }}
+              />
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, flex: 1 }}>
+                {section.title}
+              </Typography>
+              <Chip
+                size="small"
+                label={`${totals.completed}/${totals.total} completed`}
+                sx={{ height: 22, fontSize: "0.62rem", fontWeight: 600 }}
+              />
+            </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.25 }}>
+              {section.description}
+            </Typography>
+
+            {section.rows.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ py: 1.5, textAlign: "center" }}>
+                No people found in this part of your discipleship tree.
+              </Typography>
+            ) : (
+              <Stack spacing={0.8}>
+                {section.rows.map((row) => {
+                  const rate = row.total ? Math.round((row.completed / row.total) * 100) : 0;
+                  return (
+                    <Box
+                      key={row.key}
+                      sx={{
+                        p: 1.1,
+                        borderRadius: 1.5,
+                        border: "1px solid",
+                        borderColor: "divider",
+                        bgcolor: (theme) =>
+                          theme.palette.mode === "dark" ? "rgba(255,255,255,0.02)" : "rgba(18,165,181,0.03)",
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        <Avatar
+                          sx={{
+                            width: 27,
+                            height: 27,
+                            fontSize: "0.7rem",
+                            fontWeight: 700,
+                            bgcolor: sectionColors[sectionIndex % sectionColors.length],
+                          }}
+                        >
+                          {(row.fullName || "?").charAt(0).toUpperCase()}
+                        </Avatar>
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography variant="body2" noWrap sx={{ fontWeight: 600 }}>
+                            {row.fullName || "Unnamed person"}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
+                            {row.email || "No email on record"}
+                          </Typography>
+                        </Box>
+                        <Chip
+                          size="small"
+                          label={`${row.completed} done`}
+                          color={row.completed > 0 ? "success" : "default"}
+                          variant={row.completed > 0 ? "filled" : "outlined"}
+                          sx={{ height: 21, fontSize: "0.6rem" }}
+                        />
+                        <Chip
+                          size="small"
+                          label={`${row.incomplete} open`}
+                          color={row.incomplete > 0 ? "warning" : "default"}
+                          variant={row.incomplete > 0 ? "filled" : "outlined"}
+                          sx={{ height: 21, fontSize: "0.6rem" }}
+                        />
+                      </Stack>
+                      <Tooltip title={`${rate}% of ${row.total} tasks completed in this period`}>
+                        <LinearProgress
+                          variant="determinate"
+                          value={rate}
+                          sx={{
+                            mt: 0.9,
+                            height: 5,
+                            borderRadius: 3,
+                            bgcolor: "action.hover",
+                            "& .MuiLinearProgress-bar": {
+                              borderRadius: 3,
+                              bgcolor: sectionColors[sectionIndex % sectionColors.length],
+                            },
+                          }}
+                        />
+                      </Tooltip>
+                    </Box>
+                  );
+                })}
+              </Stack>
+            )}
+          </Paper>
+        );
+      })}
+    </Stack>
+  );
+});
+
 const TaskGroupRow = React.memo(
   ({ group, isExpanded, onToggle, formatDate }) => {
     const { user, Tasks:tasks, totalCount, completedCount, incompleteCount } = group;
@@ -460,6 +585,7 @@ const StatsDashboard = () => {
   const [cellFilter, setCellFilter] = useState("all");
   const [selectedCellPerson, setSelectedCellPerson] = useState("all");
   const [taskFilter, setTaskFilter] = useState("all");
+  const [taskView, setTaskView] = useState("people");
   const [taskPersonSearch, setTaskPersonSearch] = useState("");
   const [taskPeopleScope, setTaskPeopleScope] = useState("all");
   const [selectedTeamLeader, setSelectedTeamLeader] = useState(null);
@@ -1005,6 +1131,96 @@ const StatsDashboard = () => {
       consolidation: count("consolidation"),
     };
   }, [stats.allTasks, taskPersonSearch, taskPeopleScope, taskPeople, user, selectedTeamLeader]);
+
+  const discipleshipSections = useMemo(() => {
+    const keyOf = (value) => String(value || "").trim().toLowerCase();
+    const personKeys = (person) =>
+      [person?._id, person?.id, person?.email, person?.fullName]
+        .filter(Boolean)
+        .map(keyOf);
+
+    const root =
+      taskPeople.find((person) => keyOf(person.email) === keyOf(user?.email)) ||
+      taskPeople.find(
+        (person) =>
+          keyOf(person._id) === keyOf(user?._id || user?.id),
+      ) ||
+      null;
+
+    const rootKeys = new Set(personKeys(root));
+    const direct = root
+      ? taskPeople.filter(
+          (person) =>
+            person !== root &&
+            keyOf(person.leader12) &&
+            rootKeys.has(keyOf(person.leader12)),
+        )
+      : [];
+    const directKeys = new Set(direct.flatMap(personKeys));
+    const subDisciples = root
+      ? taskPeople.filter(
+          (person) =>
+            person !== root &&
+            !direct.includes(person) &&
+            (
+              rootKeys.has(keyOf(person.leader144)) ||
+              rootKeys.has(keyOf(person.leader1728)) ||
+              directKeys.has(keyOf(person.leader12))
+            ),
+        )
+      : [];
+
+    const rowFor = (person) => {
+      const keys = new Set(personKeys(person));
+      const personTasks = filteredTasks.filter((task) =>
+        keys.has(keyOf(task.assignedfor)),
+      );
+      const completed = personTasks.filter(isTaskCompleted).length;
+      const fullName =
+        person.fullName ||
+        [person.name, person.surname].filter(Boolean).join(" ") ||
+        person.email ||
+        "Unnamed person";
+      return {
+        key: person.email || person._id || fullName,
+        fullName,
+        email: person.email || "",
+        total: personTasks.length,
+        completed,
+        incomplete: personTasks.length - completed,
+      };
+    };
+
+    const fallbackSelf = {
+      _id: user?._id || user?.id,
+      email: user?.email,
+      fullName: [user?.name, user?.surname].filter(Boolean).join(" "),
+    };
+    const self = root || fallbackSelf;
+    const sortRows = (rows) =>
+      [...rows].sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+    return [
+      {
+        key: "self",
+        title: "My Tasks",
+        description: "Your own task completion for the selected period.",
+        rows: self?.email || self?.fullName ? [rowFor(self)] : [],
+      },
+      {
+        key: "direct",
+        title: "Direct Disciples",
+        description: "People whose leader@12 is you.",
+        rows: sortRows(direct.map(rowFor)),
+      },
+      {
+        key: "sub",
+        title: "Sub-disciples",
+        description: "People under your direct disciples (leader@144 / leader@1728).",
+        rows: sortRows(subDisciples.map(rowFor)),
+      },
+    ];
+  }, [taskPeople, filteredTasks, user]);
 
   const getPeriodDisplayText = (periodType) => {
     switch (periodType) {
@@ -2352,6 +2568,19 @@ const StatsDashboard = () => {
 
               <Button
                 size="small"
+                variant={taskView === "discipleship" ? "contained" : "outlined"}
+                startIcon={<People />}
+                onClick={() =>
+                  setTaskView((current) =>
+                    current === "discipleship" ? "people" : "discipleship",
+                  )
+                }
+                sx={{ textTransform: "none", height: 40, whiteSpace: "nowrap" }}
+              >
+                {taskView === "discipleship" ? "All People" : "Discipleship"}
+              </Button>
+              <Button
+                size="small"
                 variant="outlined"
                 startIcon={<Download />}
                 onClick={downloadTasksExcel}
@@ -2435,7 +2664,9 @@ const StatsDashboard = () => {
                 "&::-webkit-scrollbar-thumb:hover": { background: "#555" },
               }}
             >
-              {visibleGroupedTasks.length === 0 && !stats.loading ? (
+              {taskView === "discipleship" ? (
+                <DiscipleshipRollup sections={discipleshipSections} />
+              ) : visibleGroupedTasks.length === 0 && !stats.loading ? (
                 <Box
                   sx={{
                     textAlign: "center",

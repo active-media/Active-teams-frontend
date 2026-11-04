@@ -10,7 +10,6 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material';
-import { alpha } from '@mui/material/styles';
 import { Link, useLocation } from 'react-router-dom';
 import MenuIcon from '@mui/icons-material/Menu';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
@@ -148,7 +147,6 @@ export default function Sidebar({ mode, setMode }) {
   const [, setUserHasCell] = useState(true);
   const [menuItems, setMenuItems] = useState([]);
 
-  const accent = theme.palette.primary.main;
   const isDark = mode === 'dark';
   const line = isDark ? '#2a2a38' : '#e3e1ec';
 
@@ -165,7 +163,7 @@ export default function Sidebar({ mode, setMode }) {
         return;
       }
 
-      const userRole = user?.role?.toLowerCase() || '';
+      const userRole = normalizeRole(user?.role);
       const isSupremeAdmin = user?.is_supreme_admin || user?.email === "tkgenia1234@gmail.com";
       const isCustomRole = !SYSTEM_ROLES.includes(normalizeRole(userRole));
 
@@ -243,7 +241,6 @@ export default function Sidebar({ mode, setMode }) {
   };
 
   // Flatter, truer black in dark mode to match the design
-  const bgColor = mode === 'dark' ? '#0a0a0a' : '#ffffff';
   const textColor = mode === 'dark' ? '#ffffff' : '#000000';
   const activeTextColor = mode === 'dark' ? '#ffffff' : '#000000';
   const activeBorderColor = mode === 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)';
