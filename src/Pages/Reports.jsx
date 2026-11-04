@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link as RouterLink, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Alert, Box, Button, Card, Chip, LinearProgress, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -203,14 +203,11 @@ const location = useLocation();
       {loading && <LinearProgress sx={{ mb: 1.5 }} />}
       {error?.status === 501 && error?.code === "not_implemented" ? <ComingSoonState message={error.message} /> : error && <ReportErrorState error={error} onRetry={() => setError(null)} />}
       {envelope && (
-        <>
-          <ReportEnvelopeView envelope={envelope} />
-          {envelope.tables?.some((t) => t.key === "twelve_tasks" && t.rows.length === 0) && (
-            <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: "center" }}>
-              No tracked people for this period. Add people to the Twelve Tasks roster to enable the report.
-            </Typography>
-          )}
-        </>
+        envelope.tables?.some((t) => t.key === "twelve_tasks" && t.rows.length === 0) ? (
+          <Alert severity="info" action={<Button component={RouterLink} to="/admin" color="inherit">Open Admin</Button>}>
+            No tasks set for this week.
+          </Alert>
+        ) : <ReportEnvelopeView envelope={envelope} />
       )}
       {!envelope && !loading && !error && <Alert severity="info">Choose a valid report from the catalog.</Alert>}
     </Box>

@@ -428,6 +428,7 @@ export default function ReportingDashboard() {
       ? { start_date: periodParams.start_date, end_date: periodParams.end_date }
       : { period: periodParams.period }),
     campus,
+    organization: searchParams.get("organization") || searchParams.get("org") || undefined,
   };
   const requestKey = JSON.stringify(requestParams);
 
