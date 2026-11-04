@@ -68,7 +68,7 @@ function formatValue(item) {
 function kpiCaption(item) {
   if (item.delta_label) return item.delta_label;
   if (typeof item.delta === "number") return `${item.delta > 0 ? "+" : ""}${item.delta.toFixed(1)}%`;
-  return item.hint ?? "";
+  return "";
 }
 
 function kpiTone(item) {
@@ -91,6 +91,7 @@ function getKpis(dashboard) {
       label: item.label ?? item.key,
       value: formatValue(item),
       caption: kpiCaption(item),
+      hint: item.hint,
       tone: kpiTone(item),
       index,
     }))
@@ -317,14 +318,17 @@ function KpiCard({ item, to }) {
           <Icon sx={{ fontSize: 18 }} />
         </Box>
         {to ? (
-          <Typography variant="caption" sx={{ color: item.caption && item.tone !== "neutral" ? `${item.tone}.main` : "text.secondary" }}>
-            {item.caption}
-          </Typography>
+          item.caption && (
+            <Typography variant="caption" sx={{ color: item.tone !== "neutral" ? `${item.tone}.main` : "text.secondary" }}>
+              {item.caption}
+            </Typography>
+          )
         ) : (
           <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Coming soon</Typography>
         )}
       </Stack>
       <Typography variant="h5" fontWeight={700} sx={{ mt: 1.5, lineHeight: 1.2 }}>{item.value}</Typography>
+      {item.hint && <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{item.hint}</Typography>}
       <Typography variant="caption" color="text.secondary">{item.label}</Typography>
     </Paper>
   );
