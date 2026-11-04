@@ -36,7 +36,9 @@ const location = useLocation();
   const [error, setError] = useState(null);
   const [exporting, setExporting] = useState("");
   const [saving, setSaving] = useState(false);
-  const [organization, setOrganization] = useState(user?.Organization || user?.organization || "");
+  const [organization, setOrganization] = useState(
+    searchParams.get("organization") || searchParams.get("org") || user?.Organization || user?.organization || "",
+  );
   const [periodValue, setPeriodValue] = useState(() => ({
     period: searchParams.get("period") || DEFAULT_PERIOD,
     start_date: searchParams.get("start_date") || "",
@@ -49,21 +51,26 @@ const location = useLocation();
     ...(periodValue.isCustom && periodValue.start_date && periodValue.end_date
       ? { start_date: periodValue.start_date, end_date: periodValue.end_date }
       : { period: periodValue.period }),
+    campus: searchParams.get("campus") || undefined,
+    organization: searchParams.get("organization") || searchParams.get("org") || undefined,
     gender: gender || undefined,
-  }), [periodValue, gender]);
+  }), [periodValue, gender, searchParams]);
 
   // Mirror the selection into the URL so drill-down links (and the dashboard's links) keep it.
   useEffect(() => {
-    const next = new URLSearchParams();
-    if (periodValue.isCustom) {
-      next.set("custom", "true");
-      if (periodValue.start_date) next.set("start_date", periodValue.start_date);
-      if (periodValue.end_date) next.set("end_date", periodValue.end_date);
-    } else if (periodValue.period) {
-      next.set("period", periodValue.period);
-    }
-    if (gender) next.set("gender", gender);
-    setSearchParams(next, { replace: true });
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      ["period", "start_date", "end_date", "custom", "gender"].forEach((key) => next.delete(key));
+      if (periodValue.isCustom) {
+        next.set("custom", "true");
+        if (periodValue.start_date) next.set("start_date", periodValue.start_date);
+        if (periodValue.end_date) next.set("end_date", periodValue.end_date);
+      } else if (periodValue.period) {
+        next.set("period", periodValue.period);
+      }
+      if (gender) next.set("gender", gender);
+      return next;
+    }, { replace: true });
   }, [periodValue, gender, setSearchParams]);
 
   useEffect(() => {

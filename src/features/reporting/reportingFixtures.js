@@ -45,10 +45,10 @@ export const REPORT_FIXTURES = {
   catalog: [
     ["twelve_tasks", "Twelve Tasks", true, "Completed task counts for tracked people and targets."],
     ["cells_graph", "Cells Graph", true, "Cell attendance and active-cell trends."],
-    ["life_class", "Life Class", false, "Life Class attendance report."],
-    ["school_of_leaders", "School of Leaders", false, "School of Leaders attendance report."],
-    ["plan_40", "Plan 40", false, "Plan 40 progress report."],
-    ["staff_interns_youth", "Staff/Interns/Youth", false, "Staff, interns, and youth report."],
+    ["life_class", "Life Class", true, "Life Class attendance report."],
+    ["school_of_leaders", "School of Leaders", true, "School of Leaders attendance report."],
+    ["plan_40", "Plan 40", true, "Plan 40 progress report."],
+    ["staff_interns_youth", "Staff/Interns/Youth", true, "Staff, interns, and youth report."],
     ["school_cell", "School Cell", true, "Weekly School Cell attendance and leader summary."],
     ["service_target", "Service Target", true, "Weekly leader service targets."],
   ].map(([report_type, title, implemented, description]) => ({
@@ -99,6 +99,10 @@ export const REPORT_FIXTURES = {
   reports: {
     twelve_tasks: twelveTasks,
     cells_graph: emptyEnvelope("cells_graph", "Cells Graph"),
+    life_class: emptyEnvelope("life_class", "Life Class"),
+    school_of_leaders: emptyEnvelope("school_of_leaders", "School of Leaders"),
+    plan_40: emptyEnvelope("plan_40", "Plan 40"),
+    staff_interns_youth: emptyEnvelope("staff_interns_youth", "Staff/Interns/Youth"),
     school_cell: emptyEnvelope("school_cell", "School Cell"),
     service_target: emptyEnvelope("service_target", "Service Target"),
   },

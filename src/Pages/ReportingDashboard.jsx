@@ -41,21 +41,20 @@ const KPI_ICONS = {
   staff_interns_youth: ManageAccountsOutlinedIcon,
 };
 
-/* Where each KPI box leads. null = page not built yet, so the box renders
-   as a disabled "Coming soon" card instead of a dead click. */
+/* Every dashboard KPI must have a live report route. */
 const KPI_ROUTES = {
-  total_attendance: null,
+  total_attendance: "/reports/cells_graph",
   active_cells: "/reports/cells_graph",
   service_target: "/reports/service_target",
   twelve_tasks: "/reports/twelve_tasks",
-  life_class: null,
-  school_of_leaders: null,
-  plan_40: null,
-  staff_interns_youth: null,
+  life_class: "/reports/life_class",
+  school_of_leaders: "/reports/school_of_leaders",
+  plan_40: "/reports/plan_40",
+  staff_interns_youth: "/reports/staff_interns_youth",
 };
 
-/* Carry the dashboard's period, custom dates and campus into the sub-page. */
-const CARRIED_PARAMS = ["period", "start_date", "end_date", "custom", "campus"];
+/* Carry the dashboard's period, campus, and any organization context into the report. */
+const CARRIED_PARAMS = ["period", "start_date", "end_date", "custom", "campus", "organization", "org"];
 
 function formatValue(item) {
   const raw = item.value;
@@ -86,6 +85,7 @@ function getKpis(dashboard) {
     : Object.entries(src).map(([key, v]) =>
         v && typeof v === "object" ? { key, ...v } : { key, value: v });
   return list
+    .filter((item) => KPI_ROUTES[item.key ?? item.id])
     .map((item, index) => ({
       key: item.key ?? item.id ?? `kpi-${index}`,
       label: item.label ?? item.key,
@@ -291,25 +291,33 @@ export const cardSx = {
 
 function KpiCard({ item, to }) {
   const Icon = KPI_ICONS[item.key] || InsightsIcon;
-  const linkProps = to ? { component: RouterLink, to } : {};
   return (
     <Paper
       variant="outlined"
-      {...linkProps}
-      aria-disabled={to ? undefined : true}
+      component={RouterLink}
+      to={to}
+      onKeyDown={(event) => {
+        if (event.key === " ") {
+          event.preventDefault();
+          event.currentTarget.click();
+        }
+      }}
       sx={{
         ...cardSx,
         p: 2,
         display: "block",
         textDecoration: "none",
         color: "inherit",
-        ...(to
-          ? {
-              cursor: "pointer",
-              transition: "border-color 120ms, box-shadow 120ms",
-              "&:hover, &:focus-visible": { borderColor: "primary.main", boxShadow: 1 },
-            }
-          : { opacity: 0.65, cursor: "default" }),
+        cursor: "pointer",
+        transition: "border-color 120ms, box-shadow 120ms",
+        "&:hover": { borderColor: "primary.main", boxShadow: 1 },
+        "&:focus-visible": {
+          borderColor: "primary.main",
+          outline: "2px solid",
+          outlineColor: "primary.main",
+          outlineOffset: 2,
+          boxShadow: 1,
+        },
       }}
     >
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
@@ -321,9 +329,6 @@ function KpiCard({ item, to }) {
           <Typography variant="caption" sx={{ color: item.tone !== "neutral" ? `${item.tone}.main` : "text.secondary" }}>
             {item.caption}
           </Typography>
-        )}
-        {!to && (
-          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Coming soon</Typography>
         )}
       </Stack>
       <Typography variant="h5" fontWeight={700} sx={{ mt: 1.5, lineHeight: 1.2 }}>{item.value}</Typography>
@@ -462,7 +467,6 @@ export default function ReportingDashboard() {
 
   const kpiLink = (key) => {
     const route = KPI_ROUTES[key];
-    if (!route) return null;
     const carried = new URLSearchParams();
     CARRIED_PARAMS.forEach((k) => {
       const v = searchParams.get(k);
