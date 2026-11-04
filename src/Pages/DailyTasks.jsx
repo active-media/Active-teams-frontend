@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState, useCallback, useMemo } from "react";
-import { Phone, Plus, Filter, X, Check, Search, Users, MoreVertical, ChevronDown, MapPin, Calendar } from "lucide-react";
+import { Phone, Plus, Filter, X, Check, Search, Users, ChevronDown, MapPin, Calendar } from "lucide-react";
 import { useTheme } from "@mui/material/styles";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
@@ -134,15 +134,77 @@ function StatusBadge({ status, colors }) {
   );
 }
 
-function CallTaskModal({ isOpen, onClose, taskData, handleChange, taskTypes, handleSubmit, submitting }) {
+function CallTaskModal({ isOpen, onClose, taskData, handleChange, taskTypes, handleSubmit, submitting, currentUser, allPeople, isAdmin, canViewTeam }) {
   const availableTaskTypes = taskTypes.length
     ? taskTypes.map((taskType) => typeof taskType === "string" ? taskType : taskType.name).filter(Boolean)
     : ["Awaiting Call", "Service Invitation", "Service Follow Up", "Follow Up", "New Member Care"];
 
+  const stageOptions = ["Awaiting Task", "Open", "Completed"];
+
+  // For assigned to: admin can assign to anyone, leaders to their hierarchy, others only themselves
+  const currentUserOption = { 
+    email: currentUser?.email, 
+    name: `${currentUser?.name || ""} ${currentUser?.surname || ""}`.trim() 
+  };
+  
+  const getAssignablePeople = () => {
+    let people = [];
+    if (isAdmin || canViewTeam) {
+      people = allPeople;
+    }
+    const hasCurrentUser = people.some(p => p.email === currentUserOption.email);
+    if (!hasCurrentUser && currentUserOption.email) {
+      people = [currentUserOption, ...people];
+    }
+    return people;
+  };
+
+  const assignablePeople = getAssignablePeople();
+
+  // Recipient search state
+  const [recipientSearch, setRecipientSearch] = useState("");
+  const [recipientResults, setRecipientResults] = useState([]);
+  const [showRecipientDropdown, setShowRecipientDropdown] = useState(false);
+
+  // Search people for recipient
+  useEffect(() => {
+    if (recipientSearch.trim().length >= 1) {
+      const q = recipientSearch.toLowerCase().trim();
+      const results = allPeople
+        .filter((p) => {
+          const name = `${p.name || ""}`.toLowerCase().trim();
+          const email = (p.email || "").toLowerCase().trim();
+          return name.includes(q) || email.includes(q);
+        })
+        .slice(0, 20);
+      setRecipientResults(results);
+      setShowRecipientDropdown(true);
+    } else {
+      setRecipientResults(allPeople.slice(0, 20));
+      setShowRecipientDropdown(true);
+    }
+  }, [recipientSearch, allPeople]);
+
+  const handleRecipientSelect = (person) => {
+    setRecipientSearch(person.name);
+    setShowRecipientDropdown(false);
+    handleChange({ target: { name: "recipient", value: person.email } });
+    // Also set contacted_person fields
+    handleChange({ target: { name: "contactedPersonName", value: person.name } });
+    handleChange({ target: { name: "contactedPersonEmail", value: person.email } });
+    handleChange({ target: { name: "contactedPersonPhone", value: "" } });
+  };
+
+  const handleRecipientSearchChange = (e) => {
+    const value = e.target.value;
+    setRecipientSearch(value);
+    handleChange(e);
+  };
+
   return (
     <Dialog open={isOpen} onClose={onClose} fullWidth maxWidth="sm">
       <form onSubmit={handleSubmit}>
-        <DialogTitle>Create Task</DialogTitle>
+        <DialogTitle>Call Task</DialogTitle>
         <DialogContent sx={{ display: "grid", gap: 2, pt: "12px !important" }}>
           <TextField
             select
@@ -156,19 +218,66 @@ function CallTaskModal({ isOpen, onClose, taskData, handleChange, taskTypes, han
               <MenuItem key={taskType} value={taskType}>{taskType}</MenuItem>
             ))}
           </TextField>
+          
+          {/* Recipient - who the task is for (searchable) */}
           <TextField
+            required
+            label="Recipient"
+            name="recipient"
+            value={recipientSearch}
+            onChange={handleRecipientSearchChange}
+            onClick={() => setShowRecipientDropdown(true)}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <Search color="action" />
+                </InputAdornment>
+              ),
+            }}
+          />
+          {showRecipientDropdown && recipientResults.length > 0 && (
+            <Box
+              sx={{
+                position: "absolute",
+                zIndex: 10,
+                mt: 1,
+                maxHeight: 300,
+                overflow: "auto",
+                bgcolor: "background.paper",
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 2,
+                boxShadow: 3,
+                width: "100%",
+              }}
+            >
+              {recipientResults.map((person) => (
+                <MenuItem
+                  key={person.email}
+                  onClick={() => handleRecipientSelect(person)}
+                  style={{ padding: "8px 16px" }}
+                >
+                  {person.name}
+                </MenuItem>
+              ))}
+            </Box>
+          )}
+
+          {/* Assigned to - defaults to current user but can be changed */}
+          <TextField
+            select
             label="Assigned to"
             name="assignedTo"
-            value={taskData.assignedTo}
+            value={taskData.assignedTo || currentUser?.email || ""}
             onChange={handleChange}
-          />
-          <TextField
-            label="Assignee email"
-            name="assignedEmail"
-            type="email"
-            value={taskData.assignedEmail}
-            onChange={handleChange}
-          />
+          >
+            {assignablePeople.map((person) => (
+              <MenuItem key={person.email} value={person.email}>
+                {person.name}
+              </MenuItem>
+            ))}
+          </TextField>
+          
           <TextField
             required
             label="Due date"
@@ -178,22 +287,30 @@ function CallTaskModal({ isOpen, onClose, taskData, handleChange, taskTypes, han
             onChange={handleChange}
             InputLabelProps={{ shrink: true }}
           />
+          
+          {/* Task Stage instead of Status */}
           <TextField
             select
-            label="Status"
+            required
+            label="Task Stage"
             name="taskStage"
-            value={taskData.taskStage}
+            value={taskData.taskStage || "Open"}
             onChange={handleChange}
           >
-            {["Open", "In Progress", "Completed"].map((status) => (
-              <MenuItem key={status} value={status}>{status}</MenuItem>
+            {stageOptions.map((stage) => (
+              <MenuItem key={stage} value={stage}>{stage}</MenuItem>
             ))}
           </TextField>
+          
+          {/* Hidden fields for contacted_person */}
+          <input type="hidden" name="contactedPersonName" value={taskData.contactedPersonName || ""} onChange={handleChange} />
+          <input type="hidden" name="contactedPersonEmail" value={taskData.contactedPersonEmail || ""} onChange={handleChange} />
+          <input type="hidden" name="contactedPersonPhone" value={taskData.contactedPersonPhone || ""} onChange={handleChange} />
         </DialogContent>
         <DialogActions>
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="contained" disabled={submitting}>
-            {submitting ? "Creating..." : "Create Task"}
+            {submitting ? "Saving..." : "Save Task"}
           </Button>
         </DialogActions>
       </form>
@@ -398,8 +515,14 @@ function FilterPanelModal({
   setPendingViewFilter,
   pendingFilterType,
   setPendingFilterType,
+  pendingStageFilter,
+  setPendingStageFilter,
+  pendingDateRange,
+  setPendingDateRange,
+  customDateRange,
+  setCustomDateRange,
   selectedPeople,
-  teamPeopleObjects,
+  allPeople,
   onOpenPersonModal,
   onClearPeople,
   onRemovePerson,
@@ -417,17 +540,36 @@ function FilterPanelModal({
     { value: "consolidation", label: "Consolidation" },
   ];
 
+  const stageOptions = [
+    { value: "all", label: "All Stages" },
+    { value: "open", label: "Open" },
+    { value: "completed", label: "Completed" },
+    { value: "awaiting task", label: "Awaiting Task" },
+    { value: "overdue", label: "Overdue" },
+  ];
+
+  const dateRangeOptions = [
+    { value: "this_week", label: "This Week" },
+    { value: "last_week", label: "Last Week" },
+    { value: "this_month", label: "This Month" },
+    { value: "previous_month", label: "Previous Month" },
+    { value: "custom", label: "Custom Range" },
+  ];
+
   const viewOptions = [
     { value: "personal", label: "Personal", description: "Only your own tasks" },
-    ...(isAdmin ? [{ value: "all", label: "All", description: "Every task in your organization" }] : []),
     ...(canViewTeam
-      ? [{ value: "team", label: "Team", description: "Tasks for your disciples and hierarchy" }]
+      ? [{ value: "disciples", label: "Disciples", description: "Tasks for your disciples and hierarchy" }]
       : []),
+    ...(isAdmin ? [{ value: "all", label: "All", description: "Every task in your organization" }] : []),
   ];
 
   const clearAllFilters = () => {
     setPendingViewFilter(isAdmin ? "all" : "personal");
     setPendingFilterType("all");
+    setPendingStageFilter("all");
+    setPendingDateRange("this_week");
+    setCustomDateRange({ start: "", end: "" });
     onClearPeople();
   };
 
@@ -465,145 +607,244 @@ function FilterPanelModal({
 
       <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 3, py: 3 }}>
         {/* View selector */}
-        {canViewTeam && (
-          <Box>
-            <Typography
-              variant="overline"
-              sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
+        <Box>
+          <Typography
+            variant="overline"
+            sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
+          >
+            View
+          </Typography>
+          <Box sx={{ display: "flex", gap: 1, mt: 1, flexWrap: "wrap" }}>
+            {viewOptions.map((option) => {
+              const isActive = pendingViewFilter === option.value;
+              return (
+                <Button
+                  key={option.value}
+                  size="small"
+                  variant={isActive ? "contained" : "outlined"}
+                  onClick={() => {
+                    setPendingViewFilter(option.value);
+                    if (option.value === "personal") {
+                      onClearPeople();
+                    }
+                  }}
+                  sx={{
+                    textTransform: "none",
+                    fontWeight: 600,
+                    borderRadius: "10px",
+                    background: isActive
+                      ? isDarkMode
+                        ? "#fff"
+                        : "#111"
+                      : "transparent",
+                    color: isActive
+                      ? isDarkMode
+                        ? "#111"
+                        : "#fff"
+                      : isDarkMode
+                        ? "#e5e7eb"
+                        : "#374151",
+                    borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
+                    "&:hover": {
+                      background: isActive
+                        ? isDarkMode
+                          ? "#f3f4f6"
+                          : "#000"
+                        : isDarkMode
+                          ? "rgba(255,255,255,0.08)"
+                          : "rgba(17,17,17,0.06)",
+                    },
+                  }}
+                >
+                  {option.label}
+                </Button>
+              );
+            })}
+          </Box>
+          <Typography variant="caption" sx={{ display: "block", mt: 1, color: isDarkMode ? "#9ca3af" : "#6b7280" }}>
+            {viewOptions.find((o) => o.value === pendingViewFilter)?.description}
+          </Typography>
+
+          {/* Person filter — only for disciples/all view, not personal */}
+          {(pendingViewFilter === "disciples" || pendingViewFilter === "all") && (
+            <Box
+              sx={{
+                mt: 2,
+                p: 2,
+                borderRadius: "12px",
+                border: `1px solid ${isDarkMode ? "#374151" : "#e5e7eb"}`,
+                background: isDarkMode ? "rgba(255,255,255,0.03)" : "#f9fafb",
+              }}
             >
-              View
-            </Typography>
-            <Box sx={{ display: "flex", gap: 1, mt: 1, flexWrap: "wrap" }}>
-              {viewOptions.map((option) => {
-                const isActive = pendingViewFilter === option.value;
-                return (
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                <Box>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                    People
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {allPeople.length === 0
+                      ? "No people found"
+                      : selectedPeople.length === 0
+                        ? `All ${allPeople.length} people available`
+                        : `${selectedPeople.length} of ${allPeople.length} selected`}
+                  </Typography>
+                </Box>
+                <Box sx={{ display: "flex", gap: 1 }}>
+                  {selectedPeople.length > 0 && (
+                    <Button size="small" onClick={onClearPeople} sx={{ textTransform: "none" }}>
+                      Clear
+                    </Button>
+                  )}
                   <Button
-                    key={option.value}
                     size="small"
-                    variant={isActive ? "contained" : "outlined"}
-                    onClick={() => {
-                      setPendingViewFilter(option.value);
-                      if (option.value === "team") {
-                        // Keep current person selection; open picker below
-                      } else if (option.value === "personal") {
-                        onClearPeople();
-                      }
-                    }}
+                    variant="contained"
+                    onClick={onOpenPersonModal}
+                    startIcon={<Users size={16} />}
+                    disabled={allPeople.length === 0}
                     sx={{
                       textTransform: "none",
                       fontWeight: 600,
                       borderRadius: "10px",
-                      background: isActive
-                        ? isDarkMode
-                          ? "#fff"
-                          : "#111"
-                        : "transparent",
-                      color: isActive
-                        ? isDarkMode
-                          ? "#111"
-                          : "#fff"
-                        : isDarkMode
-                          ? "#e5e7eb"
-                          : "#374151",
-                      borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
-                      "&:hover": {
-                        background: isActive
-                          ? isDarkMode
-                            ? "#f3f4f6"
-                            : "#000"
-                          : isDarkMode
-                            ? "rgba(255,255,255,0.08)"
-                            : "rgba(17,17,17,0.06)",
+                      background: isDarkMode ? "#fff" : "#111",
+                      color: isDarkMode ? "#111" : "#fff",
+                      "&:hover": { background: isDarkMode ? "#f3f4f6" : "#000" },
+                      "&.Mui-disabled": {
+                        background: isDarkMode ? "#374151" : "#e5e7eb",
+                        color: isDarkMode ? "#6b7280" : "#9ca3af",
                       },
                     }}
                   >
-                    {option.label}
+                    Choose People
                   </Button>
-                );
-              })}
-            </Box>
-            <Typography variant="caption" sx={{ display: "block", mt: 1, color: isDarkMode ? "#9ca3af" : "#6b7280" }}>
-              {viewOptions.find((o) => o.value === pendingViewFilter)?.description}
-            </Typography>
-
-            {/* Person filter — only meaningful for team view */}
-            {pendingViewFilter === "team" && (
-              <Box
-                sx={{
-                  mt: 2,
-                  p: 2,
-                  borderRadius: "12px",
-                  border: `1px solid ${isDarkMode ? "#374151" : "#e5e7eb"}`,
-                  background: isDarkMode ? "rgba(255,255,255,0.03)" : "#f9fafb",
-                }}
-              >
-                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-                  <Box>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                      People
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {teamPeopleObjects.length === 0
-                        ? "No team members found under your hierarchy"
-                        : selectedPeople.length === 0
-                          ? `All ${teamPeopleObjects.length} team member(s) included`
-                          : `${selectedPeople.length} of ${teamPeopleObjects.length} selected`}
-                    </Typography>
-                  </Box>
-                  <Box sx={{ display: "flex", gap: 1 }}>
-                    {selectedPeople.length > 0 && (
-                      <Button size="small" onClick={onClearPeople} sx={{ textTransform: "none" }}>
-                        Clear
-                      </Button>
-                    )}
-                    <Button
-                      size="small"
-                      variant="contained"
-                      onClick={onOpenPersonModal}
-                      startIcon={<Users size={16} />}
-                      disabled={teamPeopleObjects.length === 0}
-                      sx={{
-                        textTransform: "none",
-                        fontWeight: 600,
-                        borderRadius: "10px",
-                        background: isDarkMode ? "#fff" : "#111",
-                        color: isDarkMode ? "#111" : "#fff",
-                        "&:hover": { background: isDarkMode ? "#f3f4f6" : "#000" },
-                        "&.Mui-disabled": {
-                          background: isDarkMode ? "#374151" : "#e5e7eb",
-                          color: isDarkMode ? "#6b7280" : "#9ca3af",
-                        },
-                      }}
-                    >
-                      Choose People
-                    </Button>
-                  </Box>
                 </Box>
-
-                {selectedPeople.length > 0 && (
-                  <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mt: 1.5 }}>
-                    {selectedPeople.slice(0, 8).map((person) => (
-                      <Chip
-                        key={person.email}
-                        label={person.name || person.email}
-                        size="small"
-                        onDelete={() => onRemovePerson && onRemovePerson(person)}
-                        sx={{ maxWidth: 180 }}
-                      />
-                    ))}
-                    {selectedPeople.length > 8 && (
-                      <Chip label={`+${selectedPeople.length - 8} more`} size="small" />
-                    )}
-                  </Box>
-                )}
               </Box>
-            )}
-          </Box>
-        )}
+
+              {selectedPeople.length > 0 && (
+                <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mt: 1.5 }}>
+                  {selectedPeople.slice(0, 8).map((person) => (
+                    <Chip
+                      key={person.email}
+                      label={person.name || person.email}
+                      size="small"
+                      onDelete={() => onRemovePerson && onRemovePerson(person)}
+                      sx={{ maxWidth: 180 }}
+                    />
+                  ))}
+                  {selectedPeople.length > 8 && (
+                    <Chip label={`+${selectedPeople.length - 8} more`} size="small" />
+                  )}
+                </Box>
+              )}
+            </Box>
+          )}
+        </Box>
 
         <Divider />
 
-        {/* Task type */}
+        {/* Time Period */}
+        <Box>
+          <Typography
+            variant="overline"
+            sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
+          >
+            Time Period
+          </Typography>
+          <Box sx={{ display: "flex", gap: 1, mt: 1, flexWrap: "wrap" }}>
+            {dateRangeOptions.map((option) => {
+              const isActive = pendingDateRange === option.value;
+              return (
+                <Button
+                  key={option.value}
+                  size="small"
+                  variant={isActive ? "contained" : "outlined"}
+                  onClick={() => setPendingDateRange(option.value)}
+                  sx={{
+                    textTransform: "none",
+                    fontWeight: 600,
+                    borderRadius: "10px",
+                    background: isActive
+                      ? isDarkMode
+                        ? "#fff"
+                        : "#111"
+                      : "transparent",
+                    color: isActive
+                      ? isDarkMode
+                        ? "#111"
+                        : "#fff"
+                      : isDarkMode
+                        ? "#e5e7eb"
+                        : "#374151",
+                    borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
+                    "&:hover": {
+                      background: isActive
+                        ? isDarkMode
+                          ? "#f3f4f6"
+                          : "#000"
+                        : isDarkMode
+                          ? "rgba(255,255,255,0.08)"
+                          : "rgba(17,17,17,0.06)",
+                    },
+                  }}
+                >
+                  {option.label}
+                </Button>
+              );
+            })}
+          </Box>
+          
+          {/* Custom date range inputs */}
+          {pendingDateRange === "custom" && (
+            <Box sx={{ display: "flex", gap: 2, mt: 2, flexWrap: "wrap" }}>
+              <TextField
+                type="date"
+                label="Start Date"
+                size="small"
+                value={customDateRange.start}
+                onChange={(e) => setCustomDateRange({ ...customDateRange, start: e.target.value })}
+                sx={{ minWidth: 200 }}
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                type="date"
+                label="End Date"
+                size="small"
+                value={customDateRange.end}
+                onChange={(e) => setCustomDateRange({ ...customDateRange, end: e.target.value })}
+                sx={{ minWidth: 200 }}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Box>
+          )}
+        </Box>
+
+        <Divider />
+
+        {/* Task Stage Filter */}
+        <Box>
+          <Typography
+            variant="overline"
+            sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
+          >
+            Task Stage
+          </Typography>
+          <FormControl fullWidth size="small" sx={{ mt: 1 }}>
+            <Select
+              value={pendingStageFilter}
+              onChange={(e) => setPendingStageFilter(e.target.value)}
+              sx={{ borderRadius: "10px" }}
+            >
+              {stageOptions.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {option.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Box>
+
+        <Divider />
+
+        {/* Task Type */}
         <Box>
           <Typography
             variant="overline"
@@ -723,6 +964,9 @@ export default function DailyTasks() {
 
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
+  // Use sidebar background color for main content
+  const sidebarBg = isDarkMode ? "#1e1e1e" : "#ffffff";
+  const sidebarBorder = isDarkMode ? "#374151" : "#e5e7eb";
   const colors = isDarkMode ? COLORS.dark : COLORS.light;
 
   const { user, authFetch } = useContext(AuthContext);
@@ -730,85 +974,54 @@ export default function DailyTasks() {
 
   const [tasks, setTasks] = useState([]);
   const [taskTypes, setTaskTypes] = useState([]);
+  const [allPeople, setAllPeople] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAddTypeModalOpen, setIsAddTypeModalOpen] = useState(false);
-  const [dateRange, setDateRange] = useState("This Week");
-  const [filter, setFilter] = useState("overdue");
   const [newTaskTypeName, setNewTaskTypeName] = useState("");
   const [addingTaskType, setAddingTaskType] = useState(false);
 
   // Advanced filter state
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
-  const [pendingViewFilter, setPendingViewFilter] = useState("personal"); // personal, team, all
+  const [pendingViewFilter, setPendingViewFilter] = useState("personal"); // personal, disciples, all
   const [pendingFilterType, setPendingFilterType] = useState("all");
+  const [pendingStageFilter, setPendingStageFilter] = useState("all");
+  const [pendingDateRange, setPendingDateRange] = useState("this_week");
+  const [customDateRange, setCustomDateRange] = useState({ start: "", end: "" });
   const [selectedPeople, setSelectedPeople] = useState([]);
   const [teamPeopleObjects, setTeamPeopleObjects] = useState([]);
   const [batchSize, setBatchSize] = useState(50);
   const [canViewTeam, setCanViewTeam] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
 
+  // Quick filter pills state (synced with pendingStageFilter)
+  const [filter, setFilter] = useState("all");
+
   // Pagination state
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [totalTasks, setTotalTasks] = useState(0);
 
-  // ─── Helper: Calculate date range for presets ─────────────────────────────
-  const getDateRangeParams = useCallback((range) => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const endOfToday = new Date(today);
-    endOfToday.setHours(23, 59, 59, 999);
+  // Person filter modal state
+  const [personFilterOpen, setPersonFilterOpen] = useState(false);
 
-    switch (range) {
-      case "Today": {
-        const start = today.toISOString().split("T")[0];
-        const end = endOfToday.toISOString().split("T")[0];
-        return { start_date: start, end_date: end };
-      }
-      case "This Week": {
-        // Start from Monday
-        const day = today.getDay();
-        const diff = day === 0 ? -6 : 1 - day; // Monday = 1
-        const start = new Date(today);
-        start.setDate(today.getDate() + diff);
-        const end = new Date(start);
-        end.setDate(start.getDate() + 6);
-        end.setHours(23, 59, 59, 999);
-        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
-      }
-      case "This Month": {
-        const start = new Date(now.getFullYear(), now.getMonth(), 1);
-        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        end.setHours(23, 59, 59, 999);
-        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
-      }
-      case "This Year": {
-        const start = new Date(now.getFullYear(), 0, 1);
-        const end = new Date(now.getFullYear(), 11, 31);
-        end.setHours(23, 59, 59, 999);
-        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
-      }
-      default:
-        return { all_dates: true };
-    }
-  }, []);
+  const API_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 
   // ─── Helper: Resolve team hierarchy from People cache ─────────────────────
   const resolveTeamHierarchy = useCallback(async () => {
-    if (!user?.email) return [];
+    if (!user?.email) return { teamMembers: [], allPeople: [] };
     try {
       // Fetch all people in org (using cache endpoint for efficiency)
       const res = await authFetch(`${API_URL}/cache/people`);
       if (!res.ok) throw new Error("Failed to fetch people cache");
       const data = await res.json();
-      const allPeople = data.cached_data || data.people || [];
+      const allPeopleData = data.cached_data || data.people || [];
       
       const userName = `${user.name || ""} ${user.surname || ""}`.trim();
       const userEmail = user.email.toLowerCase().trim();
       
       // Find people where current user is in Leader @1, @12, @144, or @1728
-      const teamMembers = allPeople.filter((p) => {
+      const teamMembers = allPeopleData.filter((p) => {
         const leaderFields = [
           p["Leader @1"],
           p["Leader @12"],
@@ -819,28 +1032,38 @@ export default function DailyTasks() {
         return leaderFields.includes(userName.toLowerCase()) || leaderFields.includes(userEmail);
       });
       
-      return teamMembers.map((p) => ({
+      // Map all people for search (admin can search all, leaders search their hierarchy)
+      const mappedAllPeople = allPeopleData.map((p) => ({
         email: (p.Email || "").toLowerCase().trim(),
         name: `${p.Name || ""} ${p.Surname || ""}`.trim(),
         _id: p._id,
       }));
+      
+      const mappedTeamMembers = teamMembers.map((p) => ({
+        email: (p.Email || "").toLowerCase().trim(),
+        name: `${p.Name || ""} ${p.Surname || ""}`.trim(),
+        _id: p._id,
+      }));
+      
+      return { teamMembers: mappedTeamMembers, allPeople: mappedAllPeople };
     } catch (err) {
       console.error("Error resolving team hierarchy:", err.message);
-      return [];
+      return { teamMembers: [], allPeople: [] };
     }
   }, [user, authFetch, API_URL]);
 
-  // ─── Load team hierarchy on mount ─────────────────────────────────────────
+  // ─── Load team hierarchy and all people on mount ───────────────────────────
   useEffect(() => {
     if (user) {
       // Check if user can view team (has people under them in hierarchy)
-      resolveTeamHierarchy().then((members) => {
-        setTeamPeopleObjects(members);
-        setCanViewTeam(members.length > 0);
+      resolveTeamHierarchy().then(({ teamMembers, allPeople }) => {
+        setTeamPeopleObjects(teamMembers);
+        setAllPeople(allPeople);
+        setCanViewTeam(teamMembers.length > 0);
         
-        // Check if admin
+        // Check if admin/super_admin
         const role = (user.role || "").toLowerCase();
-        setIsAdmin(["admin", "leader", "manager", "org_admin", "super_admin"].includes(role));
+        setIsAdmin(["admin", "super_admin"].includes(role));
       });
     }
   }, [user, resolveTeamHierarchy]);
@@ -849,14 +1072,15 @@ export default function DailyTasks() {
   const filterCounts = useMemo(() => {
     const counts = tasks.reduce(
       (acc, t) => {
-        const status = String(t.status || "open").toLowerCase();
+        const stage = String(t.taskStage || t.status || "open").toLowerCase();
         acc.all++;
-        if (status === "completed") acc.completed++;
-        else if (status === "in-progress") acc["in-progress"]++;
-        else if (status === "overdue") acc.overdue++;
+        if (stage === "completed") acc.completed++;
+        else if (stage === "open") acc.open++;
+        else if (stage === "awaiting task") acc["awaiting task"]++;
+        else if (stage === "overdue") acc.overdue++;
         return acc;
       },
-      { all: 0, completed: 0, "in-progress": 0, overdue: 0 },
+      { all: 0, completed: 0, open: 0, "awaiting task": 0, overdue: 0 },
     );
     return counts;
   }, [tasks]);
@@ -864,8 +1088,9 @@ export default function DailyTasks() {
   const FILTERS = useMemo(
     () => [
       { key: "all", label: `All (${filterCounts.all})` },
+      { key: "open", label: `Open (${filterCounts.open})` },
       { key: "completed", label: `Completed (${filterCounts.completed})` },
-      { key: "in-progress", label: `In Progress (${filterCounts["in-progress"]})` },
+      { key: "awaiting task", label: `Awaiting Task (${filterCounts["awaiting task"]})` },
       { key: "overdue", label: `Overdue (${filterCounts.overdue})` },
     ],
     [filterCounts],
@@ -873,20 +1098,18 @@ export default function DailyTasks() {
 
   const [taskData, setTaskData] = useState({
     taskType: "",
-    assignedTo: user ? `${user.name || ""} ${user.surname || ""}`.trim() : "",
+    recipient: "", // who the task is for
+    assignedTo: user ? user.email : "", // defaults to current user
     assignedEmail: user?.email || "",
     dueDate: new Date().toISOString().slice(0, 16),
-    status: "Open",
     taskStage: "Open",
   });
   const [submitting, setSubmitting] = useState(false);
 
-  const API_URL = `${import.meta.env.VITE_BACKEND_URL}`;
-
   const fetchTaskTypes = useCallback(async () => {
     if (!user?.email) return;
     try {
-      const res = await authFetch(`${API_URL}/task-types`);
+      const res = await authFetch(`${API_URL}/tasktypes`);
       if (!res.ok) throw new Error("Failed to fetch task types");
       const data = await res.json();
       const types = Array.isArray(data) ? data : data.taskTypes || [];
@@ -898,10 +1121,12 @@ export default function DailyTasks() {
 
   const getInitialTaskData = () => ({
     taskType: "",
-    assignedTo: user ? `${user.name || ""} ${user.surname || ""}`.trim() : "",
-    assignedEmail: user?.email || "",
+    recipient: "",
+    contactedPersonName: "",
+    contactedPersonEmail: "",
+    contactedPersonPhone: "",
+    assignedTo: user ? user.email : "",
     dueDate: new Date().toISOString().slice(0, 16),
-    status: "Open",
     taskStage: "Open",
   });
 
@@ -954,11 +1179,24 @@ export default function DailyTasks() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      // Build task payload
+      // Build task payload with contacted_person object
       const payload = {
-        ...taskData,
+        name: taskData.name || "",
         taskType: taskData.taskType,
+        type: taskData.taskType?.toLowerCase().includes("call") ? "call" : "visit",
+        followup_date: taskData.dueDate,
         status: taskData.taskStage || "Open",
+        assignedfor: taskData.assignedTo || user?.email || "",
+        assigned_to_email: taskData.assignedTo || user?.email || "",
+        contacted_person: {
+          name: taskData.contactedPersonName || taskData.recipient || "",
+          email: taskData.contactedPersonEmail || "",
+          phone: taskData.contactedPersonPhone || "",
+        },
+        // Additional fields
+        description: taskData.description || "",
+        memberID: taskData.memberID || "",
+        priority: taskData.priority || "",
       };
       // Submit to backend
       const res = await authFetch(`${API_URL}/tasks`, {
@@ -977,12 +1215,66 @@ export default function DailyTasks() {
     }
   };
 
+  // ─── Helper: Calculate date range for filter panel presets ────────────────────
+  const getFilterDateRangeParams = useCallback((range, customRange) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfToday = new Date(today);
+    endOfToday.setHours(23, 59, 59, 999);
+
+    switch (range) {
+      case "this_week": {
+        // Start from Monday
+        const day = today.getDay();
+        const diff = day === 0 ? -6 : 1 - day; // Monday = 1
+        const start = new Date(today);
+        start.setDate(today.getDate() + diff);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        end.setHours(23, 59, 59, 999);
+        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
+      }
+      case "last_week": {
+        const day = today.getDay();
+        const diff = day === 0 ? -6 : 1 - day; // Monday = 1
+        const thisWeekStart = new Date(today);
+        thisWeekStart.setDate(today.getDate() + diff);
+        const lastWeekStart = new Date(thisWeekStart);
+        lastWeekStart.setDate(thisWeekStart.getDate() - 7);
+        const lastWeekEnd = new Date(lastWeekStart);
+        lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
+        lastWeekEnd.setHours(23, 59, 59, 999);
+        return { start_date: lastWeekStart.toISOString().split("T")[0], end_date: lastWeekEnd.toISOString().split("T")[0] };
+      }
+      case "this_month": {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        end.setHours(23, 59, 59, 999);
+        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
+      }
+      case "previous_month": {
+        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const end = new Date(now.getFullYear(), now.getMonth(), 0);
+        end.setHours(23, 59, 59, 999);
+        return { start_date: start.toISOString().split("T")[0], end_date: end.toISOString().split("T")[0] };
+      }
+      case "custom": {
+        if (customRange.start && customRange.end) {
+          return { start_date: customRange.start, end_date: customRange.end };
+        }
+        return { all_dates: true };
+      }
+      default:
+        return { all_dates: true };
+    }
+  }, []);
+
   // ─── Fetch user tasks with filters ───────────────────────────────────
   const fetchUserTasks = useCallback(async (pageNum = 1, append = false) => {
     if (!user?.email) return;
     setLoading(true);
     try {
-      const dateParams = getDateRangeParams(dateRange);
+      const dateParams = getFilterDateRangeParams(pendingDateRange, customDateRange);
       const params = new URLSearchParams({
         email: user.email,
         page: pageNum.toString(),
@@ -994,9 +1286,9 @@ export default function DailyTasks() {
       if (dateParams.end_date) params.append("end_date", dateParams.end_date);
       if (dateParams.all_dates) params.append("all_dates", "true");
       
-      // Status filter (from quick filter pills)
-      if (filter !== "all") {
-        params.append("status", filter);
+      // Task Stage filter (from advanced modal)
+      if (pendingStageFilter !== "all") {
+        params.append("task_stage", pendingStageFilter);
       }
       
       // Task type filter (from advanced modal)
@@ -1004,10 +1296,10 @@ export default function DailyTasks() {
         params.append("task_type", pendingFilterType);
       }
       
-      // View filter (personal/team/all)
+      // View filter (personal/disciples/all)
       if (pendingViewFilter === "all") {
         params.append("view_all", "true");
-      } else if (pendingViewFilter === "team" && selectedPeople.length > 0) {
+      } else if (pendingViewFilter === "disciples" && selectedPeople.length > 0) {
         // Send selected people emails
         selectedPeople.forEach((p) => params.append("email", p.email));
       }
@@ -1024,7 +1316,7 @@ export default function DailyTasks() {
         name: task.name || task.taskName || "Unknown",
         person: task.contacted_person?.name || task.person_name || "Unknown",
         type: task.taskType || task.type || "Unknown",
-        status: (task.status || "open").toLowerCase(),
+        taskStage: (task.taskStage || task.status || "open"),
         date: task.followup_date || task.date || task.created_at || new Date().toISOString(),
       }));
       
@@ -1043,7 +1335,7 @@ export default function DailyTasks() {
     } finally {
       setLoading(false);
     }
-  }, [user, authFetch, API_URL, dateRange, filter, pendingFilterType, pendingViewFilter, selectedPeople, batchSize, getDateRangeParams]);
+  }, [user, authFetch, API_URL, pendingDateRange, customDateRange, pendingStageFilter, pendingFilterType, pendingViewFilter, selectedPeople, batchSize, getFilterDateRangeParams]);
 
   // Load tasks on mount and when filters change
   useEffect(() => {
@@ -1061,8 +1353,8 @@ export default function DailyTasks() {
     }
   }, [updateCount, fetchUserTasks]);
 
-  // Filter tasks based on status filter (client-side fallback if needed)
-  const visibleTasks = tasks.filter((t) => filter === "all" || t.status === filter);
+  // Filter tasks based on stage filter (client-side fallback if needed)
+  const visibleTasks = tasks.filter((t) => filter === "all" || String(t.taskStage || t.status || "").toLowerCase() === filter);
   const totalCount = tasks.length;
 
   // ─── Main Render ────────────────────────────────────────────────────
@@ -1073,7 +1365,7 @@ export default function DailyTasks() {
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: colors.background,
+        backgroundColor: sidebarBg,
       }}
     >
       {/* Main column */}
@@ -1085,39 +1377,13 @@ export default function DailyTasks() {
             alignItems: "center",
             justifyContent: "space-between",
             padding: "32px 40px 16px 40px",
-            backgroundColor: colors.background,
+            backgroundColor: sidebarBg,
+            borderBottom: `1px solid ${sidebarBorder}`,
           }}
         >
           <h1 style={{ fontSize: "20px", fontWeight: "600", letterSpacing: "-0.02em", color: colors.foreground }}>
             Daily Tasks Overview
           </h1>
-          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            <div
-              style={{
-                width: "40px",
-                height: "40px",
-                borderRadius: "50%",
-                backgroundColor: colors.gold,
-              }}
-            />
-            <button
-              style={{
-                width: "40px",
-                height: "40px",
-                borderRadius: "8px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: "transparent",
-                border: "none",
-                cursor: "pointer",
-                color: colors.mutedForeground,
-              }}
-              aria-label="More options"
-            >
-              <MoreVertical size={20} />
-            </button>
-          </div>
         </header>
 
         <main style={{ flex: 1, padding: "0 40px 64px 40px" }}>
@@ -1189,6 +1455,7 @@ export default function DailyTasks() {
               </button>
             </div>
           </div>
+
           {/* Filter Panel Button */}
           <button
             onClick={() => setFilterPanelOpen(true)}
@@ -1209,9 +1476,8 @@ export default function DailyTasks() {
             <Filter size={16} />
             Filters
           </button>
-        </div>
 
-        {/* Stat card + filter pills + right controls */}
+          {/* Stat card + filter pills + right controls */}
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "16px", marginTop: "32px" }}>
             <div
               style={{
@@ -1233,7 +1499,12 @@ export default function DailyTasks() {
               {FILTERS.map((f) => (
                 <button
                   key={f.key}
-                  onClick={() => setFilter(f.key)}
+                  onClick={() => {
+                    setFilter(f.key);
+                    setPendingStageFilter(f.key); // sync with advanced filter modal
+                    setPage(1);
+                    fetchUserTasks(1, false);
+                  }}
                   style={{
                     borderRadius: "10px",
                     padding: "10px 16px",
@@ -1252,42 +1523,6 @@ export default function DailyTasks() {
             </div>
 
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "12px" }}>
-              <div style={{ position: "relative" }}>
-                <select
-                  defaultValue="This Week"
-                  onChange={(e) => setDateRange(e.target.value)}
-                  style={{
-                    appearance: "none",
-                    borderRadius: "10px",
-                    backgroundColor: colors.card,
-                    padding: "10px 40px 10px 16px",
-                    fontSize: "13px",
-                    fontWeight: "500",
-                    color: colors.foreground,
-                    border: `1px solid ${colors.border}`,
-                    outline: "none",
-                    cursor: "pointer",
-                  }}
-                  aria-label="Date range"
-                >
-                  <option>This Week</option>
-                  <option>Today</option>
-                  <option>This Month</option>
-                  <option>This Year</option>
-                </select>
-                <ChevronDown
-                  style={{
-                    position: "absolute",
-                    right: "12px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    pointerEvents: "none",
-                    width: "16px",
-                    height: "16px",
-                    color: colors.mutedForeground,
-                  }}
-                />
-              </div>
               <button
                 style={{
                   borderRadius: "10px",
@@ -1366,11 +1601,11 @@ export default function DailyTasks() {
                     </div>
                   </div>
                   <div style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: "32px", marginLeft: "auto" }}>
-                            <StatusBadge status={task.status} colors={colors} />
-                    <span style={{ fontSize: "13px", color: colors.mutedForeground }}>
-                      {task.date}
-                    </span>
-                  </div>
+              <StatusBadge status={task.taskStage || task.status} colors={colors} />
+              <span style={{ fontSize: "13px", color: colors.mutedForeground }}>
+                {task.date}
+              </span>
+            </div>
                 </div>
               ))
             )}
@@ -1408,6 +1643,12 @@ export default function DailyTasks() {
           taskTypes={taskTypes}
           handleSubmit={handleSubmit}
           submitting={submitting}
+          currentUser={user}
+          allPeople={allPeople}
+          isAdmin={isAdmin}
+          canViewTeam={canViewTeam}
+          authFetch={authFetch}
+          API_URL={API_URL}
         />
       )}
 
@@ -1427,8 +1668,8 @@ export default function DailyTasks() {
 
       {/* Person Filter Modal */}
       <PersonFilterModal
-        open={pendingViewFilter === "team" && filterPanelOpen}
-        onClose={() => setFilterPanelOpen(false)}
+        open={personFilterOpen}
+        onClose={() => setPersonFilterOpen(false)}
         teamMembers={teamPeopleObjects}
         selectedPeople={selectedPeople}
         onSelectionChange={setSelectedPeople}
@@ -1451,9 +1692,15 @@ export default function DailyTasks() {
         setPendingViewFilter={setPendingViewFilter}
         pendingFilterType={pendingFilterType}
         setPendingFilterType={setPendingFilterType}
+        pendingStageFilter={pendingStageFilter}
+        setPendingStageFilter={setPendingStageFilter}
+        pendingDateRange={pendingDateRange}
+        setPendingDateRange={setPendingDateRange}
+        customDateRange={customDateRange}
+        setCustomDateRange={setCustomDateRange}
         selectedPeople={selectedPeople}
-        teamPeopleObjects={teamPeopleObjects}
-        onOpenPersonModal={() => {}}
+        allPeople={allPeople}
+        onOpenPersonModal={() => setPersonFilterOpen(true)}
         onClearPeople={() => setSelectedPeople([])}
         onRemovePerson={(person) => setSelectedPeople((prev) => prev.filter((p) => p.email !== person.email))}
         batchSize={batchSize}
