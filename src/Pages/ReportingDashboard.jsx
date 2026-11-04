@@ -317,13 +317,12 @@ function KpiCard({ item, to }) {
           bgcolor: (t) => alpha(t.palette.primary.main, 0.14), color: "primary.main" }}>
           <Icon sx={{ fontSize: 18 }} />
         </Box>
-        {to ? (
-          item.caption && (
-            <Typography variant="caption" sx={{ color: item.tone !== "neutral" ? `${item.tone}.main` : "text.secondary" }}>
-              {item.caption}
-            </Typography>
-          )
-        ) : (
+        {item.caption && (
+          <Typography variant="caption" sx={{ color: item.tone !== "neutral" ? `${item.tone}.main` : "text.secondary" }}>
+            {item.caption}
+          </Typography>
+        )}
+        {!to && (
           <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Coming soon</Typography>
         )}
       </Stack>
