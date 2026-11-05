@@ -2,6 +2,7 @@ import React, { createContext, useState, useEffect, useCallback } from 'react';
 import { normalizeRole } from '../utils/roleNormalizer';
 import supabase from '../../supabaseClient';
 import { API_BASE } from '../api/config';
+import { migrateLegacyAccount, prepareLegacyAccountForReset } from '../services/legacyMigration';
 import { createClient } from '@supabase/supabase-js';
 
 // ─── Supabase client ──────────────────────────────────────────────────────────
@@ -15,6 +16,8 @@ const KEY_PROFILE_PIC = 'profilePic';
 const KEY_LEADERS     = 'leaders';
 const KEY_IS_LEADER   = 'isLeader';
 const KEY_JWT_TOKEN   = 'jwtToken';
+const KEY_ORG_ID      = 'orgId';
+const KEY_PERSON_ID   = 'personId';
 
 const STALE_KEYS = [
   KEY_USER, KEY_PROFILE_PIC, KEY_LEADERS, KEY_IS_LEADER,
@@ -167,47 +170,71 @@ export const AuthProvider = ({ children }) => {
     // ── Silent migration from legacy backend ──────────────────────────────
     if (authError) {
       let migratedOk = false;
+      let migrationMessage = null;
 
-      try {
-        const res = await fetch(`${API_BASE}/login`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ email, password }),
+      // The backend carries pre-Supabase accounts over: it checks the old
+      // Mongo credentials, creates the missing Supabase account and returns a
+      // session we can adopt.
+      const migration = await migrateLegacyAccount(email, password);
+
+      if (migration.ok) {
+        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+          access_token: migration.session.access_token,
+          refresh_token: migration.session.refresh_token,
         });
 
-        if (!res.ok) {
-          const text = await res.text().catch(() => 'unknown body');
-          throw new Error(`Legacy login failed (${res.status}): ${text}`);
-        }
+        if (sessionError) throw sessionError;
 
-        // Legacy credentials valid — create Supabase Auth account
-        const { data: _signUpData, error: signUpError } =
-          await supabase.auth.signUp({ email, password });
-
-        if (signUpError) {
-          const msg = (signUpError.message || '').toLowerCase();
-          const alreadyExists =
-            signUpError.status === 400 &&
-            /already registered|duplicate key|user already exists|user already registered/i.test(msg);
-
-          if (!alreadyExists) throw signUpError;
-          // Account already exists — try signing in again
-        }
-
-        // Whether we just created the account or it already existed, sign in
-        const retry = await supabase.auth.signInWithPassword({ email, password });
-        if (retry.error) throw retry.error;
-
-        authData   = retry.data;
-        authError  = null;
+        authData = { user: sessionData.user, session: sessionData.session };
+        authError = null;
         migratedOk = true;
-        console.log(`[Auth] Silently migrated user: ${email}`);
-      } catch (migrationErr) {
-        console.warn('[Auth] Migration failed:', migrationErr.message);
+        console.log(`[Auth] Migrated legacy account to Supabase: ${email}`);
+      } else if (migration.unsupported) {
+        // Older backend without the migration endpoint: sign up through the
+        // public client instead.
+        try {
+          const res = await fetch(`${API_BASE}/login`, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ email, password }),
+          });
+
+          if (!res.ok) {
+            const text = await res.text().catch(() => 'unknown body');
+            throw new Error(`Legacy login failed (${res.status}): ${text}`);
+          }
+
+          // Legacy credentials valid — create Supabase Auth account
+          const { data: _signUpData, error: signUpError } =
+            await supabase.auth.signUp({ email, password });
+
+          if (signUpError) {
+            const msg = (signUpError.message || '').toLowerCase();
+            const alreadyExists =
+              signUpError.status === 400 &&
+              /already registered|duplicate key|user already exists|user already registered/i.test(msg);
+
+            if (!alreadyExists) throw signUpError;
+            // Account already exists — try signing in again
+          }
+
+          // Whether we just created the account or it already existed, sign in
+          const retry = await supabase.auth.signInWithPassword({ email, password });
+          if (retry.error) throw retry.error;
+
+          authData   = retry.data;
+          authError  = null;
+          migratedOk = true;
+          console.log(`[Auth] Silently migrated user: ${email}`);
+        } catch (migrationErr) {
+          console.warn('[Auth] Migration failed:', migrationErr.message);
+        }
+      } else {
+        migrationMessage = migration.message;
       }
 
       if (!migratedOk) {
-        throw new Error(authError?.message || 'Login failed');
+        throw new Error(migrationMessage || authError?.message || 'Login failed');
       }
     }
 
@@ -316,6 +343,10 @@ export const AuthProvider = ({ children }) => {
 
   // ── Password reset ─────────────────────────────────────────────────────────
   const requestPasswordReset = async (email) => {
+    // A user who never migrated has no auth account yet, so Supabase would
+    // not send a reset email. The backend prepares the account first.
+    await prepareLegacyAccountForReset(email);
+
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/reset-password`,
     });
