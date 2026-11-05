@@ -130,6 +130,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
   const [peopleData, setPeopleData] = useState([]);
   const [priceTiers, setPriceTiers] = useState([]);
   const [isTicketedEvent,setIsTicketedEvent] = useState(false);
+  const [isTrainingEvent,setIsTrainingEvent] = useState(false);
   console.log('CURRENT EVENT TYPE:', selectedEventType, eventTypeFlags);
   
   const isSelectingFromDropdown = useRef(false); 
@@ -298,8 +299,9 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
       })),
     });
     setIsTicketedEvent(eventTypes.find((et) => et.name === formData.eventType)?.is_ticketed || false);
+    setIsTrainingEvent(eventTypes.find((et) => et.name === formData.eventType)?.is_training || false);
     const determineEventType = () => {
-      if (selectedEventTypeObj) {
+      if (selectedEventTypeObj && selectedEventTypeObj.name !== "all") {
         const objName = selectedEventTypeObj.name ;
         const matchedFromList = eventTypes.find((et) => {
           const etName = et.name;
@@ -319,12 +321,12 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
         };
       }
       if (selectedEventType) {
-        if (selectedEventType === "all" || selectedEventType.toUpperCase() === "ALL CELLS") {
+        if (selectedEventType === "all") {
           return {
-            eventType: "Cells",
+            eventType: "",
             isGlobal: false,
             isTicketed: false,
-            hasPersonSteps: true,
+            hasPersonSteps: false,
           };
         }
         const foundEventType = eventTypes.find((et) => {
@@ -349,12 +351,11 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
             hasPersonSteps: !!foundEventType.hasPersonSteps,
           };
         } else {
-          const isCellsType = selectedEventType.toUpperCase() === "CELLS";
           return {
             eventType: selectedEventType,
             isGlobal: false,
             isTicketed: false,
-            hasPersonSteps: isCellsType,
+            hasPersonSteps: false,
           };
         }
       }
@@ -752,6 +753,8 @@ const fetchPeople = async (q) => {
       
       const eventTypeName = eventTypes.find((t) => t.name === formData.eventType)?.name || 'cells'
       console.log("event types here",eventTypes,formData.eventType)
+      console.log("Submitting event with payload:",formData)
+    
       const payload = {
         UUID: generateUUID(),
         session_id: sessionId || null,
@@ -774,6 +777,8 @@ const fetchPeople = async (q) => {
         leader12: formData.leader12 || "",
         isRecurring: isRecurring,
         recurringDays: isRecurring ? formData.recurringDays : [],
+        total_sessions: formData.totalSessions || 0,
+        class_level: formData.classLevel || 0,
       };
 
       if (formData.date && formData.time) {
@@ -1347,8 +1352,44 @@ const fetchPeople = async (q) => {
                 helperText={errors.time}
                 sx={darkModeStyles.textField}
               />
+              
+            </Box>
+            {
+              isTrainingEvent && (
+            <Box
+            display="flex"
+              gap={2}
+              flexDirection={{ xs: "column", sm: "row" }}
+              mb={3}
+            >
+              <TextField
+                label="Number of sessions *"
+                type="number"
+                value={formData.totalSessions}
+                onChange={(e) => handleChange("totalSessions", e.target.value)}
+                fullWidth
+                size="small"
+                InputLabelProps={{ shrink: true }}
+                error={!!errors.totalSessions}
+                helperText={errors.totalSessions}
+                sx={darkModeStyles.textField}
+              />
+              <TextField
+                label="Class Level *"
+                type="text"
+                value={formData.classLevel}
+                onChange={(e) => handleChange("classLevel", e.target.value)}
+                fullWidth
+                size="small"
+                InputLabelProps={{ shrink: true }}
+                error={!!errors.classLevel}
+                helperText={errors.classLevel}
+                sx={darkModeStyles.textField}
+              />
             </Box>
 
+              )
+            }
             <Box mb={3}>
               <Typography
                 fontWeight="bold"

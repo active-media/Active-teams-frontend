@@ -2682,11 +2682,12 @@ const AttendanceModal = ({
             const formatted = peopleArray.map((person) => {
               const fullName =
                 `${person.Name || ""} ${person.Surname || ""}`.trim();
-              const leader1 = person["Leader @1"] || person.leader1 || "";
-              const leader12 = person["Leader @12"] || person.leader12 || "";
+              const leader1 = person["Leader @1"] || person.leader1 ||leader_at_1 || "";
+              const leader12 = person["Leader @12"] || person.leader12 || person.leader_at_12 || "";
               const leader144 = person["Leader @144"] || person.leader144 || "";
               const leader1728 =
                 person["Leader @1728"] || person.leader1728 || "";
+                console.log("Formatted person:", person)
 
               return {
                 id: person._id,
@@ -3679,7 +3680,7 @@ const AttendanceModal = ({
             id: p.id,
             fullName: p.fullName,
             email: p.email || "",
-            leader12: p.leader12 || "",
+            leader12: p.leader_at_12 || "",
             leader144: p.leader144 || "",
             phone: p.phone || "",
             ...(isTicketedEvent && {
@@ -4755,6 +4756,7 @@ const AttendanceModal = ({
                           const nameParts = (person.fullName || person.full_name || "").split(" ");
                           const firstName = nameParts[0] || "";
                           const lastName = nameParts.slice(1).join(" ") || "";
+                          console.log("Rendering row for person:", person, "Ticket info:", ticketInfo, "Financials:", financials);
 
                           return (
                             <tr key={person.id}>

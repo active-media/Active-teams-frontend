@@ -1908,7 +1908,7 @@ const StatsDashboard = () => {
             >
               <Tab value="overdue" label={`OVERDUE (${cellFilterCounts.overdue})`} />
               <Tab value="incomplete" label={`INCOMPLETE (${cellFilterCounts.incomplete})`} />
-              <Tab value="completed" label={`COMPLETED (${cellFilterCounts.completed})`} />
+              {/* <Tab value="completed" label={`COMPLETED (${cellFilterCounts.completed})`} /> */}
               <Tab value="did_not_meet" label={`DID NOT MEET (${cellFilterCounts.didNotMeet})`} />
               <Tab value="all" label={`ALL (${cellFilterCounts.all})`} />
             </Tabs>
