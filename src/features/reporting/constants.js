@@ -4,7 +4,7 @@ export const PERIOD_OPTIONS = [
   { value: "thisWeek", label: "This week" },
   { value: "thisMonth", label: "This month" },
   { value: "previous7", label: "Previous 7 days" },
-  { value: "previousWeek", label: "Previous week" },
+  { value: "previousWeek", label: "Last week" },
   { value: "previousMonth", label: "Previous month" },
   { value: "thisQuarter", label: "This quarter" },
   { value: "yearly", label: "This year" },

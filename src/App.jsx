@@ -263,6 +263,7 @@ function App() {
             <Route path="/service-check-in" element={<ProtectedCheckIn title="Service Check-in" />} />
             <Route path="/daily-tasks" element={<ProtectedDailyTasks title="Daily Tasks" />} />
             <Route path="/event-payment/:eventId" element={<EventRegistrationForm title="Event register" />} />
+            <Route path="/reporting/*" element={<Navigate to="/reporting/dashboard" replace />} />
             <Route path="*" element={<NotFound />} />
 
           </Routes>

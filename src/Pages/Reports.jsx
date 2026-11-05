@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link as RouterLink, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Alert, Box, Button, Card, Chip, LinearProgress, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -25,8 +25,9 @@ function saveBlob(blob, filename) {
 }
 
 export default function Reports() {
-  const { authFetch, user } = useContext(AuthContext);
-  const { reportType } = useParams();
+const { authFetch, user } = useContext(AuthContext);
+const { reportType } = useParams();
+const location = useLocation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [catalog, setCatalog] = useState([]);
@@ -35,7 +36,9 @@ export default function Reports() {
   const [error, setError] = useState(null);
   const [exporting, setExporting] = useState("");
   const [saving, setSaving] = useState(false);
-  const [organization, setOrganization] = useState(user?.Organization || user?.organization || "");
+  const [organization, setOrganization] = useState(
+    searchParams.get("organization") || searchParams.get("org") || user?.Organization || user?.organization || "",
+  );
   const [periodValue, setPeriodValue] = useState(() => ({
     period: searchParams.get("period") || DEFAULT_PERIOD,
     start_date: searchParams.get("start_date") || "",
@@ -48,21 +51,26 @@ export default function Reports() {
     ...(periodValue.isCustom && periodValue.start_date && periodValue.end_date
       ? { start_date: periodValue.start_date, end_date: periodValue.end_date }
       : { period: periodValue.period }),
+    campus: searchParams.get("campus") || undefined,
+    organization: searchParams.get("organization") || searchParams.get("org") || organization || undefined,
     gender: gender || undefined,
-  }), [periodValue, gender]);
+  }), [periodValue, gender, organization, searchParams]);
 
   // Mirror the selection into the URL so drill-down links (and the dashboard's links) keep it.
   useEffect(() => {
-    const next = new URLSearchParams();
-    if (periodValue.isCustom) {
-      next.set("custom", "true");
-      if (periodValue.start_date) next.set("start_date", periodValue.start_date);
-      if (periodValue.end_date) next.set("end_date", periodValue.end_date);
-    } else if (periodValue.period) {
-      next.set("period", periodValue.period);
-    }
-    if (gender) next.set("gender", gender);
-    setSearchParams(next, { replace: true });
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      ["period", "start_date", "end_date", "custom", "gender"].forEach((key) => next.delete(key));
+      if (periodValue.isCustom) {
+        next.set("custom", "true");
+        if (periodValue.start_date) next.set("start_date", periodValue.start_date);
+        if (periodValue.end_date) next.set("end_date", periodValue.end_date);
+      } else if (periodValue.period) {
+        next.set("period", periodValue.period);
+      }
+      if (gender) next.set("gender", gender);
+      return next;
+    }, { replace: true });
   }, [periodValue, gender, setSearchParams]);
 
   useEffect(() => {
@@ -124,6 +132,8 @@ export default function Reports() {
   };
 
   const selectedReport = catalog.find((item) => item.report_type === reportType);
+  const backTo = location.state?.from || "/reports";
+  const isDashboardBack = location.state?.from === "/reporting/dashboard";
   if (!reportType) {
     return (
       <Box sx={{ px: { xs: 2, md: 4 }, py: 3, maxWidth: 1440, mx: "auto" }}>
@@ -155,7 +165,9 @@ export default function Reports() {
     <Box sx={{ px: { xs: 2, md: 4 }, py: 3, maxWidth: 1440, mx: "auto" }}>
       <Stack direction={{ xs: "column", md: "row" }} alignItems={{ xs: "stretch", md: "center" }} justifyContent="space-between" spacing={1.5} sx={{ mb: 2 }}>
         <Box>
-          <Button startIcon={<ArrowBackIcon />} onClick={() => navigate("/reports")} sx={{ mb: 0.75 }}>All reports</Button>
+          <Button startIcon={<ArrowBackIcon />} onClick={() => navigate(backTo)} sx={{ mb: 0.75 }}>
+            {isDashboardBack ? "Back to dashboard" : "All reports"}
+          </Button>
           <Typography variant="h4" component="h1" fontWeight={800}>{selectedReport?.title || reportType.replaceAll("_", " ")}</Typography>
           {envelope?.meta?.period?.label && <Typography variant="body2" color="text.secondary">{envelope.meta.period.label}</Typography>}
         </Box>
@@ -187,18 +199,33 @@ export default function Reports() {
           </Box>
         )}
       </Stack>
-      {isSuper && selectedReport?.implemented && <TextField size="small" label="Organization for saved history" value={organization} onChange={(event) => setOrganization(event.target.value)} sx={{ mb: 2, minWidth: 320 }} />}
+      {isSuper && selectedReport?.implemented && <TextField
+        size="small"
+        label="Organization"
+        value={organization}
+        onChange={(event) => {
+          const value = event.target.value;
+          setOrganization(value);
+          setSearchParams((current) => {
+            const next = new URLSearchParams(current);
+            next.delete("org");
+            if (value) next.set("organization", value);
+            else next.delete("organization");
+            return next;
+          }, { replace: true });
+        }}
+        sx={{ mb: 2, minWidth: 320 }}
+      />}
       {loading && <LinearProgress sx={{ mb: 1.5 }} />}
       {error?.status === 501 && error?.code === "not_implemented" ? <ComingSoonState message={error.message} /> : error && <ReportErrorState error={error} onRetry={() => setError(null)} />}
       {envelope && (
-        <>
-          <ReportEnvelopeView envelope={envelope} />
-          {envelope.tables?.some((t) => t.key === "twelve_tasks" && t.rows.length === 0) && (
-            <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: "center" }}>
-              No tracked people for this period. Add people to the Twelve Tasks roster to enable the report.
-            </Typography>
-          )}
-        </>
+        envelope.tables?.some((t) => t.key === "twelve_tasks" && t.rows.length === 0) ? (
+          <Alert severity="info" action={<Button component={RouterLink} to="/admin" color="inherit">Open Admin</Button>}>
+            {["thisWeek", "previousWeek"].includes(envelope.meta?.period?.token)
+              ? `No tasks set for ${envelope.meta.period.label.toLowerCase()}.`
+              : "No tasks set for this period."}
+          </Alert>
+        ) : <ReportEnvelopeView envelope={envelope} />
       )}
       {!envelope && !loading && !error && <Alert severity="info">Choose a valid report from the catalog.</Alert>}
     </Box>
