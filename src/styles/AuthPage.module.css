@@ -1,9 +1,11 @@
 .authPage {
   min-height: 100vh;
-  padding: 12px;
+  padding: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: #f3f5f7;
+  color: #17202a;
 }
 
 .themeToggle {
@@ -16,12 +18,13 @@
 /* ---------- Shell ---------- */
 .authShell {
   position: relative;
-  width: min(1180px, 92vw);
-  height: min(760px, calc(100vh - 32px));
+  width: min(1100px, 100%);
+  height: min(680px, calc(100vh - 48px));
   min-height: 560px;
   overflow: hidden;
   border: 1px solid rgba(23, 32, 42, 0.1);
   border-radius: 24px;
+  background: #fff;
   box-shadow: 0 24px 70px rgba(23, 32, 42, 0.14);
 }
 
@@ -110,13 +113,13 @@
 
 .mediaState {
   position: absolute;
-  left: clamp(32px, 6vw, 64px);
-  right: clamp(32px, 6vw, 64px);
-  top: 50%;
-  transform: translateY(calc(-50% + 10px));
-  max-width: 420px;
+  left: clamp(24px, 5vw, 56px);
+  right: clamp(24px, 5vw, 56px);
+  bottom: clamp(24px, 5vw, 56px);
+  max-width: 380px;
   color: #fff;
   opacity: 0;
+  transform: translateY(10px);
   transition: opacity 360ms ease, transform 420ms ease;
   transition-delay: 0ms;
   pointer-events: none;
@@ -125,7 +128,7 @@
 [data-authmode="login"] .forLogin,
 [data-authmode="signup"] .forSignup {
   opacity: 1;
-  transform: translateY(-50%);
+  transform: translateY(0);
   transition-delay: 320ms;
 }
 
@@ -150,44 +153,98 @@
   font-size: 0.92rem;
 }
 
-/* ---------- Mobile: stack, crossfade only (no horizontal slide) ---------- */
+/* ---------- Mobile: the two panels slide past each other vertically ----------
+   Sign up: image band on top, form below.
+   Log in:  form on top, image band below.
+   Same idea as desktop (both panels move at once, so they pass each other),
+   only the axis changes from `left` to `top` / `height`. */
 @media (max-width: 760px) {
-  .authPage { padding: 12px; align-items: stretch; }
-
-  .authShell {
-    height: auto;
-    min-height: calc(100vh - 24px);
-    border-radius: 18px;
+  .authPage {
+    padding: 16px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    align-items: stretch;
   }
 
-  .track { position: static; display: flex; flex-direction: column; }
+  .themeToggle {
+    top: 26px;
+    right: 26px;
+  }
+
+  .authShell {
+    height: calc(100vh - 32px);
+    height: calc(100dvh - 32px);
+    min-height: 0;
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto;
+    border-radius: 22px;
+  }
 
   .formPanel,
   .mediaPanel,
   [data-authmode="signup"] .formPanel,
   [data-authmode="signup"] .mediaPanel {
-    position: static;
+    left: 0;
+    right: 0;
+    bottom: auto;
     width: 100%;
-    left: auto;
-    transition: none;
+    transition:
+      top 760ms cubic-bezier(0.65, 0, 0.35, 1),
+      height 760ms cubic-bezier(0.65, 0, 0.35, 1);
   }
 
-  .mediaPanel { order: 1; min-height: 210px; flex: 0 0 210px; padding: 28px; }
-  .formPanel { order: 2; padding: 32px 22px; }
-  .formFrame { max-height: none; }
+  /* Sign up (default on mobile): image band on top. */
+  .mediaPanel,
+  [data-authmode="signup"] .mediaPanel { top: 0; height: 34%; }
+  .formPanel,
+  [data-authmode="signup"] .formPanel {
+    top: 34%;
+    height: 66%;
+    align-items: flex-start;
+    padding: 24px 22px;
+  }
 
-  .mediaState { position: static; margin-top: auto; max-width: none; }
-  [data-authmode] .mediaState { opacity: 1; transform: none; }
-  .forLogin, .forSignup { display: none; }
-  [data-authmode="login"] .forLogin,
-  [data-authmode="signup"] .forSignup { display: block; }
+  /* Log in: form on top, image band at the bottom. */
+  [data-authmode="login"] .formPanel { top: 0; height: 60%; }
+  [data-authmode="login"] .mediaPanel { top: 60%; height: 40%; }
+
+  .formFrame { max-height: 100%; }
+
+  .mediaPanel::before { width: 300px; height: 300px; top: -110px; right: -90px; }
+  .mediaPanel::after { width: 200px; height: 200px; bottom: -80px; left: -60px; }
+
+  .mediaState {
+    left: 22px;
+    right: 22px;
+    bottom: 22px;
+    max-width: none;
+  }
+  .mediaEyebrow { margin-bottom: 8px; font-size: 0.74rem; }
+  .mediaTitle { margin-bottom: 8px; font-size: clamp(1.3rem, 6.4vw, 1.7rem); }
+  .mediaText { font-size: 0.84rem; line-height: 1.5; }
+}
+
+/* Short phones: give the image band a bit more room and tighten its text. */
+@media (max-width: 760px) and (max-height: 660px) {
+  .mediaPanel,
+  [data-authmode="signup"] .mediaPanel { height: 42%; }
+  .formPanel,
+  [data-authmode="signup"] .formPanel { top: 42%; height: 58%; }
+  [data-authmode="login"] .formPanel { top: 0; height: 62%; }
+  [data-authmode="login"] .mediaPanel { top: 62%; height: 38%; }
+  .mediaTitle { font-size: 1.2rem; }
+  .mediaText { font-size: 0.78rem; line-height: 1.4; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .formPanel, .mediaPanel, .mediaState, .viewFade {
     transition: none !important;
     animation: none !important;
+  }
+  .viewFade {
     opacity: 1 !important;
     transform: none !important;
   }
+  .mediaState { transform: none !important; }
 }

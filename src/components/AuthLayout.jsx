@@ -6,6 +6,9 @@ import Brightness7Icon from "@mui/icons-material/Brightness7";
 import darkLogo from "../assets/active-teams.png";
 import styles from "../styles/AuthPage.module.css";
 
+const POSTER_TEXT =
+  "a church that is as alive & vibrant as it's name. a church raising a new generation. a generation that will change this nation. to God be the glory. amen.";
+
 // Stays mounted for the whole time the user is on /login or /signup.
 // Only the <Outlet/> content (the actual Login/Signup fields) swaps when
 // the route changes — the shell, logo and media panel never remount,
@@ -19,6 +22,7 @@ const AuthPage = ({ mode, setMode }) => {
     <Box className={styles.authPage} data-authmode={authMode}>
       <IconButton
         className={styles.themeToggle}
+        aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
         onClick={() => {
           const next = mode === "light" ? "dark" : "light";
           localStorage.setItem("themeMode", next);
@@ -66,18 +70,14 @@ const AuthPage = ({ mode, setMode }) => {
           {/* ---- Media side (placeholder styling until real imagery) ---- */}
           <Box className={styles.mediaPanel}>
             <Box className={`${styles.mediaState} ${styles.forLogin}`}>
-              <div className={styles.mediaEyebrow}>Active Teams</div>
-              <p className={styles.mediaTitle}>Build stronger teams together.</p>
-              <p className={styles.mediaText}>
-                Your community, people, and events in one place.
-              </p>
+              <div className={styles.mediaEyebrow}>The Active Church</div>
+              <p className={styles.mediaTitle}>you belong.</p>
+              <p className={styles.mediaText}>{POSTER_TEXT}</p>
             </Box>
             <Box className={`${styles.mediaState} ${styles.forSignup}`}>
-              <div className={styles.mediaEyebrow}>Join Active Teams</div>
-              <p className={styles.mediaTitle}>Find your place in the community.</p>
-              <p className={styles.mediaText}>
-                Create your account and start connecting with your team.
-              </p>
+              <div className={styles.mediaEyebrow}>we are</div>
+              <p className={styles.mediaTitle}>The Active Church.</p>
+              <p className={styles.mediaText}>{POSTER_TEXT}</p>
             </Box>
           </Box>
         </Box>

@@ -1254,6 +1254,7 @@ function ServiceCheckIn() {
                 event_id: getEventId(currentSessionId),
                 person_data: {
                   id: gridId,
+                  person_id: gridId,
                   name: attendee?.name,
                   fullName,
                   email: attendee?.email,

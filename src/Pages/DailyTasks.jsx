@@ -1953,8 +1953,8 @@ export default function DailyTasks() {
   return (
     <div
       style={{
-        height: "100vh",
-        overflow: "hidden",
+        // height: "100vh",
+        // overflow: "hidden",
         display: "flex",
         flexDirection: "column",
         backgroundColor: sidebarBg,
@@ -2167,6 +2167,7 @@ export default function DailyTasks() {
                     backgroundColor: colors.card,
                     padding: "24px",
                     cursor: "pointer",
+                    overflow:"auto"
                   }}
                 >
                   <div
@@ -2182,6 +2183,7 @@ export default function DailyTasks() {
                       fontSize: "18px",
                       fontWeight: "600",
                       color: colors.mutedForeground,
+                      overflow:"auto"
                     }}
                   >
                     {(task.person || task.name || "?").charAt(0)}
