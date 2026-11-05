@@ -41,21 +41,20 @@ const KPI_ICONS = {
   staff_interns_youth: ManageAccountsOutlinedIcon,
 };
 
-/* Where each KPI box leads. null = page not built yet, so the box renders
-   as a disabled "Coming soon" card instead of a dead click. */
+/* Every dashboard KPI must have a live report route. */
 const KPI_ROUTES = {
-  total_attendance: "/reporting/attendance",
+  total_attendance: "/reports/cells_graph",
   active_cells: "/reports/cells_graph",
-  service_target: "/reporting/service-target",
-  twelve_tasks: "/reporting/twelve-tasks",
-  life_class: null,
-  school_of_leaders: null,
-  plan_40: null,
-  staff_interns_youth: null,
+  service_target: "/reports/service_target",
+  twelve_tasks: "/reports/twelve_tasks",
+  life_class: "/reports/life_class",
+  school_of_leaders: "/reports/school_of_leaders",
+  plan_40: "/reports/plan_40",
+  staff_interns_youth: "/reports/staff_interns_youth",
 };
 
-/* Carry the dashboard's period, custom dates and campus into the sub-page. */
-const CARRIED_PARAMS = ["period", "start_date", "end_date", "custom", "campus"];
+/* Carry the dashboard's period, campus, and any organization context into the report. */
+const CARRIED_PARAMS = ["period", "start_date", "end_date", "custom", "campus", "organization", "org"];
 
 function formatValue(item) {
   const raw = item.value;
@@ -68,7 +67,7 @@ function formatValue(item) {
 function kpiCaption(item) {
   if (item.delta_label) return item.delta_label;
   if (typeof item.delta === "number") return `${item.delta > 0 ? "+" : ""}${item.delta.toFixed(1)}%`;
-  return item.hint ?? "";
+  return "";
 }
 
 function kpiTone(item) {
@@ -86,11 +85,13 @@ function getKpis(dashboard) {
     : Object.entries(src).map(([key, v]) =>
         v && typeof v === "object" ? { key, ...v } : { key, value: v });
   return list
+    .filter((item) => KPI_ROUTES[item.key ?? item.id])
     .map((item, index) => ({
       key: item.key ?? item.id ?? `kpi-${index}`,
       label: item.label ?? item.key,
       value: formatValue(item),
       caption: kpiCaption(item),
+      hint: item.hint,
       tone: kpiTone(item),
       index,
     }))
@@ -148,7 +149,7 @@ function niceMax(value) {
 function formatX(x) {
   if (typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x)) {
     const d = new Date(`${x}T00:00:00`);
-    return d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
   return String(x ?? "");
 }
@@ -205,7 +206,8 @@ export function LineChart({ points }) {
       render={({ pad, innerW, y, height, muted }) => {
         const step = points.length > 1 ? innerW / (points.length - 1) : 0;
         const xy = points.map((p, i) => [pad.left + (points.length > 1 ? i * step : innerW / 2), y(Number(p.y) || 0)]);
-        const labelEvery = Math.ceil(points.length / 6);
+        const maxLabels = Math.max(2, Math.floor(innerW / 56));
+        const labelEvery = Math.ceil(points.length / maxLabels);
         return (
           <>
             <path d={smoothPath(xy)} fill="none" stroke={color} strokeWidth="2.5" />
@@ -289,25 +291,33 @@ export const cardSx = {
 
 function KpiCard({ item, to }) {
   const Icon = KPI_ICONS[item.key] || InsightsIcon;
-  const linkProps = to ? { component: RouterLink, to } : {};
   return (
     <Paper
       variant="outlined"
-      {...linkProps}
-      aria-disabled={to ? undefined : true}
+      component={RouterLink}
+      to={to}
+      onKeyDown={(event) => {
+        if (event.key === " ") {
+          event.preventDefault();
+          event.currentTarget.click();
+        }
+      }}
       sx={{
         ...cardSx,
         p: 2,
         display: "block",
         textDecoration: "none",
         color: "inherit",
-        ...(to
-          ? {
-              cursor: "pointer",
-              transition: "border-color 120ms, box-shadow 120ms",
-              "&:hover, &:focus-visible": { borderColor: "primary.main", boxShadow: 1 },
-            }
-          : { opacity: 0.65, cursor: "default" }),
+        cursor: "pointer",
+        transition: "border-color 120ms, box-shadow 120ms",
+        "&:hover": { borderColor: "primary.main", boxShadow: 1 },
+        "&:focus-visible": {
+          borderColor: "primary.main",
+          outline: "2px solid",
+          outlineColor: "primary.main",
+          outlineOffset: 2,
+          boxShadow: 1,
+        },
       }}
     >
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
@@ -315,15 +325,14 @@ function KpiCard({ item, to }) {
           bgcolor: (t) => alpha(t.palette.primary.main, 0.14), color: "primary.main" }}>
           <Icon sx={{ fontSize: 18 }} />
         </Box>
-        {to ? (
-          <Typography variant="caption" sx={{ color: item.caption && item.tone !== "neutral" ? `${item.tone}.main` : "text.secondary" }}>
+        {item.caption && (
+          <Typography variant="caption" sx={{ color: item.tone !== "neutral" ? `${item.tone}.main` : "text.secondary" }}>
             {item.caption}
           </Typography>
-        ) : (
-          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Coming soon</Typography>
         )}
       </Stack>
       <Typography variant="h5" fontWeight={700} sx={{ mt: 1.5, lineHeight: 1.2 }}>{item.value}</Typography>
+      {item.hint && <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{item.hint}</Typography>}
       <Typography variant="caption" color="text.secondary">{item.label}</Typography>
     </Paper>
   );
@@ -419,6 +428,7 @@ export default function ReportingDashboard() {
       ? { start_date: periodParams.start_date, end_date: periodParams.end_date }
       : { period: periodParams.period }),
     campus,
+    organization: searchParams.get("organization") || searchParams.get("org") || undefined,
   };
   const requestKey = JSON.stringify(requestParams);
 
@@ -452,19 +462,20 @@ export default function ReportingDashboard() {
   const comparison = useMemo(() => getSeries(dashboard, "campus_comparison"), [dashboard]);
   const kpis = useMemo(() => getKpis(dashboard), [dashboard]);
   const table = useMemo(() => getTable(dashboard, "ministry_performance"), [dashboard]);
+  const hasDashboardData = Boolean(dashboard) && (dashboard.kpis?.length || dashboard.series?.length || dashboard.tables?.length);
 
   const campuses = dashboard?.campuses || [];
 
   const kpiLink = (key) => {
     const route = KPI_ROUTES[key];
-    if (!route) return null;
     const carried = new URLSearchParams();
     CARRIED_PARAMS.forEach((k) => {
       const v = searchParams.get(k);
       if (v) carried.set(k, v);
     });
     const qs = carried.toString();
-    return qs ? `${route}?${qs}` : route;
+    const pathname = qs ? `${route}?${qs}` : route;
+    return { pathname, state: { from: "/reporting/dashboard" } };
   };
 
   const isNetworkError = error && /failed to fetch|networkerror|load failed/i.test(error.message || "");
@@ -515,7 +526,7 @@ export default function ReportingDashboard() {
         </Alert>
       )}
 
-      {dashboard && (
+      {hasDashboardData ? (
         <>
           {kpis.length > 0 && (
             <Box sx={{ display: "grid", gap: 2, mb: 2.5, gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(4, 1fr)" } }}>
@@ -534,9 +545,9 @@ export default function ReportingDashboard() {
 
           {table && <PerformanceTable table={table} />}
         </>
+      ) : !loading && !error && (
+        <Alert severity="info">No dashboard data is available.</Alert>
       )}
-
-      {!dashboard && !loading && !error && <Alert severity="info">No dashboard data is available.</Alert>}
     </Box>
   );
 }
