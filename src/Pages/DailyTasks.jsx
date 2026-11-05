@@ -1986,18 +1986,26 @@ export default function DailyTasks() {
   return (
     <div
       style={{
-        height: "100vh",
-        overflow: "hidden",
+        // Scroll like the Home page: no fixed height / overflow lock here, so
+        // the document itself scrolls and every task row stays reachable.
+        minHeight: "100%",
         display: "flex",
         flexDirection: "column",
         backgroundColor: sidebarBg,
       }}
     >
       {/* Main column */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          minWidth: 0,
+        }}
+      >
         {/* Top bar */}
         <header
           style={{
+            flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -2011,7 +2019,7 @@ export default function DailyTasks() {
           </h1>
         </header>
 
-        <main style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 40px 64px 40px" }}>
+        <main style={{ padding: "0 40px 64px 40px" }}>
           {/* Heading + action buttons */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "24px" }}>
             <h2 style={{ fontSize: "36px", fontWeight: "700", letterSpacing: "-0.02em", color: colors.foreground }}>
