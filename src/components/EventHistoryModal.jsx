@@ -68,7 +68,7 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
     if (open) {
       setSearchTerm('');
       setPage(0);
-      setActiveTab(0);
+      setActiveTab(type === 'newPeople' ? 1 : type === 'consolidated' ? 2 : 0);
     }
   }, [open]);
 
@@ -397,7 +397,7 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
           sx={{ mb: 2, boxShadow: 1 }}
         />
 
-        {isLoading ? (
+        {isLoading ===true ? (
           <Box display="flex" justifyContent="center" py={6}>
             <CircularProgress />
           </Box>

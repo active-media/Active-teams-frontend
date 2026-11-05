@@ -552,14 +552,21 @@ const getApiDateRange = (range) => {
   };
 };
 
-const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
+const isSmallGatheringCategory = (category) =>
+  typeof category === "string" &&
+  category.trim().toLowerCase().replace(/\s+/g, "_") === "small_gatherings";
+
+const isSmallGatheringEventType = (eventType, eventTypes = []) => {
+  const eventTypeCategory = eventTypes.find(
+    (type) => type.name?.toLowerCase() === eventType?.toLowerCase(),
+  )?.event_type_category;
+  return isSmallGatheringCategory(eventTypeCategory);
+};
+
+const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter, eventTypes) => {
   if (!events || events.length === 0) return [];
 
-  const isCellType =
-    !selectedEventTypeFilter ||
-    selectedEventTypeFilter === "all" ||
-    selectedEventTypeFilter === "CELLS" ||
-    selectedEventTypeFilter.toLowerCase().includes("cell");
+  const isCellType = isSmallGatheringEventType(selectedEventTypeFilter, eventTypes);
 
   //STATUS column
   const statusCol = {
@@ -683,11 +690,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter) => {
     const containsOriginated = keyLower.includes("originated");
     const containsLeader12 = keyLower.includes("leader") && keyLower.includes("12");
     const containsLeader1 = keyLower.includes("leader1") || keyLower.includes("leader@1") || keyLower.includes("leader at 1");
-    const shouldExcludeLeader1 =
-      containsLeader1 &&
-      selectedEventTypeFilter !== "all" &&
-      selectedEventTypeFilter !== "CELLS" &&
-      selectedEventTypeFilter !== "Cells";
+    const shouldExcludeLeader1 = containsLeader1 && !isCellType;
     const containsPersonSteps = keyLower.includes("person") && keyLower.includes("steps");
     return !(exactMatch || caseInsensitiveMatch || containsOverdue || containsDisplayDate || containsOriginated || containsLeader12 || shouldExcludeLeader1 || containsPersonSteps);
   });
@@ -745,10 +748,7 @@ const MobileEventCard = ({
   const isDark = theme.palette.mode === "dark";
   const borderColor = isDark ? theme.palette.divider : "#e9ecef";
   const attendeesCount = event.attendees?.length || 0;
-  const isCellEvent =
-    selectedEventTypeFilter === "all" ||
-    selectedEventTypeFilter === "CELLS" ||
-    selectedEventTypeFilter === "Cells";
+  const isCellEvent = isSmallGatheringEventType(selectedEventTypeFilter, eventTypes);
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
   const escapeHtml = (s) =>
     String(s || "")
@@ -757,17 +757,8 @@ const MobileEventCard = ({
       .replace(/>/g, "&gt;");
 
 const findEventTypeByName = (typeName) => {
-    if (!typeName || typeName === "all") {
-      return {
-        name: "CELLS",
-        isGlobal: false,
-        isTicketed: false,
-        hasPersonSteps: true,
-      };
-    }
-
     // Look for the event type in your eventTypes array
-    const found = eventTypes.find((et) => {
+    const found = typeName && eventTypes.find((et) => {
       const etName = et.name || et.eventTypeName || et.displayName || "";
       return etName.toLowerCase() === typeName.toLowerCase();
     });
@@ -777,7 +768,7 @@ const findEventTypeByName = (typeName) => {
     }
 
     return {
-      name: typeName,
+      name: typeName || "",
       isGlobal: false,
       isTicketed: false,
       hasPersonSteps: false,
@@ -1160,7 +1151,7 @@ const Events = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const searchDebounceRef = useRef(null);
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-  const [selectedDateRange, setSelectedDateRange] = useState("all");
+  const [selectedDateRange, setSelectedDateRange] = useState("this-week");
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
@@ -1332,17 +1323,8 @@ ${xmlCols}
   };
 
 const findEventTypeByName = (typeName, eventTypes = []) => {
-    if (!typeName || typeName === "all") {
-      return {
-        name: "Cells",
-        isGlobal: false,
-        isTicketed: false,
-        hasPersonSteps: true,
-      };
-    }
-
     // Look for the event type in your eventTypes array
-    const found = (eventTypes || []).find((et) => {
+    const found = typeName && (eventTypes || []).find((et) => {
       const etName = et.name || et.eventTypeName || et.displayName || "";
       return etName.toLowerCase() === typeName.toLowerCase();
     });
@@ -1352,7 +1334,7 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
     }
 
     return {
-      name: typeName,
+      name: typeName || "",
       isGlobal: false,
       isTicketed: false,
       hasPersonSteps: false,
@@ -1585,10 +1567,10 @@ const allEventTypes = useMemo(() => {
   return typeNames;
 }, [eventTypes]);
 const getEventTypeName = (eventType) => {
-  console.log("normal",eventTypes)
-  return eventTypes.find(et => et.name === eventType)?.name || 'cells';
+  return eventTypes.find(
+    (et) => et.name?.toLowerCase() === eventType?.toLowerCase(),
+  )?.name || eventType;
 };
-
 
 const fetchEventsFilters = (filters) => {
   // The date picker drives the backend window. "All dates" keeps the page's
@@ -1612,15 +1594,9 @@ const fetchEventsFilters = (filters) => {
   }
 
   if (filters.search) params.search = filters.search;
-
-  const requestedDay = filters.day || selectedDayFilter;
-  if (requestedDay && requestedDay !== "all") {
-    params.day = requestedDay;
-  }
-
-  if (filters.event_type) {
-    
-    params.event_type = getEventTypeName(filters.event_type);
+  const eventType = filters.event_type || selectedEventTypeFilter;
+  if (eventType && eventType !== "all") {
+    params.event_type = getEventTypeName(eventType);
   }
 
   const currentUser = JSON.parse(localStorage.getItem("userProfile")) || {};
@@ -1632,13 +1608,8 @@ const fetchEventsFilters = (filters) => {
   const userSurname =
     currentUser?.surname || userName?.split(" ").slice(1).join(" ") || "";
   let endpoint = `${BACKEND_URL}/events`;
-  const eventType = filters.event_type || selectedEventTypeFilter;
   console.log("Fetching events for user:", filters)
-    const userOrg = currentUser?.Organization || currentUser?.organization || "";
-  const userOrgId = currentUser?.org_id || "";
-  const isCellOrg = userOrgId === "active-teams" || userOrg === "Active Church";
-  
-  const isCellType = isCellOrg && (!eventType || eventType === "CELLS" || eventType === "all" || eventType.toLowerCase() === "cells" || eventType.toLowerCase().includes("cell"));
+  const isCellType = isSmallGatheringEventType(eventType, eventTypes);
 
   if (isCellType) {
     endpoint = `${BACKEND_URL}/events/cells`;
@@ -1749,6 +1720,7 @@ const fetchEventsFilters = (filters) => {
         selectedStatus,
         selectedDateRange,
         selectedDayFilter,
+        eventTypes,
       ],
     );
 
@@ -1768,11 +1740,6 @@ const fetchEventTypes = useCallback(async () => {
    
     
     let filteredTypes = eventTypesData.filter((type) => {
-      if (isActiveTeams && (type.name === "Cells" || type.name === "CELLS" || type.name?.toLowerCase() === "cells")) {
-        console.log("Removing Cells event type for Active Teams");
-        return false;
-      }
-      
       // Built-in types are already org-filtered by backend — always show them
       if (type.isBuiltIn) return true;
       
@@ -1794,7 +1761,7 @@ const fetchEventTypes = useCallback(async () => {
     console.error("Error fetching event types:", error);
     return [];
   }
-}, [BACKEND_URL, authFetch, currentUser?.email, currentUser?.role, isActiveTeams]);
+}, [BACKEND_URL, authFetch, currentUser?.email, currentUser?.role]);
 
     useEffect(() => {
       if (currentUser?.email) {
@@ -1864,12 +1831,6 @@ const getFilteredEventTypes = (allEventTypes) => {
           ? eventType
           : eventType.name || eventType;
       
-      // For Active Teams, completely filter out "CELLS" event type
-      if (isActiveTeams && typeName === "CELLS") {
-        console.log("Filtering out CELLS for Active Teams");
-        return false;
-      }
-      
       const typeInfo = eventTypeMap[typeName];
 
       if (!typeInfo) {
@@ -1904,15 +1865,9 @@ const getFilteredEventTypes = (allEventTypes) => {
     return filtered;
   } catch (error) {
     console.error("Error filtering event types:", error);
-    let filtered = allEventTypes.filter(() => {
+    const filtered = allEventTypes.filter(() => {
       return isAdmin || isLeaderAt12 || isRegistrant || isLeader;
     });
-        if (isActiveTeams) {
-      filtered = filtered.filter(type => {
-        const typeName = typeof type === "string" ? type : type.name || type;
-        return typeName !== "CELLS";
-      });
-    }
     
     return filtered;
   }
@@ -2164,7 +2119,6 @@ const getFilteredEventTypes = (allEventTypes) => {
         "Life Class": "#28a745",
         Workshop: "#fd7e14",
         Conference: "#dc3545",
-        "All Cells": "#6c757d",
       };
       return colors[typeName] || "#007bff";
     };
@@ -2361,9 +2315,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     setSearchQuery("");
     setDebouncedSearchTerm("");
     setIsSearching(false);
-    setSelectedDateRange("all");
-    setSelectedDayFilter("all");
-    setFilterOptions((current) => ({ ...current, day: "all" }));
+    setSelectedDateRange("this-week");
     setCurrentPage(1);
 
   }, []);
@@ -2664,13 +2616,10 @@ const getFilteredEventTypes = (allEventTypes) => {
             search: searchQuery.trim() || undefined,
           };
 
-          if (
-            selectedEventTypeFilter === "all" ||
-            selectedEventTypeFilter === "CELLS" ||
-            !selectedEventTypeFilter
-          ) {
-            refreshParams.event_type = "CELLS";
-
+          if (selectedEventTypeFilter && selectedEventTypeFilter !== "all") {
+            refreshParams.event_type = selectedEventTypeFilter;
+          }
+          if (isSmallGatheringEventType(selectedEventTypeFilter, eventTypes)) {
             if (isLeaderAt12) {
               refreshParams.leader_at_12_view = true;
               if (viewFilter === "personal") {
@@ -2681,8 +2630,6 @@ const getFilteredEventTypes = (allEventTypes) => {
             } else if (isAdmin && viewFilter === "personal") {
               refreshParams.personal = true;
             }
-          } else {
-            refreshParams.event_type = selectedEventTypeFilter;
           }
 
           fetchEvents(refreshParams, true);
@@ -2700,6 +2647,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       viewFilter,
       fetchEvents,
       DEFAULT_API_START_DATE,
+      eventTypes,
     ],
   );
 
@@ -3027,8 +2975,6 @@ const getFilteredEventTypes = (allEventTypes) => {
 
             if (selectedEventTypeFilter && selectedEventTypeFilter !== "all") {
               refreshParams.event_type = selectedEventTypeFilter;
-            } else {
-              refreshParams.event_type = "CELLS";
             }
 
             if (selectedStatus && selectedStatus !== "all") {
@@ -3039,10 +2985,7 @@ const getFilteredEventTypes = (allEventTypes) => {
               refreshParams.search = searchQuery.trim();
             }
 
-            if (
-              selectedEventTypeFilter === "all" ||
-              selectedEventTypeFilter === "CELLS"
-            ) {
+            if (isSmallGatheringEventType(selectedEventTypeFilter, eventTypes)) {
               if (isLeaderAt12) {
                 refreshParams.leader_at_12_view = true;
                 refreshParams.include_subordinate_cells = true;
@@ -3095,6 +3038,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       fetchEvents,
       DEFAULT_API_START_DATE,
       authFetch,
+      eventTypes,
     ],
   );
 
@@ -3145,20 +3089,14 @@ const getFilteredEventTypes = (allEventTypes) => {
           start_date: DEFAULT_API_START_DATE,
           _t: Date.now(),
           status: selectedStatus !== "all" ? selectedStatus : undefined,
-          event_type:
-            selectedEventTypeFilter === "all"
-              ? "CELLS"
-              : selectedEventTypeFilter,
+          event_type: selectedEventTypeFilter,
         };
 
         if (searchQuery && searchQuery.trim()) {
           refreshParams.search = searchQuery.trim();
         }
 
-        if (
-          selectedEventTypeFilter === "all" ||
-          selectedEventTypeFilter === "CELLS"
-        ) {
+        if (isSmallGatheringEventType(selectedEventTypeFilter, eventTypes)) {
           if (isLeaderAt12) {
             refreshParams.leader_at_12_view = true;
             refreshParams.include_subordinate_cells = true;
@@ -3202,6 +3140,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       currentUserLeaderAt1,
       viewFilter,
       isAdmin,
+      eventTypes,
     ],
   );
 
@@ -3231,9 +3170,11 @@ const getFilteredEventTypes = (allEventTypes) => {
       if (!typeName) {
         throw new Error("No event type name provided for deletion");
       }
-
-      const encodedTypeName = encodeURIComponent(typeName);
-      const url = `${BACKEND_URL}/event-types/${encodedTypeName}`;
+      const typeId = toDeleteType?.event_type_id || toDeleteType?.id || toDeleteType?._id || null;
+      if (!typeId) {
+        throw new Error("No event type ID provided for deletion");
+      }
+      const url = `${BACKEND_URL}/event-types/${typeId}`;
 
       try {
         const response = await authFetch(url, {
@@ -3307,7 +3248,7 @@ const getFilteredEventTypes = (allEventTypes) => {
                     {
                       page: 1,
                       limit: rowsPerPage,
-                      event_type: "CELLS",
+                      event_type: "all",
                       start_date: DEFAULT_API_START_DATE,
                     },
                     true,
@@ -3354,7 +3295,7 @@ const getFilteredEventTypes = (allEventTypes) => {
               {
                 page: 1,
                 limit: rowsPerPage,
-                event_type: "CELLS",
+                event_type: "all",
                 start_date: DEFAULT_API_START_DATE,
               },
               true,
@@ -3570,7 +3511,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   const handleSaveEventType = useCallback(
     async (eventTypeData, eventTypeId = null) => {
       try {
-        console.log('DATA',eventTypeData, eventTypeId)
+        // console.log('DATA',eventTypeData, eventTypeId)
       
         const token = localStorage.getItem("access_token");
         if (!token) {
@@ -3587,10 +3528,12 @@ const getFilteredEventTypes = (allEventTypes) => {
               "Cannot update: original event type name not found",
             );
           }
+        
 
           const encodedName = encodeURIComponent(identifier);
-          url = `${BACKEND_URL}/event-types/${encodedName}`;
+          url = `${BACKEND_URL}/event-types/${eventTypeId}`;
           method = "PUT";
+          
         } else {
           url = `${BACKEND_URL}/event-types`;
           method = "POST";
@@ -3674,14 +3617,10 @@ const getFilteredEventTypes = (allEventTypes) => {
       ...(selectedStatus && selectedStatus !== "all"
         ? { status: selectedStatus }
         : {}),
-      event_type:
-        selectedEventTypeFilter === "all" ? "CELLS" : selectedEventTypeFilter,
+      event_type: selectedEventTypeFilter,
     };
 
-    const isCellEvent =
-      selectedEventTypeFilter === "all" ||
-      selectedEventTypeFilter === "CELLS" ||
-      selectedEventTypeFilter.toLowerCase().includes("cell");
+    const isCellEvent = isSmallGatheringEventType(selectedEventTypeFilter, eventTypes);
 
     if (isCellEvent) {
       if (isAdmin && viewFilter === "personal") {
@@ -3751,6 +3690,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     isRegularUser,
     isLeaderAt12,
     DEFAULT_API_START_DATE,
+    eventTypes,
   ]);
 
   const StatusBadges = ({
@@ -3804,8 +3744,7 @@ const getFilteredEventTypes = (allEventTypes) => {
         limit: rowsPerPage,
         start_date: DEFAULT_API_START_DATE,
         status: statusValue,
-        event_type:
-          selectedEventTypeFilter === "all" ? "CELLS" : selectedEventTypeFilter,
+        event_type: selectedEventTypeFilter,
         _t: Date.now(),
       };
 
@@ -3813,11 +3752,7 @@ const getFilteredEventTypes = (allEventTypes) => {
         fetchParams.search = searchQuery.trim();
       }
 
-      const isCellEvent =
-        selectedEventTypeFilter === "all" ||
-        selectedEventTypeFilter === "CELLS" ||
-        (selectedEventTypeFilter &&
-          selectedEventTypeFilter.toLowerCase().includes("cell"));
+      const isCellEvent = isSmallGatheringEventType(selectedEventTypeFilter, eventTypes);
 
       if (isCellEvent) {
         if (isAdmin) {
@@ -4097,18 +4032,13 @@ const getFilteredEventTypes = (allEventTypes) => {
   const ViewFilterButtons = () => {
     const shouldShowToggle =
       (isAdmin || isLeaderAt12) &&
-      (selectedEventTypeFilter === "all" ||
-        selectedEventTypeFilter === "CELLS");
+      isSmallGatheringEventType(selectedEventTypeFilter, eventTypes);
 
     if (isRegularUser || isRegistrant) {
       return null;
     }
 
-    if (
-      selectedEventTypeFilter &&
-      selectedEventTypeFilter !== "all" &&
-      selectedEventTypeFilter !== "CELLS"
-    ) {
+    if (selectedEventTypeFilter && !isSmallGatheringEventType(selectedEventTypeFilter, eventTypes)) {
       return null;
     }
 
@@ -4221,18 +4151,10 @@ const getFilteredEventTypes = (allEventTypes) => {
 const filteredEventTypes = useMemo(() => {
   const allTypes = eventTypes
     .map((t) => t.name || t)
-    .filter((name) => {
-      if (!name) return false;
-      // ONLY filter out "Cells" for Active Teams - don't filter out "all"
-      if (isActiveTeams && (name === "Cells" || name === "CELLS" || name?.toLowerCase() === "cells")) {
-        console.log("Filtering out Cells from event types:", name);
-        return false;
-      }
-      return true;
-    });
+    .filter((name) => Boolean(name));
 
   return getFilteredEventTypes(allTypes);
-}, [eventTypes, isActiveTeams]);
+}, [eventTypes]);
     const handleEventTypeClick = (typeValue) => {
       const eventTypeObj = eventTypes.find((et) => {
         const etName = et.name || et.eventTypeName || et.displayName || "";
@@ -4338,32 +4260,19 @@ const allTypes = useMemo(() => {
   const availableTypes = filteredEventTypes || [];
   const shouldSeeAll = computedIsAdmin || computedIsLeaderAt12 || computedIsLeader || computedIsRegistrant || computedIsRegularUser;
 
-  console.log("Building allTypes:", {
-    isActiveTeams,
-    shouldSeeAll,
-    availableTypesCount: availableTypes.length,
-    availableTypes: availableTypes.map(t => typeof t === 'string' ? t : t.name)
-  });
-
-  if (isActiveTeams && shouldSeeAll) {
-    // ALWAYS include "all" first, then all other types
-    return ["all", ...availableTypes];
-  }
-  
   if (shouldSeeAll) {
     return ["all", ...availableTypes];
   }
   
   return availableTypes;
-}, [filteredEventTypes, computedIsAdmin, computedIsLeaderAt12, computedIsLeader, computedIsRegistrant, computedIsRegularUser, isActiveTeams]);
+}, [filteredEventTypes, computedIsAdmin, computedIsLeaderAt12, computedIsLeader, computedIsRegistrant, computedIsRegularUser]);
 
 
 
 const getDisplayName = (type) => {
   if (!type) return "";
   if (type === "all") {
-    // For Active Teams, show "ALL CELLS"
-    return isActiveTeams ? "ALL CELLS" : "All Events";
+    return "All Events";
   }
   return typeof type === "string" ? type : type.name || String(type);
 };
@@ -4858,7 +4767,7 @@ const getTypeValue = (type) => {
                     flexWrap: "wrap",
                   }}
                 >
-                  <Box
+                  {/* <Box
                     role="group"
                     aria-label="Filter events by weekday"
                     sx={{
@@ -4932,7 +4841,7 @@ const getTypeValue = (type) => {
                         </Button>
                       );
                     })}
-                  </Box>
+                  </Box> */}
                   <StatusBadges
                     selectedStatus={selectedStatus}
                     setSelectedStatus={setSelectedStatus}
@@ -4951,7 +4860,7 @@ const getTypeValue = (type) => {
                   />
                 </div>
               </div>
-              <Box
+              {/* <Box
                 sx={{
                   display: "flex",
                   alignItems: "center",
@@ -4977,7 +4886,7 @@ const getTypeValue = (type) => {
                   </Button>
                 )}
                 <ViewFilterButtons />
-              </Box>
+              </Box> */}
             </Box>
           </>
         ) : (
@@ -5358,6 +5267,7 @@ const getTypeValue = (type) => {
                           paginatedEvents,
                           isOverdue,
                           selectedEventTypeFilter,
+                          eventTypes,
                         ),
                         {
                           field: "actions",
@@ -5708,31 +5618,17 @@ const getTypeValue = (type) => {
       }}
     >
       {(() => {
-        let displayTypes = [...allEventTypes];
-        if (isActiveTeams) {
-          displayTypes = ["all", ...displayTypes];
-        }
-        return displayTypes;
+        return [...allEventTypes];
       })()
         .filter((type) => {
           const typeName = typeof type === "string" ? type : type.name || type;
-          if (isActiveTeams && (typeName === "Cells" || typeName === "CELLS" || typeName?.toLowerCase() === "cells")) {
-            return false;
-          }
           return typeName.toLowerCase().includes(eventTypeSearch.toLowerCase());
         })
         .map((type) => {
-          //HEREEEEEEEEEEEEEEEEEEE
           const typeName = typeof type === "string" ? type : type.name || type;
           const eventTypeCategory = eventTypes.find((et) => et.name?.toLowerCase() === typeName.toLowerCase())?.event_type_category || "small_gatherings";
-          const name = eventTypes.find((t) => t.name === typeName)?.name;
-          const isAllCells = typeName === "all";
-          const eventTypeObj = isAllCells 
-            ? { name: "all", description: "Gatherings for discipleship, community and spiritual growth" }
-            : eventTypes.find((et) => et.name?.toLowerCase() === typeName.toLowerCase()) || { name: typeName };
-          const description = isAllCells 
-            ? "Gatherings for discipleship, community and spiritual growth" 
-            : eventTypeObj.description || "";
+          const eventTypeObj = eventTypes.find((et) => et.name?.toLowerCase() === typeName.toLowerCase()) || { name: typeName };
+          const description = eventTypeObj.description || "";
 
           const getEventTypeColor = (type) => {
             const colors = {
@@ -5777,18 +5673,9 @@ const getTypeValue = (type) => {
               
               <Box
                 onClick={() => {
-                  setSelectedEventTypeFilter(name);
+                  setSelectedEventTypeFilter(typeName);
                   setShowingEvents(true);
                   setCurrentPage(1);
-
-                  const fetchParams = {
-                    page: 1,
-                    limit: rowsPerPage,
-                    start_date: DEFAULT_API_START_DATE,
-                    event_type: typeName === "all" ? "CELLS" : typeName,
-                  };
-                  console.log('FETCH PARAMS', fetchParams,name,typeName);
-                  // fetchEvents(fetchParams, true);
                 }}
                 sx={{
                   width: "100%",
@@ -5813,7 +5700,7 @@ const getTypeValue = (type) => {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {typeName === "all" ? "ALL CELLS" : name}
+                  {typeName}
                 </Typography>
 
                 <Box
@@ -5856,7 +5743,7 @@ const getTypeValue = (type) => {
                 />
               </Box>
 
-              {isAdmin && !isAllCells && (
+              {isAdmin && (
                 <IconButton
                   size="small"
                   onClick={(e) => {
@@ -5894,16 +5781,10 @@ const getTypeValue = (type) => {
     </Box>
 
     {(() => {
-      let displayTypes = [...allEventTypes];
-      if (isActiveTeams) {
-        displayTypes = ["all", ...displayTypes];
-      }
-      return displayTypes;
-    })().filter((type) => {
+      return [...allEventTypes];
+    })()
+      .filter((type) => {
       const typeName = typeof type === "string" ? type : type.name || type;
-      if (isActiveTeams && (typeName === "Cells" || typeName === "CELLS" || typeName?.toLowerCase() === "cells")) {
-        return false;
-      }
       return typeName.toLowerCase().includes(eventTypeSearch.toLowerCase());
     }).length === 0 && (
       <Box
@@ -5940,7 +5821,6 @@ const getTypeValue = (type) => {
                   .map((type) => {
                     const typeName =
                       typeof type === "string" ? type : type.name || type;
-                    const isAllCells = typeName === "all";
                     const eventTypeCategory = eventTypes.find((et) => et.name?.toLowerCase() === typeName.toLowerCase())?.event_type_category || "small_gatherings";
                     const eventTypeObj = eventTypes.find(
                       (et) => et.name?.toLowerCase() === typeName.toLowerCase(),
@@ -6005,14 +5885,11 @@ const getTypeValue = (type) => {
                               page: 1,
                               limit: rowsPerPage,
                               start_date: DEFAULT_API_START_DATE,
-                              event_type: typeName === "all" ? "CELLS" : typeName,
+                              event_type: typeName,
                               status: "incomplete",
                             };
 
-                            const isCellEvent =
-                              typeName === "all" ||
-                              typeName === "CELLS" ||
-                              typeName.toLowerCase().includes("cell");
+                            const isCellEvent = isSmallGatheringEventType(typeName, eventTypes);
 
                             if (isCellEvent) {
                               if (isLeaderAt12) {
@@ -6052,14 +5929,14 @@ const getTypeValue = (type) => {
                                 mb: "4px",
                               }}
                             >
-                              {typeName === "all" ? "ALL CELLS" : typeName}
+                              {typeName}
                             </Typography>
                       
                           </Box>
                         </Box>
 
                         {/* EDIT/DELETE MENU - Now on the far right */}
-                        {isAdmin && !isAllCells && (
+                        {isAdmin && (
                           <IconButton
                             size="small"
                             onClick={(e) => {
@@ -6341,8 +6218,7 @@ const getTypeValue = (type) => {
               }}
             >
               <Typography sx={styles.modalTitle}>
-                {selectedEventTypeFilter === "CELLS" ||
-                  selectedEventTypeFilter === "all"
+                {isSmallGatheringEventType(selectedEventTypeFilter, eventTypes)
                   ? "Create New Cell"
                   : "Create New Event"}
               </Typography>
