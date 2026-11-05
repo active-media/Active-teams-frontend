@@ -67,6 +67,8 @@ import { toast } from "react-toastify";
 import * as XLSX from "xlsx";
 import { AuthContext } from "../contexts/AuthContext";
 import CreateEvents from "./CreateEvents";
+import StaffInternStatistics from "../components/StaffInternStatistics";
+import { canAccessStaffIntern } from "../utils/staffIntern";
 import {
   getCellStatus,
   isCellOverdue,
@@ -1816,6 +1818,7 @@ const StatsDashboard = () => {
           <Tab label={`CELLS (${cells.length})`} />
           <Tab label={`TASKS (${stats.allTasks.length})`} />
           <Tab label={`CALENDAR (${calendarEvents.length} EVENTS)`} />
+          {canAccessStaffIntern(user) && <Tab label="Staff & Intern Statistics" />}
         </Tabs>
       </Paper>
 
@@ -2898,6 +2901,14 @@ const StatsDashboard = () => {
     </Box>
   </DialogContent>
 </Dialog>
+
+        {activeTab === 3 && canAccessStaffIntern(user) && (
+          <StaffInternStatistics
+            authFetch={authFetch}
+            currentUser={user}
+            backendUrl={BACKEND_URL}
+          />
+        )}
 
     </Container>
   );

@@ -1,14 +1,14 @@
 import React, { useState, useCallback, useEffect, useContext, useRef, useMemo } from "react";
 import {
   Box, Typography, TextField, Grid, Button, useTheme, Snackbar, Alert, Slider,
-  IconButton, InputAdornment, Fade, Paper, Avatar, MenuItem, Chip, Collapse,
+  IconButton, InputAdornment, Fade, Paper, Avatar, MenuItem, Chip,
   LinearProgress, Skeleton,
 } from "@mui/material";
 import Cropper from "react-easy-crop";
 import getCroppedImg from "../components/cropImageHelper";
 import { UserContext } from "../contexts/UserContext.jsx";
 import { AuthContext } from "../contexts/AuthContext.jsx";
-import { CameraAlt, ExpandMore } from "@mui/icons-material";
+import { CameraAlt } from "@mui/icons-material";
 
 /* Add to index.html for the new look (falls back to system fonts if skipped):
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet"> */
@@ -64,8 +64,8 @@ async function apiRequest(path, { method, body, isForm }, authFetch) {
 const updateUserProfile = (data, authFetch) =>
   apiRequest(`/profile/${getUserId()}`, { method: "PUT", body: data }, authFetch);
 
-const updatePassword = (currentPassword, newPassword, authFetch) =>
-  apiRequest(`/users/${getUserId()}/password`, { method: "PUT", body: { currentPassword, newPassword } }, authFetch);
+const updatePassword = (newPassword, authFetch) =>
+  apiRequest(`/users/${getUserId()}/password`, { method: "PUT", body: { newPassword } }, authFetch);
 
 async function uploadAvatarFromDataUrl(dataUrl, authFetch) {
   const userId = getUserId();
@@ -77,9 +77,9 @@ async function uploadAvatarFromDataUrl(dataUrl, authFetch) {
 
 const emptyForm = {
   name: "", surname: "", dob: "", email: "", address: "", phone: "", invitedBy: "",
-  gender: "", organization: "", currentPassword: "", newPassword: "", confirmPassword: "",
+  gender: "", organization: "", newPassword: "", confirmPassword: "",
 };
-const PASSWORD_KEYS = ["currentPassword", "newPassword", "confirmPassword"];
+const PASSWORD_KEYS = ["newPassword", "confirmPassword"];
 
 const normalizeGender = (g) => (!g ? "" : { male: "Male", female: "Female", Male: "Male", Female: "Female" }[g] || g);
 
@@ -249,12 +249,11 @@ export default function Profile() {
 
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [carouselIndex, setCarouselIndex] = useState(0);
-  const [passwordOpen, setPasswordOpen] = useState(false);
   const [leaders, setLeaders] = useState({ leaderAt1: "", leaderAt12: "", leaderAt144: "" });
   const [form, setForm] = useState(emptyForm);
   const [originalForm, setOriginalForm] = useState(emptyForm);
   const [hasUserEditedForm, setHasUserEditedForm] = useState(false);
-  const [showPassword, setShowPassword] = useState({ current: false, new: false, confirm: false });
+  const [showPassword, setShowPassword] = useState({ new: false, confirm: false });
   const [errors, setErrors] = useState({});
   const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" });
 
@@ -296,7 +295,7 @@ export default function Profile() {
       invitedBy: profile?.invited_by || "",
       gender: normalizeGender(profile?.gender || ""),
       organization: orgValue,
-      currentPassword: "", newPassword: "", confirmPassword: "",
+      newPassword: "", confirmPassword: "",
     };
 
     const leaderEntries = getLeaderEntries(profile?.leaders);
@@ -404,13 +403,11 @@ export default function Profile() {
     }
 
     if (passwordTouched) {
-      if (!form.currentPassword.trim()) n.currentPassword = "Enter your current password";
       if (form.newPassword && form.newPassword.length < 8) n.newPassword = "Use at least 8 characters";
       if (form.newPassword !== form.confirmPassword) n.confirmPassword = "Passwords don't match";
       if (form.newPassword && !form.confirmPassword) n.confirmPassword = "Confirm your new password";
     }
     setErrors(n);
-    if (n.currentPassword || n.newPassword || n.confirmPassword) setPasswordOpen(true);
     return Object.keys(n).length === 0;
   };
 
@@ -435,7 +432,7 @@ export default function Profile() {
     e.preventDefault();
     if (!validate()) return;
 
-    const wantsPassword = form.newPassword && form.confirmPassword && form.currentPassword;
+    const wantsPassword = form.newPassword && form.confirmPassword;
     let profileUpdated = false;
     let passwordUpdated = false;
 
@@ -460,7 +457,7 @@ export default function Profile() {
 
       if (wantsPassword) {
         try {
-          await updatePassword(form.currentPassword, form.newPassword, authFetch);
+          await updatePassword(form.newPassword, authFetch);
           passwordUpdated = true;
         } catch (err) {
           setSnackbar({ open: true, message: `Password change failed: ${err.message}`, severity: "error" });
@@ -468,7 +465,7 @@ export default function Profile() {
         }
       }
 
-      const cleared = { ...form, currentPassword: "", newPassword: "", confirmPassword: "" };
+      const cleared = { ...form, newPassword: "", confirmPassword: "" };
       setForm(cleared);
       setOriginalForm(cleared);
       setHasUserEditedForm(false);
@@ -766,24 +763,10 @@ export default function Profile() {
           )}
 
           {section("Security", "Change your password.",
-            <Box sx={{ border: `1px solid ${line}`, borderRadius: "14px", bgcolor: fieldBg }}>
-              <Button
-                fullWidth
-                onClick={() => setPasswordOpen((o) => !o)}
-                aria-expanded={passwordOpen}
-                endIcon={<ExpandMore sx={{ color: accent, transform: passwordOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} />}
-                sx={{ justifyContent: "space-between", textTransform: "none", color: ink, fontWeight: 600, fontSize: "0.95rem", px: 2, py: 1.5, borderRadius: "14px" }}
-              >
-                Change password
-              </Button>
-              <Collapse in={passwordOpen} unmountOnExit={false}>
-                <Grid container spacing={2} sx={{ p: 2, pt: 0.5 }}>
-                  {passwordField("Current password", "currentPassword", "current", { xs: 12 }, "current-password")}
-                  {passwordField("New password", "newPassword", "new", { xs: 12, sm: 6 }, "new-password")}
-                  {passwordField("Confirm new password", "confirmPassword", "confirm", { xs: 12, sm: 6 }, "new-password")}
-                </Grid>
-              </Collapse>
-            </Box>
+            <Grid container spacing={2}>
+              {passwordField("New password", "newPassword", "new", { xs: 12, sm: 6 }, "new-password")}
+              {passwordField("Confirm new password", "confirmPassword", "confirm", { xs: 12, sm: 6 }, "new-password")}
+            </Grid>
           )}
         </Box>
 
