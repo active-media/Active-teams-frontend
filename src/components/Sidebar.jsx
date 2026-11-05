@@ -252,11 +252,12 @@ export default function Sidebar({ mode, setMode }) {
   const drawerContent = (
     <Box
       sx={{
-        width: 240,
+        // width: 240,
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
         overflowY: 'auto',
+        // overflowX: 'hidden !important',
         backgroundColor: theme.palette.background.paper,
         borderRight: `1px solid ${line}`,
         fontFamily: BODY,
@@ -359,7 +360,7 @@ export default function Sidebar({ mode, setMode }) {
       </List>
 
       {/* Bottom-left settings/theme control, matching the gear icon in the design */}
-      <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
+      <Box sx={{ p: 2, display: 'flex', justifyContent: 'center', }}>
         <IconButton
           onClick={handleToggleMode}
           size="small"
@@ -403,12 +404,14 @@ export default function Sidebar({ mode, setMode }) {
         sx={{
           width: 240,
           flexShrink: 0,
+          
           '& .MuiDrawer-paper': {
             width: 240,
             boxSizing: 'border-box',
             height: '100vh',
             backgroundColor: theme.palette.background.paper,
             borderRight: `1px solid ${line}`,
+
           },
         }}
       >

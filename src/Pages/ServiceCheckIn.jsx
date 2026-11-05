@@ -2096,7 +2096,7 @@ const mainColumns = useMemo(() => {
           <Typography component="label" htmlFor="service-event-select" sx={{ display: "block", mb: 0.5, color: mute, fontSize: "0.75rem", fontWeight: 600, fontFamily: BODY }}>
             Global event
           </Typography>
-          <Select
+          {/* <Select
             id="service-event-select"
             size="small"
             value={currentSessionId}
@@ -2140,7 +2140,7 @@ const mainColumns = useMemo(() => {
                 </Typography>
               </MenuItem>
             )}
-          </Select>
+          </Select> */}
         </Box>
         <Typography sx={{ pb: { xs: 0, sm: 0.5 }, color: mute, fontSize: "0.8125rem", fontWeight: 600, fontFamily: BODY }}>
           {currentSessionId ? "Service open" : "Select an event to start"}
