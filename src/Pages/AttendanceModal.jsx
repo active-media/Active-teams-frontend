@@ -3303,7 +3303,6 @@ const AttendanceModal = ({
         week: get_current_week_identifier(),
         headcount: finalHeadcount,
         session_id: event?.session_id || "",
-        event_id: event?.event_id || "",
         event_name: event?.eventName || "",
         event_type: event?.eventType || event?.event_type_name || "Cells",
       };
