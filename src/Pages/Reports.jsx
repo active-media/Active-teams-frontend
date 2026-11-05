@@ -52,9 +52,9 @@ const location = useLocation();
       ? { start_date: periodValue.start_date, end_date: periodValue.end_date }
       : { period: periodValue.period }),
     campus: searchParams.get("campus") || undefined,
-    organization: searchParams.get("organization") || searchParams.get("org") || undefined,
+    organization: searchParams.get("organization") || searchParams.get("org") || organization || undefined,
     gender: gender || undefined,
-  }), [periodValue, gender, searchParams]);
+  }), [periodValue, gender, organization, searchParams]);
 
   // Mirror the selection into the URL so drill-down links (and the dashboard's links) keep it.
   useEffect(() => {
@@ -199,13 +199,31 @@ const location = useLocation();
           </Box>
         )}
       </Stack>
-      {isSuper && selectedReport?.implemented && <TextField size="small" label="Organization for saved history" value={organization} onChange={(event) => setOrganization(event.target.value)} sx={{ mb: 2, minWidth: 320 }} />}
+      {isSuper && selectedReport?.implemented && <TextField
+        size="small"
+        label="Organization"
+        value={organization}
+        onChange={(event) => {
+          const value = event.target.value;
+          setOrganization(value);
+          setSearchParams((current) => {
+            const next = new URLSearchParams(current);
+            next.delete("org");
+            if (value) next.set("organization", value);
+            else next.delete("organization");
+            return next;
+          }, { replace: true });
+        }}
+        sx={{ mb: 2, minWidth: 320 }}
+      />}
       {loading && <LinearProgress sx={{ mb: 1.5 }} />}
       {error?.status === 501 && error?.code === "not_implemented" ? <ComingSoonState message={error.message} /> : error && <ReportErrorState error={error} onRetry={() => setError(null)} />}
       {envelope && (
         envelope.tables?.some((t) => t.key === "twelve_tasks" && t.rows.length === 0) ? (
           <Alert severity="info" action={<Button component={RouterLink} to="/admin" color="inherit">Open Admin</Button>}>
-            No tasks set for this week.
+            {["thisWeek", "previousWeek"].includes(envelope.meta?.period?.token)
+              ? `No tasks set for ${envelope.meta.period.label.toLowerCase()}.`
+              : "No tasks set for this period."}
           </Alert>
         ) : <ReportEnvelopeView envelope={envelope} />
       )}
