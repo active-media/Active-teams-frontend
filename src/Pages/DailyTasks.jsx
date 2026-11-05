@@ -360,6 +360,7 @@ function CallTaskModal({
         people.map((person) => (
           <MenuItem
             key={`${person.email || person._id || person.fullName}-${person.fullName}`}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => onSelect(person)}
             sx={{ py: 1 }}
           >
