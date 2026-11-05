@@ -311,11 +311,15 @@ function CallTaskModal({
   };
 
   const handleRecipientSelect = (person) => {
-    setRecipientSearch(person.fullName);
+    const fullName =
+      person.fullName ||
+      `${person.name || person.Name || ""} ${person.surname || person.Surname || ""}`.trim();
+    const normalisedPerson = { ...person, fullName, fullNameLower: fullName.toLowerCase() };
+    setRecipientSearch(fullName);
     setRecipientOpen(false);
-    handleChange({ target: { name: "recipient", value: person } });
-    handleChange({ target: { name: "recipientDisplay", value: person.fullName } });
-    handleChange({ target: { name: "contactedPersonName", value: person.fullName } });
+    handleChange({ target: { name: "recipient", value: normalisedPerson } });
+    handleChange({ target: { name: "recipientDisplay", value: fullName } });
+    handleChange({ target: { name: "contactedPersonName", value: fullName } });
     handleChange({ target: { name: "contactedPersonEmail", value: person.email } });
     handleChange({ target: { name: "contactedPersonPhone", value: person.phone } });
   };
@@ -337,6 +341,9 @@ function CallTaskModal({
 
   const renderPeopleDropdown = (people, onSelect, emptyLabel) => (
     <Box
+      // Keep focus in the input so a click on a result is never lost to the
+      // field's blur handler (which closes the dropdown).
+      onMouseDown={(event) => event.preventDefault()}
       sx={{
         position: "absolute",
         top: "calc(100% + 4px)",
@@ -412,7 +419,7 @@ function CallTaskModal({
               value={recipientSearch}
               onChange={handleRecipientInput}
               onFocus={() => setRecipientOpen(true)}
-              onBlur={() => setTimeout(() => setRecipientOpen(false), 150)}
+              onBlur={() => setTimeout(() => setRecipientOpen(false), 300)}
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
@@ -448,7 +455,7 @@ function CallTaskModal({
               value={assigneeSearch}
               onChange={handleAssigneeInput}
               onFocus={() => setAssigneeOpen(true)}
-              onBlur={() => setTimeout(() => setAssigneeOpen(false), 150)}
+              onBlur={() => setTimeout(() => setAssigneeOpen(false), 300)}
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
@@ -1698,7 +1705,28 @@ export default function DailyTasks() {
     e.preventDefault();
     if (submitting) return;
 
-    const person = taskData.recipient;
+    // Resolve a recipient even if the click on the suggestion did not register
+    // (blur/race): accept an exact name/email match, or a unique partial match.
+    let person = taskData.recipient;
+    if (!person?.fullName) {
+      const typed = String(taskData.recipientDisplay || "").trim().toLowerCase();
+      if (typed) {
+        const exact = recipientPeople.filter(
+          (candidate) =>
+            String(candidate.fullName || "").toLowerCase() === typed ||
+            String(candidate.email || "").toLowerCase() === typed,
+        );
+        const matches = exact.length
+          ? exact
+          : recipientPeople.filter((candidate) =>
+              String(candidate.fullName || "").toLowerCase().includes(typed),
+            );
+        if (matches.length === 1) {
+          person = matches[0];
+          handleChange({ target: { name: "recipient", value: person } });
+        }
+      }
+    }
     if (!person?.fullName) {
       toast.error("Please select a recipient from the list.");
       return;
@@ -1853,7 +1881,12 @@ export default function DailyTasks() {
     if (!user?.email) return;
     setLoading(true);
     try {
-      const dateParams = getFilterDateRangeParams(pendingDateRange, customDateRange);
+      // Overdue is inherently historical: a week/month preset would hide
+      // tasks that are already past due, so always search all dates.
+      const dateParams =
+        pendingStageFilter === "overdue"
+          ? { all_dates: true }
+          : getFilterDateRangeParams(pendingDateRange, customDateRange);
       const params = new URLSearchParams({
         email: user.email,
         page: pageNum.toString(),
@@ -1978,7 +2011,7 @@ export default function DailyTasks() {
           </h1>
         </header>
 
-        <main style={{ flex: 1, padding: "0 40px 64px 40px" }}>
+        <main style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 40px 64px 40px" }}>
           {/* Heading + action buttons */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "24px" }}>
             <h2 style={{ fontSize: "36px", fontWeight: "700", letterSpacing: "-0.02em", color: colors.foreground }}>

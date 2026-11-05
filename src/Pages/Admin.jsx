@@ -261,7 +261,7 @@ export default function AdminDashboard() {
     if (!isSupremeAdmin) return;
     setLoadingOrgs(true);
     try {
-      const res = await authFetch(`${API_BASE_URL}/organizations`, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
+      const res = await authFetch(`${API_BASE_URL}/admin/organizations`, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
       if (!res.ok) return;
       const data = await res.json();
       const orgs = (data.organizations || []).map(o => ({
@@ -612,7 +612,7 @@ export default function AdminDashboard() {
     try {
       const id = editingOrg ? (editingOrg.id || editingOrg._id) : null;
       const res = await authFetch(
-        id ? `${API_BASE_URL}/organizations/${id}` : `${API_BASE_URL}/organizations`,
+        id ? `${API_BASE_URL}/admin/organizations/${id}` : `${API_BASE_URL}/admin/organizations`,
         { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }
       );
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to save organization'); }
@@ -628,7 +628,7 @@ export default function AdminDashboard() {
     if (!window.confirm(`Delete ${name}? This cannot be undone.`)) return;
     setDeletingOrg(true);
     try {
-      const res = await authFetch(`${API_BASE_URL}/organizations/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE_URL}/admin/organizations/${id}`, { method: 'DELETE' });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to delete organization'); }
       addActivityLog('ORG_DELETED', `Deleted organization: ${name}`);
       setShowOrgModal(false);
@@ -645,7 +645,7 @@ export default function AdminDashboard() {
     setAddingSupremeAdmin(true);
     setSupremeAdminError('');
     try {
-      const res = await authFetch(`${API_BASE_URL}/admin/supreme-admins`, {
+      const res = await authFetch(`${API_BASE_URL}/admin/supreme/add`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email })
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to add supreme admin'); }

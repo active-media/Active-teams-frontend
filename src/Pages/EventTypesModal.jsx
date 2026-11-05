@@ -44,10 +44,14 @@ const EventTypesModal = ({
         name: selectedEventType.name || "",
         description: selectedEventType.description || "",
         isTicketed: !!selectedEventType.isTicketed,
-        isTraining: !!selectedEventType.isTraining, 
+        isTraining: !!selectedEventType.isTraining,
         isGlobal: typeof selectedEventType.isGlobal === "boolean"
           ? selectedEventType.isGlobal
           : false,
+        event_category:
+          selectedEventType.event_category ||
+          selectedEventType.event_type_category ||
+          "small_gatherings",
       });
     } else if (open && !selectedEventType) {
       resetForm();
@@ -67,6 +71,7 @@ const EventTypesModal = ({
       isTicketed: false,
       isTraining: false,  
       isGlobal: false,
+      event_category: "small_gatherings",
     });
     setErrors({});
   };

@@ -1745,7 +1745,7 @@ function ServiceCheckIn() {
     try {
       const fullId = event.session_id
       const baseId = cleanEventId(fullId);
-      const response = await authFetch(`${BASE_URL}/events/${fullId}/toggle-status`, { method: "PATCH" });
+      const response = await authFetch(`${BASE_URL}/events/${event.session_id}/${event.event_id}/toggle-status`, { method: "PATCH" });
       if (!response.ok) { const e = await response.json(); throw new Error(e.detail || "HTTP error"); }
       const result = await response.json();
       if (result.action !== "reopened") { toast.error("Server did not reopen the event. Please try again."); return; }

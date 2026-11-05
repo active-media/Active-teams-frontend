@@ -1,8 +1,6 @@
 import React, { createContext, useState, useEffect, useCallback } from 'react';
-import { normalizeRole } from '../utils/roleNormalizer';
 import supabase from '../../supabaseClient';
 import { API_BASE } from '../api/config';
-import { createClient } from '@supabase/supabase-js';
 
 // ─── Supabase client ──────────────────────────────────────────────────────────
 // Required env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
