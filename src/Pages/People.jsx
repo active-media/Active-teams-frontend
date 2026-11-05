@@ -135,11 +135,15 @@ function mapRawPerson(raw) {
       raw.org_id ||
       "",
   ).trim();
+  const personId = safeStr(
+    raw.person_id || raw.personId || raw.PersonId || raw._id || raw.id || "",
+  );
   const leaderMap = getLeadersByLevel(raw);
   const leadersCombined = Object.values(leaderMap).join(" ");
   const fullName = `${name} ${surname}`.trim();
   return {
     _id: safeStr(raw._id || raw.id || ""),
+    person_id: personId,
     name,
     surname,
     fullName,

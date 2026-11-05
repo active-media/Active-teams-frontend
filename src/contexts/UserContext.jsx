@@ -4,23 +4,20 @@ import { AuthContext } from "./AuthContext";
 export const UserContext = createContext();
 
 const DEFAULT_AVATARS = {
-  female: "https://cdn-icons-png.flaticon.com/512/6997/6997662.png",
-  male: "https://cdn-icons-png.flaticon.com/512/6997/6997675.png",
+  female:  "https://cdn-icons-png.flaticon.com/512/6997/6997662.png",
+  male:    "https://cdn-icons-png.flaticon.com/512/6997/6997675.png",
   neutral: "https://cdn-icons-png.flaticon.com/512/147/147144.png",
 };
 
 const getDefaultAvatar = (userDataOrGender) => {
   if (!userDataOrGender) return DEFAULT_AVATARS.neutral;
-
   const gender = typeof userDataOrGender === "string"
     ? userDataOrGender
     : userDataOrGender?.gender;
-
   if (!gender) return DEFAULT_AVATARS.neutral;
-
   const normalized = String(gender).trim().toLowerCase();
   if (normalized === "female") return DEFAULT_AVATARS.female;
-  if (normalized === "male") return DEFAULT_AVATARS.male;
+  if (normalized === "male")   return DEFAULT_AVATARS.male;
   return DEFAULT_AVATARS.neutral;
 };
 
@@ -28,8 +25,8 @@ const getProfilePictureFromUser = (userData) => {
   if (!userData) return DEFAULT_AVATARS.neutral;
   return (
     userData.profile_picture ||
-    userData.avatarUrl ||
-    userData.profilePicUrl ||
+    userData.avatarUrl       ||
+    userData.profilePicUrl   ||
     getDefaultAvatar(userData)
   );
 };
@@ -40,144 +37,99 @@ const normalizeUserProfile = (userData) => {
   return {
     ...userData,
     profile_picture: profilePicture,
-    avatarUrl: profilePicture,
-    profilePicUrl: profilePicture,
+    avatarUrl:       profilePicture,
+    profilePicUrl:   profilePicture,
   };
 };
 
 export const UserProvider = ({ children }) => {
-  const [profilePic, setProfilePic] = useState(DEFAULT_AVATARS.neutral);
-  const [userProfile, setUserProfile] = useState(null);
+  const [profilePic,   setProfilePicState]   = useState(DEFAULT_AVATARS.neutral);
+  const [userProfile,  setUserProfileState]  = useState(null);
   const authContext = useContext(AuthContext);
 
-  const initializeUserData = useCallback(() => {
-    try {
-      // If AuthContext has a user, use that as source of truth
-      if (authContext?.user) {
-        const normalizedProfile = normalizeUserProfile(authContext.user);
-        setUserProfile(normalizedProfile);
-        setProfilePic(normalizedProfile.profile_picture);
-        return;
-      }
-
-      // Fallback to localStorage if AuthContext user not available yet
-      const savedProfile = localStorage.getItem('userProfile');
-      let parsedProfile = null;
-
-      if (savedProfile) {
-        parsedProfile = JSON.parse(savedProfile);
-        const normalizedProfile = normalizeUserProfile(parsedProfile);
-        setUserProfile(normalizedProfile);
-
-        const savedPic = localStorage.getItem('profilePic');
-        const defaultAvatarUrls = Object.values(DEFAULT_AVATARS);
-        const isSavedPicCustom = savedPic && !defaultAvatarUrls.includes(savedPic);
-
-        setProfilePic(
-          !normalizedProfile.profile_picture && isSavedPicCustom
-            ? savedPic
-            : normalizedProfile.profile_picture
-        );
-
-        localStorage.setItem('userProfile', JSON.stringify(normalizedProfile));
-      } else {
-        const savedPic = localStorage.getItem('profilePic');
-        if (savedPic) {
-          setProfilePic(savedPic);
-        } else {
-          setProfilePic(DEFAULT_AVATARS.neutral);
-        }
-      }
-    } catch (error) {
-      console.error('Error initializing user data:', error);
-    }
-  }, [authContext?.user]);
-
-
-  useEffect(() => {
-    initializeUserData();
-  }, [initializeUserData]);
-
-  // Sync with AuthContext when user changes
+  // ── Sync from AuthContext.user (source of truth) ──────────────────────────
   useEffect(() => {
     if (authContext?.user) {
-      const normalizedProfile = normalizeUserProfile(authContext.user);
-      setUserProfile(normalizedProfile);
-      setProfilePic(normalizedProfile.profile_picture);
+      const normalized = normalizeUserProfile(authContext.user);
+      setUserProfileState(normalized);
+      setProfilePicState(normalized.profile_picture);
     } else {
-      setUserProfile(null);
-      setProfilePic(DEFAULT_AVATARS.neutral);
+      // AuthContext not ready yet — hydrate from localStorage
+      try {
+        const saved = localStorage.getItem("userProfile");
+        if (saved) {
+          const normalized = normalizeUserProfile(JSON.parse(saved));
+          setUserProfileState(normalized);
+          setProfilePicState(normalized.profile_picture);
+        } else {
+          const savedPic = localStorage.getItem("profilePic");
+          setProfilePicState(savedPic || DEFAULT_AVATARS.neutral);
+        }
+      } catch (e) {
+        console.error("UserContext hydration error:", e);
+      }
     }
   }, [authContext?.user]);
 
-  //  REMOVED THIS EFFECT - Let AuthContext manage userProfile in localStorage
-  // useEffect(() => {
-  //   if (userProfile) {
-  //     localStorage.setItem('userProfile', JSON.stringify(userProfile));
-  //   } else {
-  //     localStorage.removeItem('userProfile');  //  THIS WAS DELETING IT!
-  //   }
-  // }, [userProfile]);
+  // ── setProfilePic ─────────────────────────────────────────────────────────
+  const setProfilePic = useCallback((newPic) => {
+    setProfilePicState(newPic);
 
-  // Enhanced setProfilePic that also updates userProfile
-  const setProfilePicEnhanced = (newProfilePic) => {
-    setProfilePic(newProfilePic);
-    
-    // Also update the profile picture in userProfile
     if (userProfile) {
-      const updatedProfile = {
+      const updated = {
         ...userProfile,
-        profile_picture: newProfilePic,
-        avatarUrl: newProfilePic,
-        profilePicUrl: newProfilePic
+        profile_picture: newPic,
+        avatarUrl:       newPic,
+        profilePicUrl:   newPic,
       };
-      setUserProfile(updatedProfile);
-      //  Update localStorage here since we removed the effect
-      localStorage.setItem('userProfile', JSON.stringify(updatedProfile));
+      setUserProfileState(updated);
+      localStorage.setItem("userProfile", JSON.stringify(updated));
     }
-    
-    // Save to localStorage for standalone access
-    if (newProfilePic && newProfilePic !== "https://cdn-icons-png.flaticon.com/512/147/147144.png") {
-      localStorage.setItem('profilePic', newProfilePic);
-    }
-  };
 
-  // Enhanced setUserProfile that also updates profilePic and gender default avatars
-  const setUserProfileEnhanced = (newUserProfile) => {
-    if (!newUserProfile) {
-      setUserProfile(null);
-      localStorage.removeItem('userProfile');
-      setProfilePic(DEFAULT_AVATARS.neutral);
-      localStorage.removeItem('profilePic');
+    if (newPic && !Object.values(DEFAULT_AVATARS).includes(newPic)) {
+      localStorage.setItem("profilePic", newPic);
+    }
+  }, [userProfile]);
+
+  // ── setUserProfile ────────────────────────────────────────────────────────
+  const setUserProfile = useCallback((newProfile) => {
+    if (!newProfile) {
+      setUserProfileState(null);
+      setProfilePicState(DEFAULT_AVATARS.neutral);
+      localStorage.removeItem("userProfile");
+      localStorage.removeItem("profilePic");
       return;
     }
-
-    const normalizedProfile = normalizeUserProfile(newUserProfile);
-    setUserProfile(normalizedProfile);
-    localStorage.setItem('userProfile', JSON.stringify(normalizedProfile));
-    setProfilePic(normalizedProfile.profile_picture);
-    localStorage.setItem('profilePic', normalizedProfile.profile_picture);
-  };
+    const normalized = normalizeUserProfile(newProfile);
+    setUserProfileState(normalized);
+    setProfilePicState(normalized.profile_picture);
+    localStorage.setItem("userProfile",  JSON.stringify(normalized));
+    localStorage.setItem("profilePic",   normalized.profile_picture);
+  }, []);
 
   const loadUserProfile = useCallback(() => {
-    initializeUserData();
-  }, [initializeUserData]);
+    if (authContext?.user) {
+      const normalized = normalizeUserProfile(authContext.user);
+      setUserProfileState(normalized);
+      setProfilePicState(normalized.profile_picture);
+    }
+  }, [authContext?.user]);
 
-  const clearUserData = () => {
-    setUserProfile(null);
-    setProfilePic(DEFAULT_AVATARS.neutral);
-    localStorage.removeItem('userProfile');
-    localStorage.removeItem('profilePic');
-  };
+  const clearUserData = useCallback(() => {
+    setUserProfileState(null);
+    setProfilePicState(DEFAULT_AVATARS.neutral);
+    localStorage.removeItem("userProfile");
+    localStorage.removeItem("profilePic");
+  }, []);
 
   return (
-    <UserContext.Provider value={{ 
-      profilePic, 
-      setProfilePic: setProfilePicEnhanced, 
-      userProfile, 
-      setUserProfile: setUserProfileEnhanced,
+    <UserContext.Provider value={{
+      profilePic,
+      setProfilePic,
+      userProfile,
+      setUserProfile,
       loadUserProfile,
-      clearUserData
+      clearUserData,
     }}>
       {children}
     </UserContext.Provider>

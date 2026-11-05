@@ -14,6 +14,12 @@ import Profile from "./Pages/Profile";
 import { PeopleSection as People } from "./Pages/People";
 import Events from "./Pages/Events";
 import Stats from "./Pages/Stats";
+import Reports from "./Pages/Reports";
+import CellsDrilldown from "./Pages/CellsDrilldown";
+import ScheduledReports from "./Pages/ScheduledReports";
+import ReportingDashboard from "./Pages/ReportingDashboard";
+import ReportingDashboardLegacy from "./features/reporting/_legacy/ReportingDashboardLegacy";
+import ReportHistory from "./Pages/ReportHistory";
 import ServiceCheckIn from "./Pages/ServiceCheckIn";
 import DailyTasks from "./Pages/DailyTasks";
 import CreateEvents from "./Pages/CreateEvents";
@@ -21,6 +27,7 @@ import AttendanceModal from "./Pages/AttendanceModal";
 import EventDetails from "./Pages/EventDetails";
 import Login from "./Pages/Login";
 import Signup from "./Pages/Signup";
+import AuthLayout from "./components/AuthLayout"; // shared shell for /login + /signup
 import ForgotPassword from "./components/ForgotPassword";
 import ResetPassword from "./components/ResetPassword";
 import EventRegistrationForm from "./components/EventRegistrationForm";
@@ -30,14 +37,22 @@ import withAuthCheck from "./components/withAuthCheck";
 import Admin from "./Pages/Admin";
 import NotFound from "./Pages/NotFound";
 
-// Wrap protected pages WITH ROLES - Updated with normalized roles (lowercase)
-const ProtectedHome = withAuthCheck(Home, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
-const ProtectedProfile = withAuthCheck(Profile, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
-const ProtectedPeople = withAuthCheck(People, ['admin', 'leader', 'leaderat12']);
-const ProtectedEvents = withAuthCheck(Events, ['admin', 'leader', 'leaderat12', 'registrant'], true); 
-const ProtectedStats = withAuthCheck(Stats, ['admin','leaderat12']);
-const ProtectedCheckIn = withAuthCheck(ServiceCheckIn, ['admin', 'registrant', 'leaderat12']);
-const ProtectedDailyTasks = withAuthCheck(DailyTasks, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
+// Wrap protected pages WITH ROLES - UPDATED WITH leaderAt12
+const ProtectedHome = withAuthCheck(Home, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
+const ProtectedProfile = withAuthCheck(Profile, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
+const ProtectedPeople = withAuthCheck(People, ['admin', 'leader', 'leaderAt12']);
+const ProtectedEvents = withAuthCheck(Events, ['admin', 'leader', 'leaderAt12', 'registrant'], true); 
+const ProtectedStats = withAuthCheck(Stats, ['admin','leaderAt12']);
+const ReportingRoles = ['admin', 'super_admin', 'leader', 'leaderAt12'];
+const ProtectedReports = withAuthCheck(Reports, ReportingRoles, false, true);
+const ProtectedCellsLeader = withAuthCheck(() => <CellsDrilldown mode="leader" />, ReportingRoles, false, true);
+const ProtectedCellsCell = withAuthCheck(() => <CellsDrilldown mode="cell" />, ReportingRoles, false, true);
+const ProtectedScheduledReports = withAuthCheck(ScheduledReports, ReportingRoles, false, true);
+const ProtectedReportingDashboard = withAuthCheck(ReportingDashboard, ReportingRoles, false, true);
+const ProtectedReportHistory = withAuthCheck(ReportHistory, ReportingRoles, false, true);
+const ProtectedReportingDashboardLegacy = withAuthCheck(ReportingDashboardLegacy, ReportingRoles, false, true);
+const ProtectedCheckIn = withAuthCheck(ServiceCheckIn, ['admin', 'registrant', 'leaderAt12']);
+const ProtectedDailyTasks = withAuthCheck(DailyTasks, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
 const ProtectedAdmin = withAuthCheck(Admin, ['admin']);
 const ProtectedCreateEvents = withAuthCheck(CreateEvents, ['admin', 'leader', 'leaderat12']);
 const ProtectedAttendance = withAuthCheck(AttendanceModal, ['admin', 'leader', 'leaderat12']);
@@ -49,7 +64,40 @@ function App() {
   const location = useLocation();
   const profileRefreshDone = useRef(false);
   const [mode, setMode] = useState(() => localStorage.getItem("themeMode") || "light");
-  const theme = useMemo(() => createTheme({ palette: { mode } }), [mode]);
+  const theme = useMemo(
+    () =>
+      createTheme({
+        palette: {
+          mode,
+          primary: {
+            main: mode === "dark" ? "#90caf9" : "#1565c0",
+          },
+          background: {
+            default: mode === "dark" ? "#121212" : "#f5f7fa",
+            paper: mode === "dark" ? "#1e1e1e" : "#ffffff",
+          },
+        },
+        shape: {
+          borderRadius: 10,
+        },
+        typography: {
+          fontFamily: "'DM Sans', sans-serif",
+        },
+        components: {
+          MuiButton: {
+            defaultProps: {
+              disableElevation: true,
+            },
+          },
+          MuiCard: {
+            defaultProps: {
+              elevation: 0,
+            },
+          },
+        },
+      }),
+    [mode],
+  );
 
   const [showSplash, setShowSplash] = useState(true);
   const [splashFinished, setSplashFinished] = useState(false);
@@ -161,7 +209,7 @@ function App() {
     return (
       <SplashScreen
         onFinish={handleSplashFinish}
-        duration={6000}
+        duration={2000}
       />
     );
   }
@@ -178,26 +226,16 @@ function App() {
         <div style={{ flexGrow: 1, minWidth: 0 }}>
           <Routes>
             {/* Public routes */}
-            <Route 
-              path="/login" 
-              element={
-                !user ? (
-                  <Login mode={mode} setMode={setMode} />
-                ) : (
-                  <Navigate to="/" replace />
-                )
-              } 
-            />
-            <Route 
-              path="/signup" 
-              element={
-                !user ? (
-                  <Signup mode={mode} setMode={setMode} />
-                ) : (
-                  <Navigate to="/" replace />
-                )
-              } 
-            />
+<Route element={<AuthLayout mode={mode} setMode={setMode} />}>
+  <Route
+    path="/login"
+    element={!user ? <Login mode={mode} /> : <Navigate to="/" replace />}
+  />
+  <Route
+    path="/signup"
+    element={!user ? <Signup mode={mode} /> : <Navigate to="/" replace />}
+  />
+</Route>
             <Route path="/forgot-password" element={<ForgotPassword mode={mode} />} />
             <Route path="/reset-password" element={<ResetPassword mode={mode} />} />
 
@@ -208,6 +246,16 @@ function App() {
             <Route path="/people" element={<ProtectedPeople title="People" />} />
             <Route path="/events" element={<ProtectedEvents title="Events" />} />
             <Route path="/stats" element={<ProtectedStats title="Stats" />} />
+            <Route path="/reports" element={<ProtectedReports title="Reports" />} />
+            <Route path="/reports/cells_graph/leader/:leaderId" element={<ProtectedCellsLeader title="Reports" />} />
+            <Route path="/reports/cells_graph/cell/:cellId" element={<ProtectedCellsCell title="Reports" />} />
+            <Route path="/reports/:reportType" element={<ProtectedReports title="Reports" />} />
+            <Route path="/reporting/history" element={<ProtectedReportHistory title="Report History" />} />
+            <Route path="/reporting/scheduled" element={<ProtectedScheduledReports title="Scheduled Reports" />} />
+            <Route path="/reporting/dashboard" element={<ProtectedReportingDashboard title="Reporting Dashboard" />} />
+            <Route path="/reporting/dashboard/:section" element={<ProtectedReportingDashboardLegacy title="Reporting Dashboard" />} />
+            <Route path="/reporting/dashboard/:section/:leaderId" element={<ProtectedReportingDashboardLegacy title="Reporting Dashboard" />} />
+            <Route path="/reporting/dashboard/:section/:leaderId/:cellId" element={<ProtectedReportingDashboardLegacy title="Reporting Dashboard" />} />
             <Route path="/create-events" element={<ProtectedCreateEvents title="Create Events" />} />
             <Route path="/edit-event/:id" element={<ProtectedCreateEvents title="Create Events Edit" />} />
             <Route path="/attendance" element={<ProtectedAttendance title="Attendance Modal" />} />
