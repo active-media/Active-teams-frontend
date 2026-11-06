@@ -96,6 +96,19 @@ const COLORS = {
 // ─── People cache helpers (mirrors the working Daily Tasks branch) ────────────
 const CACHE_DURATION = 30 * 60 * 1000;
 
+// Persist the Daily Tasks filters per user/organization so the last view is
+// restored when the page is revisited or reloaded.
+const readSavedFilters = (storageKey) => {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
 const getRawCachedPeople = () => {
   // Daily Tasks keeps its own lightweight cache so it never overwrites the
   // richer person objects cached by the People page.
@@ -266,9 +279,18 @@ function CallTaskModal({
   isLoadingPeople,
   modalType,
 }) {
-  const availableTaskTypes = taskTypes.length
-    ? taskTypes.map((taskType) => typeof taskType === "string" ? taskType : taskType.name).filter(Boolean)
-    : ["Awaiting Call", "Service Invitation", "Service Follow Up", "Follow Up", "New Member Care"];
+  const availableTaskTypes = Array.from(
+    new Set(
+      (taskTypes.length
+        ? taskTypes.map((taskType) =>
+            typeof taskType === "string" ? taskType : taskType.name,
+          )
+        : ["Awaiting Call", "Service Invitation", "Service Follow Up", "Follow Up", "New Member Care"]
+      )
+        .map((name) => (name || "").trim())
+        .filter(Boolean),
+    ),
+  );
 
   // Never let a preselected task type fall outside the select's options.
   if (taskData.taskType && !availableTaskTypes.includes(taskData.taskType)) {
@@ -567,7 +589,6 @@ function PersonFilterModal({
   selectedPeople, 
   onSelectionChange,
   isDarkMode,
-  isAdmin,
 }) {
   const [searchResults, setSearchResults] = useState([]);
   const [localSearch, setLocalSearch] = useState("");
@@ -621,9 +642,7 @@ function PersonFilterModal({
         <Box>
           <Typography variant="h6">Select People</Typography>
           <Typography variant="caption" color="text.secondary">
-            {isAdmin
-              ? `${teamMembers.length} ${teamMembers.length === 1 ? "person" : "people"} in your organization`
-              : `${teamMembers.length} ${teamMembers.length === 1 ? "person" : "people"} under you`}
+            {`${teamMembers.length} ${teamMembers.length === 1 ? "person" : "people"} under you`}
           </Typography>
         </Box>
         <IconButton onClick={onClose} size="small" aria-label="close">
@@ -780,11 +799,11 @@ function FilterPanelModal({
           value: "disciples",
           label: "Disciples",
           description: isAdmin
-            ? "Tasks for any person you select in your organization"
+            ? "Tasks for any person you select in your Church organization"
             : "Tasks for your disciples and hierarchy",
         }]
       : []),
-    ...(isAdmin ? [{ value: "all", label: "All", description: "Every task in your organization" }] : []),
+    ...(isAdmin ? [{ value: "all", label: "All", description: "Every task in your Church organization" }] : []),
   ];
 
   const clearAllFilters = () => {
@@ -1087,19 +1106,22 @@ function FilterPanelModal({
                 </MenuItem>
               ))}
               {/* Include any custom task types loaded from backend */}
-              {taskTypes
-                .map((t) => (t.name || "").toLowerCase().trim())
-                .filter(
-                  (name) =>
-                    name &&
-                    !typeOptions.some((o) => o.value === name) &&
-                    !["service follow up", "new_person", "new person"].includes(name),
-                )
-                .map((name) => (
-                  <MenuItem key={name} value={name}>
-                    {name.charAt(0).toUpperCase() + name.slice(1)}
-                  </MenuItem>
-                ))}
+              {Array.from(
+                new Set(
+                  taskTypes
+                    .map((t) => (t.name || "").toLowerCase().trim())
+                    .filter(
+                      (name) =>
+                        name &&
+                        !typeOptions.some((o) => o.value === name) &&
+                        !["service follow up", "new_person", "new person"].includes(name),
+                    ),
+                ),
+              ).map((name) => (
+                <MenuItem key={name} value={name}>
+                  {name.charAt(0).toUpperCase() + name.slice(1)}
+                </MenuItem>
+              ))}
             </Select>
           </FormControl>
         </Box>
@@ -1220,20 +1242,95 @@ export default function DailyTasks() {
   const [addingTaskType, setAddingTaskType] = useState(false);
 
   // Advanced filter state
+  const filtersStorageKey = `dailyTasksFilters:${userOrgKey || "default"}:${(user?.email || "").toLowerCase()}`;
+  const savedFiltersRef = useRef(null);
+  if (savedFiltersRef.current === null) {
+    savedFiltersRef.current = readSavedFilters(filtersStorageKey);
+  }
+  const savedFilters = savedFiltersRef.current;
+  const initialIsAdmin = ["admin", "super_admin"].includes(
+    (user?.role || "").toLowerCase(),
+  );
+
+  const stageFilterValues = ["all", "open", "completed", "awaiting task", "overdue"];
+
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
-  const [pendingViewFilter, setPendingViewFilter] = useState("personal"); // personal, disciples, all
-  const [pendingFilterType, setPendingFilterType] = useState("all");
-  const [pendingStageFilter, setPendingStageFilter] = useState("all");
-  const [pendingDateRange, setPendingDateRange] = useState("this_week");
-  const [customDateRange, setCustomDateRange] = useState({ start: "", end: "" });
-  const [selectedPeople, setSelectedPeople] = useState([]);
+  const [pendingViewFilter, setPendingViewFilter] = useState(() => {
+    const saved = savedFilters.viewFilter;
+    const valid = ["personal", "disciples", "all"].includes(saved);
+    // Never restore the org-wide view for a user who is no longer an admin.
+    const view = valid && !(saved === "all" && !initialIsAdmin) ? saved : null;
+    return view || (initialIsAdmin ? "all" : "personal");
+  }); // personal, disciples, all
+  const [pendingFilterType, setPendingFilterType] = useState(
+    typeof savedFilters.filterType === "string" ? savedFilters.filterType : "all",
+  );
+  const [pendingStageFilter, setPendingStageFilter] = useState(
+    stageFilterValues.includes(savedFilters.stageFilter) ? savedFilters.stageFilter : "all",
+  );
+  const [pendingDateRange, setPendingDateRange] = useState(
+    ["this_week", "last_week", "this_month", "previous_month", "custom"].includes(
+      savedFilters.dateRange,
+    )
+      ? savedFilters.dateRange
+      : "this_week",
+  );
+  const [customDateRange, setCustomDateRange] = useState(
+    savedFilters.customDateRange && typeof savedFilters.customDateRange === "object"
+      ? {
+          start: savedFilters.customDateRange.start || "",
+          end: savedFilters.customDateRange.end || "",
+        }
+      : { start: "", end: "" },
+  );
+  const [selectedPeople, setSelectedPeople] = useState(
+    Array.isArray(savedFilters.selectedPeople)
+      ? savedFilters.selectedPeople.filter((person) => person && person.email)
+      : [],
+  );
   const [teamPeopleObjects, setTeamPeopleObjects] = useState([]);
-  const [batchSize, setBatchSize] = useState(50);
+  const [batchSize, setBatchSize] = useState(() => {
+    const saved = Number(savedFilters.batchSize);
+    return Number.isFinite(saved) && saved > 0 ? saved : 50;
+  });
   const [canViewTeam, setCanViewTeam] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(initialIsAdmin);
 
   // Quick filter pills state (synced with pendingStageFilter)
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState(
+    stageFilterValues.includes(savedFilters.stageFilter) ? savedFilters.stageFilter : "all",
+  );
+
+  // Persist the applied filters whenever they change.
+  useEffect(() => {
+    if (!user?.email) return;
+    try {
+      localStorage.setItem(
+        filtersStorageKey,
+        JSON.stringify({
+          viewFilter: pendingViewFilter,
+          filterType: pendingFilterType,
+          stageFilter: pendingStageFilter,
+          dateRange: pendingDateRange,
+          customDateRange,
+          selectedPeople,
+          batchSize,
+        }),
+      );
+    } catch {
+      // Storage may be unavailable (private browsing); filters still work.
+    }
+  }, [
+    user?.email,
+    filtersStorageKey,
+    pendingViewFilter,
+    pendingFilterType,
+    pendingStageFilter,
+    pendingDateRange,
+    customDateRange,
+    selectedPeople,
+    batchSize,
+  ]);
 
   // Pagination state
   const [page, setPage] = useState(1);
@@ -1451,25 +1548,46 @@ export default function DailyTasks() {
     return person;
   }, [user]);
 
+  // Recipient/assignee search scope follows the applied view:
+  //  - All view (admins)  -> the whole organization
+  //  - Disciples view     -> only people under the current user
+  //  - Personal view      -> admins search everyone, leaders their hierarchy
   const recipientPeople = useMemo(() => {
+    if (pendingViewFilter === "disciples") return teamPeopleObjects;
     if (isAdmin) return allPeople;
     if (canViewTeam) return teamPeopleObjects;
     return allPeople;
-  }, [isAdmin, canViewTeam, allPeople, teamPeopleObjects]);
+  }, [pendingViewFilter, isAdmin, canViewTeam, allPeople, teamPeopleObjects]);
 
   const assigneePeople = useMemo(() => {
-    const base = isAdmin ? allPeople : canViewTeam ? teamPeopleObjects : [];
+    const base =
+      pendingViewFilter === "disciples"
+        ? teamPeopleObjects
+        : isAdmin
+          ? allPeople
+          : canViewTeam
+            ? teamPeopleObjects
+            : [];
     const hasSelf = base.some(
       (person) => person.email && person.email === currentUserPerson.email,
     );
     return hasSelf ? base : [currentUserPerson, ...base];
-  }, [isAdmin, canViewTeam, allPeople, teamPeopleObjects, currentUserPerson]);
+  }, [
+    pendingViewFilter,
+    isAdmin,
+    canViewTeam,
+    allPeople,
+    teamPeopleObjects,
+    currentUserPerson,
+  ]);
 
-  // People an admin/leader may pick in the Disciples filter.
-  const selectablePeople = useMemo(
-    () => (isAdmin ? allPeople : teamPeopleObjects),
-    [isAdmin, allPeople, teamPeopleObjects],
-  );
+  // People an admin/leader may pick in the Disciples filter. The full
+  // organization is only exposed when the All view is active.
+  const selectablePeople = useMemo(() => {
+    if (pendingViewFilter === "disciples") return teamPeopleObjects;
+    if (pendingViewFilter === "all" && isAdmin) return allPeople;
+    return [];
+  }, [pendingViewFilter, isAdmin, allPeople, teamPeopleObjects]);
 
   // ─── Dynamic filter counts from actual tasks ──────────────────────────────
   const filterCounts = useMemo(() => {
@@ -1557,7 +1675,19 @@ export default function DailyTasks() {
       const res = await authFetch(`${API_URL}/tasktypes`);
       if (!res.ok) throw new Error("Failed to fetch task types");
       const data = await res.json();
-      const types = Array.isArray(data) ? data : data.taskTypes || [];
+      const rawTypes = Array.isArray(data) ? data : data.taskTypes || [];
+      // The backend can return the same type from both legacy and Supabase
+      // stores; dedupe by display name so dropdowns never show duplicates.
+      const seen = new Set();
+      const types = [];
+      for (const entry of rawTypes) {
+        const name = (typeof entry === "string" ? entry : entry?.name || "").trim();
+        if (!name) continue;
+        const key = name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        types.push(typeof entry === "string" ? { name } : { ...entry, name });
+      }
       setTaskTypes(types);
     } catch (err) {
       console.error("Error fetching task types:", err.message);
@@ -1689,7 +1819,15 @@ export default function DailyTasks() {
 
       const created = data.taskType || data;
       if (created?.name) {
-        setTaskTypes((prev) => [...prev, created]);
+        setTaskTypes((prev) => {
+          const exists = prev.some(
+            (type) =>
+              (typeof type === "string" ? type : type?.name || "")
+                .toLowerCase()
+                .trim() === created.name.toLowerCase().trim(),
+          );
+          return exists ? prev : [...prev, created];
+        });
       }
       toast.success("Task type created successfully");
       setIsAddTypeModalOpen(false);
@@ -2307,7 +2445,6 @@ export default function DailyTasks() {
         selectedPeople={selectedPeople}
         onSelectionChange={setSelectedPeople}
         isDarkMode={isDarkMode}
-        isAdmin={isAdmin}
       />
 
       {/* Advanced Filter Panel Modal */}
