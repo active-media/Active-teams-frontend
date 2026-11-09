@@ -4770,7 +4770,7 @@ const getTypeValue = (type) => {
                     flexWrap: "wrap",
                   }}
                 >
-                  <Box
+                  {/* <Box
                     role="group"
                     aria-label="Filter events by weekday"
                     sx={{
@@ -4844,7 +4844,7 @@ const getTypeValue = (type) => {
                         </Button>
                       );
                     })}
-                  </Box>
+                  </Box> */}
                   <StatusBadges
                     selectedStatus={selectedStatus}
                     setSelectedStatus={setSelectedStatus}
