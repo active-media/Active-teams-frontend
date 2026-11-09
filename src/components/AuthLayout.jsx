@@ -19,7 +19,7 @@ const AuthPage = ({ mode, setMode }) => {
   const isDark = mode === "dark";
 
   return (
-    <Box className={styles.authPage} data-authmode={authMode}>
+    <Box className={styles.authPage} data-authmode={authMode} data-theme={mode}>
       <IconButton
         className={styles.themeToggle}
         aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}

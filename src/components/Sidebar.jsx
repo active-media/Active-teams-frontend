@@ -14,7 +14,6 @@ import { Link, useLocation } from 'react-router-dom';
 import MenuIcon from '@mui/icons-material/Menu';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
-import SettingsIcon from '@mui/icons-material/Settings';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 
 import {
@@ -243,7 +242,8 @@ export default function Sidebar({ mode, setMode }) {
   // Flatter, truer black in dark mode to match the design
   const textColor = mode === 'dark' ? '#ffffff' : '#000000';
   const activeTextColor = mode === 'dark' ? '#ffffff' : '#000000';
-  const activeBorderColor = mode === 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)';
+  const activeBackground = mode === 'dark' ? '#263238' : '#e8eef2';
+  const activeAccent = mode === 'dark' ? '#ffffff' : '#263238';
 
   if (location.pathname === "/signup" || location.pathname === "/login") {
     return null;
@@ -313,14 +313,10 @@ export default function Sidebar({ mode, setMode }) {
               onClick={() => isMobile && setMobileOpen(false)}
               sx={{
                 mb: 0.5,
-                borderRadius: 2,
+                borderRadius: 1.5,
                 color: textColor,
-                border: isActive ? `1px solid ${activeBorderColor}` : '1px solid transparent',
-                backgroundColor: isActive
-                  ? mode === 'dark'
-                    ? 'rgba(255,255,255,0.06)'
-                    : 'rgba(0,0,0,0.04)'
-                  : 'transparent',
+                borderLeft: isActive ? `3px solid ${activeAccent}` : '3px solid transparent',
+                backgroundColor: isActive ? activeBackground : 'transparent',
                 '&:hover': {
                   backgroundColor:
                     mode === 'dark'
@@ -330,16 +326,13 @@ export default function Sidebar({ mode, setMode }) {
                   '& .MuiListItemIcon-root': { color: activeTextColor },
                 },
                 '&.Mui-selected': {
-                  backgroundColor:
-                    mode === 'dark'
-                      ? 'rgba(255,255,255,0.06)'
-                      : 'rgba(0,0,0,0.04)',
+                  backgroundColor: activeBackground,
                 },
                 '&.Mui-selected:hover': {
                   backgroundColor:
                     mode === 'dark'
-                      ? 'rgba(255,255,255,0.10)'
-                      : 'rgba(0,0,0,0.08)',
+                      ? '#303f46'
+                      : '#dce5eb',
                 },
               }}
             >
@@ -374,7 +367,11 @@ export default function Sidebar({ mode, setMode }) {
             },
           }}
         >
-          <SettingsIcon fontSize="small" />
+          {mode === 'dark' ? (
+            <Brightness7Icon fontSize="small" />
+          ) : (
+            <Brightness4Icon fontSize="small" />
+          )}
         </IconButton>
       </Box>
     </Box>

@@ -969,7 +969,7 @@ const Signup = ({ onSignup, mode }) => {
           </Box>
 
           <Box textAlign="center" mt={1}>
-            <Typography>
+            <Typography color="text.primary">
               Already have an account?{" "}
               <Typography
                 component="span"
