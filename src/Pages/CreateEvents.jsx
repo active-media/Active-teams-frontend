@@ -779,6 +779,7 @@ const fetchPeople = async (q) => {
         recurringDays: isRecurring ? formData.recurringDays : [],
         total_sessions: formData.totalSessions || 0,
         class_level: formData.classLevel || 0,
+        required_sessions: formData.requiredSessions || 0,
       };
 
       if (formData.date && formData.time) {
@@ -1363,7 +1364,7 @@ const fetchPeople = async (q) => {
               mb={3}
             >
               <TextField
-                label="Number of sessions *"
+                label="Sessions *"
                 type="number"
                 value={formData.totalSessions}
                 onChange={(e) => handleChange("totalSessions", e.target.value)}
@@ -1372,6 +1373,19 @@ const fetchPeople = async (q) => {
                 InputLabelProps={{ shrink: true }}
                 error={!!errors.totalSessions}
                 helperText={errors.totalSessions}
+                sx={darkModeStyles.textField}
+              />
+
+              <TextField
+                label="Sessions required to pass *"
+                type="number"
+                value={formData.requiredSessions}
+                onChange={(e) => handleChange("requiredSessions", e.target.value)}
+                fullWidth
+                size="small"
+                InputLabelProps={{ shrink: true }}
+                error={!!errors.requiredSessions}
+                helperText={errors.requiredSessions}
                 sx={darkModeStyles.textField}
               />
               <TextField
