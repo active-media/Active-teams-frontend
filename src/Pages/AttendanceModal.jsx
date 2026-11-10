@@ -3247,7 +3247,6 @@ const AttendanceModal = ({
       const shouldMarkAsDidNotMeet =
         didNotMeet && attendeesList.length === 0 && finalHeadcount === 0;
       const payload = {
-        event_id: eventId,
         attendees: shouldMarkAsDidNotMeet ? [] : selectedAttendees,
         persistent_attendees: persistentCommonAttendees.map((p) => {
           const ticketOverride = isTicketedEvent
