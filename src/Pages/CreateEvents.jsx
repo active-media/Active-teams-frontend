@@ -43,6 +43,44 @@ const GEOAPIFY_COUNTRY_CODE = (
   import.meta.env.VITE_GEOAPIFY_COUNTRY_CODE || "za"
 ).toLowerCase();
 
+const normalizePersonSearch = (value) =>
+  String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+
+const rankPeopleByMatch = (people, query) => {
+  const normalizedQuery = normalizePersonSearch(query);
+  const queryWords = normalizedQuery.split(" ").filter(Boolean);
+
+  const getScore = (person) => {
+    const name = normalizePersonSearch(person.fullName);
+    const email = normalizePersonSearch(person.email);
+    const nameWords = name.split(" ");
+
+    if (name === normalizedQuery) return 0;
+    if (name.startsWith(normalizedQuery)) return 1;
+    if (nameWords.some((word) => word.startsWith(normalizedQuery))) return 2;
+    if (queryWords.length > 1 && queryWords.every((queryWord) =>
+      nameWords.some((nameWord) => nameWord.startsWith(queryWord))
+    )) return 3;
+    if (name.includes(normalizedQuery)) return 4;
+    if (email.startsWith(normalizedQuery)) return 5;
+    return 6;
+  };
+
+  const rankedPeople = people
+    .map((person, index) => ({ person, index, score: getScore(person) }))
+    .sort((a, b) => a.score - b.score || a.index - b.index)
+  const bestScore = rankedPeople[0]?.score;
+
+  return rankedPeople
+    .filter(({ score }) => score === bestScore)
+    .map(({ person }) => person);
+};
+
 const SameWidthPopper = (props) => {
   const { anchorEl } = props;
 
@@ -433,7 +471,7 @@ const fetchPeople = async (q) => {
     }));
 
     if (requestId === peopleSearchRequestRef.current) {
-      setPeopleData(formatted);
+      setPeopleData(rankPeopleByMatch(formatted, q));
       setPeopleSearchError("");
     }
   } catch (err) {
@@ -564,7 +602,7 @@ const fetchPeople = async (q) => {
       return {
         ...prev,
         [field]: value,
-        ...(field === "eventLeader" && !eventId
+        ...(field === "eventLeader"
           ? { eventLeaderEmail: "" }
           : {}),
       };
@@ -1586,9 +1624,11 @@ const fetchPeople = async (q) => {
                 helperText={
                   errors.eventLeader ||
                   peopleSearchError ||
-                  (isSearchingPeople
-                    ? "Searching..."
-                    : "Type at least 2 characters to search")
+                  (formData.eventLeaderEmail
+                    ? ""
+                    : isSearchingPeople
+                      ? "Searching..."
+                      : "Type at least 2 characters to search")
                 }
                 InputProps={{
                   startAdornment: (
@@ -1641,6 +1681,13 @@ const fetchPeople = async (q) => {
                       onMouseUp={() => {
                         if (person.isDifferentOrg) return;
                         isSelectingFromDropdown.current = false;
+                        if (searchDebounceRef.current) {
+                          clearTimeout(searchDebounceRef.current);
+                          searchDebounceRef.current = null;
+                        }
+                        peopleSearchRequestRef.current += 1;
+                        setIsSearchingPeople(false);
+                        setPeopleSearchError("");
                         const selectedName = person.fullName;
                         const selectedEmail = person.email;
 
@@ -1689,6 +1736,7 @@ const fetchPeople = async (q) => {
 
               {!isSearchingPeople &&
                 !peopleSearchError &&
+                !formData.eventLeaderEmail &&
                 formData.eventLeader.trim().length >= 2 &&
                 peopleData.length === 0 && (
                   <Box
