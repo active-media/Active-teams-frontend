@@ -491,7 +491,7 @@ const formatDate = (date) => {
 
 // Resolve the date-range dropdown into a concrete window. Kept in one place so
 // the backend request and the local filter always describe the same range.
-const resolveDateRangeWindow = (range) => {
+const resolveDateRangeWindow = (range, customStartDate, customEndDate) => {
   if (!range || range === "all") return null;
 
   const now = new Date();
@@ -505,7 +505,25 @@ const resolveDateRangeWindow = (range) => {
   let start;
   let endExclusive;
 
-  if (range === "this-week" || range === "last-week") {
+  if (range === "custom") {
+    if (
+      !customStartDate ||
+      !customEndDate ||
+      customStartDate > customEndDate
+    ) {
+      return null;
+    }
+
+    start = new Date(`${customStartDate}T00:00:00`);
+    const end = new Date(`${customEndDate}T00:00:00`);
+    if (
+      Number.isNaN(start.getTime()) ||
+      Number.isNaN(end.getTime())
+    ) {
+      return null;
+    }
+    endExclusive = addDays(end, 1);
+  } else if (range === "this-week" || range === "last-week") {
     const mondayOffset = (today.getDay() + 6) % 7; // days since Monday
     start = addDays(today, -mondayOffset);
     if (range === "last-week") start = addDays(start, -7);
@@ -525,10 +543,12 @@ const resolveDateRangeWindow = (range) => {
     return null;
   }
 
-  // Never ask for dates after today: end_date is inclusive, so the exclusive
-  // bound is capped at tomorrow.
-  const tomorrow = addDays(today, 1);
-  if (endExclusive > tomorrow) endExclusive = tomorrow;
+  if (range !== "custom") {
+    // Never ask for dates after today: end_date is inclusive, so the exclusive
+    // bound is capped at tomorrow.
+    const tomorrow = addDays(today, 1);
+    if (endExclusive > tomorrow) endExclusive = tomorrow;
+  }
 
   return { start, endExclusive };
 };
@@ -541,8 +561,12 @@ const toDateParam = (date) => {
 
 // The API takes inclusive start_date/end_date, so the exclusive local bound is
 // stepped back by one day.
-const getApiDateRange = (range) => {
-  const bounds = resolveDateRangeWindow(range);
+const getApiDateRange = (range, customStartDate, customEndDate) => {
+  const bounds = resolveDateRangeWindow(
+    range,
+    customStartDate,
+    customEndDate,
+  );
   if (!bounds) return {};
   const lastDay = new Date(bounds.endExclusive);
   lastDay.setDate(lastDay.getDate() - 1);
@@ -1152,6 +1176,21 @@ const Events = () => {
   const searchDebounceRef = useRef(null);
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedDateRange, setSelectedDateRange] = useState("this-week");
+  const [customDateRange, setCustomDateRange] = useState(() => {
+    const now = Date.now();
+    const formatSouthAfricanDate = (timestamp) =>
+      new Date(timestamp).toLocaleDateString("en-CA", {
+        timeZone: "Africa/Johannesburg",
+      });
+    return {
+      start: formatSouthAfricanDate(now - 30 * 86400000),
+      end: formatSouthAfricanDate(now),
+    };
+  });
+  const dateRangeCacheKey =
+    selectedDateRange === "custom"
+      ? `${selectedDateRange}_${customDateRange.start}_${customDateRange.end}`
+      : selectedDateRange;
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
@@ -1447,7 +1486,7 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
 
       toast.info("Preparing export — fetching events...", { toastId: TOAST_ID, autoClose: false });
 
-      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
+      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${selectedDayFilter}`;
       let sourceEvents =
         (eventsCache.current && eventsCache.current[cacheKey]) ||
         (allCurrentEvents && allCurrentEvents.length ? allCurrentEvents : null) ||
@@ -1577,12 +1616,16 @@ const fetchEventsFilters = (filters) => {
   // The date picker drives the backend window. "All dates" keeps the page's
   // default earliest date; any other option sends an explicit start_date and
   // end_date to whichever endpoint the event type resolves to.
-  const dateRange = getApiDateRange(selectedDateRange);
+  const dateRange = getApiDateRange(
+    selectedDateRange,
+    customDateRange.start,
+    customDateRange.end,
+  );
   const params = {
     page: filters.page || currentPage,
     limit: filters.limit || rowsPerPage,
-    start_date: dateRange.start_date || filters.start_date || "2026-10-24",
-    // filters.start_date || DEFAULT_API_START_DATE,
+    start_date:
+      dateRange.start_date || filters.start_date || DEFAULT_API_START_DATE,
   };
   if (dateRange.end_date) params.end_date = dateRange.end_date;
 
@@ -1684,7 +1727,7 @@ const fetchEventsFilters = (filters) => {
 
           console.log("Final events to display:", filtered.length);
           const effectiveDay = filters.day || selectedDayFilter;
-          const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${effectiveDay}`;
+          const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${effectiveDay}`;
           eventsCache.current[cacheKey] = filtered;
           const pageSize = filters.limit || rowsPerPage;
           const eventCount = data.total_events ?? filtered.length;
@@ -1720,6 +1763,8 @@ const fetchEventsFilters = (filters) => {
         selectedEventTypeFilter,
         selectedStatus,
         selectedDateRange,
+        customDateRange,
+        dateRangeCacheKey,
         selectedDayFilter,
         eventTypes,
       ],
@@ -2384,7 +2429,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   // the rows could change under the user, the request could land after the
   // first keystroke and wipe the matches, and the loaded page was ignored.
   const loadedEvents = useMemo(() => {
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${selectedDayFilter}`;
     const cached = eventsCache.current?.[cacheKey];
     const cachedList = Array.isArray(cached) ? cached : [];
     // The cache holds everything fetched for the filter, while `events` holds
@@ -2393,7 +2438,14 @@ const getFilteredEventTypes = (allEventTypes) => {
     const source =
       cachedList.length > (events?.length || 0) ? cachedList : events;
     return Array.isArray(source) ? source : [];
-  }, [events, selectedEventTypeFilter, selectedStatus, viewFilter, selectedDateRange, selectedDayFilter]);
+  }, [
+    events,
+    selectedEventTypeFilter,
+    selectedStatus,
+    viewFilter,
+    dateRangeCacheKey,
+    selectedDayFilter,
+  ]);
 
   // Pure filter over the events already loaded in the browser. It must stay
   // free of state writes because it runs inside a useMemo — setting state
@@ -2488,7 +2540,11 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const dateFilteredEvents = useMemo(() => {
     const sourceEvents = hasActiveSearch ? filteredEvents : loadedEvents;
-    const bounds = resolveDateRangeWindow(selectedDateRange);
+    const bounds = resolveDateRangeWindow(
+      selectedDateRange,
+      customDateRange.start,
+      customDateRange.end,
+    );
     if (!bounds) return sourceEvents;
 
     return sourceEvents.filter((event) => {
@@ -2508,6 +2564,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     filteredEvents,
     hasActiveSearch,
     selectedDateRange,
+    customDateRange,
   ]);
   const paginatedEvents = useMemo(() => {
     if (!hasActiveSearch && selectedDateRange === "all") return events;
@@ -2545,7 +2602,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     const newRowsPerPage = Number(e.target.value);
     if (!Number.isInteger(newRowsPerPage) || newRowsPerPage < 1) return;
 
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${selectedDayFilter}`;
     const cached = eventsCache.current[cacheKey];
 
     setRowsPerPage(newRowsPerPage);
@@ -2569,6 +2626,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     dateFilteredEvents.length,
     hasActiveSearch,
     selectedDateRange,
+    dateRangeCacheKey,
     selectedDayFilter,
     selectedEventTypeFilter,
     selectedStatus,
@@ -3356,7 +3414,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       setCurrentPage(page);
       if (hasActiveSearch || selectedDateRange !== "all") return;
 
-      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
+      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${selectedDayFilter}`;
       const cached = eventsCache.current[cacheKey];
 
       if (cached) {
@@ -3372,6 +3430,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       isLoading,
       rowsPerPage,
       selectedDateRange,
+      dateRangeCacheKey,
       selectedDayFilter,
       selectedEventTypeFilter,
       selectedStatus,
@@ -3595,7 +3654,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   );
   useEffect(() => {
     if (!selectedEventTypeFilter || !showingEvents) return;
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${selectedDayFilter}`;
     const cached = eventsCache.current[cacheKey];
 
     if (cached) {
@@ -3685,6 +3744,8 @@ const getFilteredEventTypes = (allEventTypes) => {
     selectedStatus,
     viewFilter,
     selectedDateRange,
+    customDateRange,
+    dateRangeCacheKey,
     selectedDayFilter,
     isAdmin,
     isRegistrant,
@@ -3839,21 +3900,20 @@ const getFilteredEventTypes = (allEventTypes) => {
             {status.label}
           </button>
         ))}
+        
         <select
                 aria-label="Filter events by date range"
                 value={selectedDateRange}
                 onChange={(event) => {
-                  // The fetch effect keys on selectedDateRange, so changing the
-                  // range immediately reloads from /events/cells or
-                  // /events/eventsdata with start_date + end_date.
                   setSelectedDateRange(event.target.value);
                   setCurrentPage(1);
                 }}
                 style={{
                   minWidth: isMobileView ? "100%" : "160px",
-                  padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
+                  height: "38px",
+                  // padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
                   border: `1px solid ${isDarkMode ? theme.palette.divider : "#ccc"}`,
-                  borderRadius: "4px",
+                  borderRadius: "10px",
                   backgroundColor: isDarkMode
                     ? theme.palette.background.paper
                     : "#fff",
@@ -3867,7 +3927,49 @@ const getFilteredEventTypes = (allEventTypes) => {
                 <option value="this-month">This month</option>
                 <option value="last-month">Last month</option>
                 <option value="last-3-months">Last 3 months</option>
+                <option value="custom">Custom range</option>
               </select>
+        
+        {selectedDateRange === "custom" && (
+          <>
+            <TextField
+              type="date"
+              size="small"
+              label="Start"
+              value={customDateRange.start}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (!value) return;
+                setCustomDateRange((previous) => ({
+                  start: value,
+                  end: value > previous.end ? value : previous.end,
+                }));
+                setCurrentPage(1);
+              }}
+              InputLabelProps={{ shrink: true }}
+              inputProps={{ max: customDateRange.end }}
+              sx={{ width: 158, "& .MuiInputBase-root": { height: 38 } }}
+            />
+            <TextField
+              type="date"
+              size="small"
+              label="End"
+              value={customDateRange.end}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (!value) return;
+                setCustomDateRange((previous) => ({
+                  start: value < previous.start ? value : previous.start,
+                  end: value,
+                }));
+                setCurrentPage(1);
+              }}
+              InputLabelProps={{ shrink: true }}
+              inputProps={{ min: customDateRange.start }}
+              sx={{ width: 158, "& .MuiInputBase-root": { height: 38 } }}
+            />
+          </>
+        )}
         {/* Integrated dropdown in download button - only shown when COMPLETE or DID NOT MEET selected */}
         {canDownload && (
           <div
@@ -4770,7 +4872,7 @@ const getTypeValue = (type) => {
                     flexWrap: "wrap",
                   }}
                 >
-                  <Box
+                  {/* <Box
                     role="group"
                     aria-label="Filter events by weekday"
                     sx={{
@@ -4844,7 +4946,7 @@ const getTypeValue = (type) => {
                         </Button>
                       );
                     })}
-                  </Box>
+                  </Box> */}
                   <StatusBadges
                     selectedStatus={selectedStatus}
                     setSelectedStatus={setSelectedStatus}
