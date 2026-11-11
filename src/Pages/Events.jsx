@@ -118,7 +118,7 @@ const styles = {
     paddingBottom: "70px",
   },
   statusBadge: {
-    padding: "0.6rem 1.2rem",
+    // padding: "0.6rem 1.2rem",
     borderRadius: "12px",
     fontSize: "0.9rem",
     fontWeight: "600",
@@ -134,8 +134,8 @@ const styles = {
     borderColor: "#333",
   },
   statusBadgeIncomplete: {
-    backgroundColor: "#FFA500",
-    color: "#fff",
+    backgroundColor: "#fff",
+    color: "#FFA500",
     borderColor: "#FFA500",
   },
   statusBadgeComplete: {
@@ -3883,7 +3883,11 @@ const getFilteredEventTypes = (allEventTypes) => {
               ...styles.statusBadge,
               ...status.style,
               ...(selectedStatus === status.value
-                ? styles.statusBadgeActive
+                ? {
+                    ...styles.statusBadgeActive,
+                    backgroundColor: status.style.borderColor,
+                    color: "#fff",
+                  }
                 : {}),
             }}
             onMouseDown={(e) => {
