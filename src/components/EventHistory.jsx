@@ -23,6 +23,7 @@ const EventHistory = React.memo(function EventHistory({
   onViewEventStats,
   events = [],
   isLoading = false,
+  isUnsaveLoading = false,
   onRefresh,
   searchTerm = "",
 }) {
@@ -282,6 +283,7 @@ const EventHistory = React.memo(function EventHistory({
                   disabled={!canUnsave}
                   onClick={() => handleUnsave(params.row)}
                   aria-label="Reopen event"
+                  loading={isUnsaveLoading}
                   sx={{
                     ...countButtonSx(!canUnsave),
                     minWidth: isSm ? 44 : 58,

@@ -11,9 +11,23 @@ export default defineConfig({
     devOptions: {
       enabled: true
     },
-      workbox: {
-    maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB
-  },
+    includeAssets: ['offline.html'],
+    workbox: {
+      maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      navigateFallback: '/index.html', // keeps your SPA working offline
+      runtimeCaching: [
+        {
+          urlPattern: ({ request }) => request.mode === 'navigate',
+          handler: 'NetworkFirst',
+          options: {
+            cacheName: 'pages',
+            plugins: [{
+              handlerDidError: async () => caches.match('/offline.html'),
+            }],
+          },
+        },
+      ],
+    },
     manifest: {
       name: 'Active Teams',
       short_name: 'Active Teams',
@@ -21,7 +35,7 @@ export default defineConfig({
       display:"standalone",
       lang:"en",
       scope:"/",
-      "background_color":"red",
+      "background_color":"black",
       "theme_color":"#ffffff",
      "icons": [
     {

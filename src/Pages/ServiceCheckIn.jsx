@@ -638,6 +638,7 @@ function ServiceCheckIn() {
             attendance: event.attendance,
             newPeople: event.new_people,
             consolidated: event.total_consolidation,
+            headcount: event.headcount ?? event.total_headcounts ?? null,
             attendanceData, newPeopleData, consolidatedData,
             location: event.location || event.Location || "",
             description: event.description || "",
@@ -1670,22 +1671,15 @@ function ServiceCheckIn() {
     }
 
     setIsClosingEvent(true);
-    let headcountSaved = false;
     try {
-      const headcountResponse = await authFetch(
-        `${BASE_URL}/events/${currentEvent.event_id}/headcount`,
+      const response = await authFetch(
+        `${BASE_URL}/events/${currentSessionId}/${currentEvent.event_id}/toggle-status`,
         {
-          method: "PUT",
+          method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ headcount: Number(headcountValue) }),
         },
       );
-      if (!headcountResponse.ok) {
-        throw new Error(`Headcount save failed: ${headcountResponse.status}`);
-      }
-      headcountSaved = true;
-
-      const response = await authFetch(`${BASE_URL}/events/${currentSessionId}/${currentEvent.event_id}/toggle-status`, { method: "PATCH" });
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
       if (result.already_closed)
@@ -1768,10 +1762,7 @@ function ServiceCheckIn() {
       }
       setTimeout(() => fetchEvents(), 500);
     } catch (error) {
-      if (!headcountSaved) {
-        console.error("Failed to save service headcount:", error);
-        toast.error("Failed to save headcount. The service remains open.");
-      } else if (error.message.includes("404")) toast.error("Event not found.");
+      if (error.message.includes("404")) toast.error("Event not found.");
       else if (error.message.includes("400")) toast.error("Invalid event ID.");
       else toast.error("Failed to close event. Please try again.");
     } finally {
@@ -1779,23 +1770,30 @@ function ServiceCheckIn() {
     }
   }, [currentSessionId, events, headcountValue, authFetch, fetchEvents, attendees, realTimeData?.attendanceData, realTimeData?.consolidation_count, realTimeData?.consolidations, realTimeData?.newPeople, realTimeData?.new_people, realTimeData?.new_people_count, realTimeData?.present_attendees, realTimeData?.present_count, attendanceCount, user?.email]);
 
+  const [isUnsaveLoading, setIsUnsaveLoading] = useState(false);
   const handleUnsaveEvent = useCallback(async (event) => {
     try {
-      const fullId = event.session_id
-      const baseId = cleanEventId(fullId);
-      const response = await authFetch(`${BASE_URL}/events/${fullId}/toggle-status`, { method: "PATCH" });
+      setIsUnsaveLoading(true);
+      const currentSessionId = event?.session_id 
+      if (!currentSessionId) { toast.error("Please select an event first"); return; }
+      const currentEvent = events.find(e => e.session_id === currentSessionId);
+      if (!currentEvent) { toast.error("Selected event not found"); return; }
+      
+      const response = await authFetch(`${BASE_URL}/events/${currentSessionId}/${currentEvent.event_id}/toggle-status`, { method: "PATCH" });
       if (!response.ok) { const e = await response.json(); throw new Error(e.detail || "HTTP error"); }
       const result = await response.json();
       if (result.action !== "reopened") { toast.error("Server did not reopen the event. Please try again."); return; }
       toast.success(`Event "${event.eventName}" has been reopened!`);
       setEvents(prev => prev.map(e =>
-        cleanEventId(e.id) === baseId
+        e.session_id === currentSessionId
           ? { ...e, status: "incomplete", closed_by: undefined, closed_at: undefined }
           : e
       ));
-      setCurrentSessionId(fullId);
+      setCurrentSessionId(currentSessionId);
       setTimeout(() => fetchEvents(), 1500);
+      setIsUnsaveLoading(false);
     } catch (error) { toast.error(error.message || "Failed to reopen event"); }
+    finally { setIsUnsaveLoading(false); }
   }, [authFetch, fetchEvents]);
 
   const handleConsolidationClick = useCallback(() => {
@@ -1952,7 +1950,12 @@ function ServiceCheckIn() {
       const eventData = payload && typeof payload === 'object' ? payload : {};
       setEventHistoryModal({
         open: true,
-        event: { ...row, eventName: row?.eventName || eventData?.event_name || "Event" },
+        event: {
+          ...row,
+          eventName: row?.eventName || eventData?.event_name || "Event",
+          // Prefer the headcount from the fresh session fetch; fall back to the row value.
+          headcount: eventData?.headcount ?? row?.headcount ?? null,
+        },
         type: type,
         data: eventData,
         // isLoading: false,
@@ -2437,6 +2440,7 @@ const mainColumns = useMemo(() => {
               onViewEventStats={handleViewEventStats}
               events={getFilteredClosedEvents()} searchTerm={eventSearch}
               isLoading={isLoadingEvents && events.length === 0 && isLoadingHistory}
+              isUnsaveLoading={isUnsaveLoading}
             />
           </Box>
         )}

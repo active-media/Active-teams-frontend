@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Offline — Active Teams</title>
+  <meta name="theme-color" content="#f3f2f7" />
+  <link rel="icon" href="/favicon-32x32.png" />
+  <!-- Same fonts as the app; falls back to system-ui silently when offline -->
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --accent: #1976d2;
+      --accent-soft: #1976d255;
+      --teal: #173d4a;
+      --teal-eyebrow: #a9e2ee;
+
+      --page: #f3f2f7;
+      --card: #ffffff;
+      --ink: #1c1b2e;
+      --mute: #6c6a80;
+      --line: #e3e1ec;
+      --card-border: rgba(23, 32, 42, 0.1);
+      --card-shadow: 0 24px 70px rgba(23, 32, 42, 0.14);
+      --grid-line: rgba(255, 255, 255, 0.08);
+      --circle-line: rgba(255, 255, 255, 0.2);
+      --dot-warn: #f59e0b;
+      --dot-ok: #2e7d32;
+    }
+
+    html[data-theme="dark"] {
+      --page: #0d0d14;
+      --card: #16161f;
+      --ink: #f1f0f8;
+      --mute: #9a98b0;
+      --line: #2a2a38;
+      --card-border: rgba(255, 255, 255, 0.09);
+      --card-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { margin: 0; padding: 0; min-height: 100%; }
+
+    body {
+      font-family: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      background: var(--page);
+      color: var(--ink);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      min-height: 100dvh;
+      padding: 24px;
+      padding-left: max(24px, env(safe-area-inset-left));
+      padding-right: max(24px, env(safe-area-inset-right));
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+    }
+
+    /* ---------- Card (mirrors the auth shell) ---------- */
+    .card {
+      width: min(420px, 100%);
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 24px;
+      box-shadow: var(--card-shadow);
+      overflow: hidden;
+      animation: cardIn 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(14px) scale(0.985); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    /* ---------- Teal cover (mirrors the auth media panel) ---------- */
+    .cover {
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+      background-color: var(--teal);
+      background-image:
+        linear-gradient(var(--grid-line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+      background-size: 32px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 44px 24px 40px;
+    }
+
+    .cover::before,
+    .cover::after {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      border: 1px solid var(--circle-line);
+      border-radius: 50%;
+      transform: rotate(-18deg);
+    }
+    .cover::before { width: 260px; height: 260px; top: -110px; right: -80px; }
+    .cover::after  { width: 180px; height: 180px; bottom: -80px; left: -60px; }
+
+    .badge {
+      position: relative;
+      width: 92px;
+      height: 92px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+    }
+
+    .badge::before,
+    .badge::after {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      opacity: 0;
+      animation: ripple 2.6s ease-out infinite;
+    }
+    .badge::after { animation-delay: 1.3s; }
+
+    @keyframes ripple {
+      0%   { transform: scale(1); opacity: 0.55; }
+      100% { transform: scale(1.65); opacity: 0; }
+    }
+
+    .badge svg { display: block; }
+
+    /* ---------- Body ---------- */
+    .body { padding: 28px 28px 26px; text-align: center; }
+
+    .eyebrow {
+      margin-bottom: 10px;
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-family: 'Bricolage Grotesque', 'Figtree', system-ui, sans-serif;
+      font-size: clamp(1.5rem, 5.5vw, 1.85rem);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+      color: var(--ink);
+    }
+
+    .lede {
+      margin: 0 0 18px;
+      color: var(--mute);
+      font-size: 0.92rem;
+      line-height: 1.6;
+    }
+
+    /* ---------- Status pill ---------- */
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      margin-bottom: 20px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--page);
+      color: var(--mute);
+      font-size: 0.78rem;
+      font-weight: 500;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--dot-warn);
+      flex: none;
+    }
+
+    .status.is-online .status-dot {
+      background: var(--dot-ok);
+      animation: none;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .status:not(.is-online) .status-dot {
+        animation: blink 1.8s ease-in-out infinite;
+      }
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.35; }
+    }
+
+    /* ---------- Button (mirrors primaryBtnSx) ---------- */
+    .retry {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-width: 168px;
+      height: 44px;
+      padding: 0 22px;
+      border: 0;
+      border-radius: 12px;
+      background: var(--accent);
+      color: #fff;
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 160ms ease, transform 120ms ease;
+    }
+    .retry:hover { background: #1565c0; }
+    .retry:active { transform: scale(0.985); }
+    .retry:focus-visible {
+      outline: 3px solid var(--accent-soft);
+      outline-offset: 1;
+    }
+
+    .hint {
+      margin: 14px 0 0;
+      color: var(--mute);
+      font-size: 0.75rem;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .card { animation: none; }
+      .badge::before, .badge::after { animation: none; opacity: 0; }
+      .retry { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="card" role="main">
+    <div class="cover" aria-hidden="true">
+      <div class="badge">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 1l22 22" />
+          <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" />
+          <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" />
+          <path d="M10.71 5.05A16 16 0 0 1 22.58 9" />
+          <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" />
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+          <path d="M12 20h.01" />
+        </svg>
+      </div>
+    </div>
+
+    <div class="body">
+      <div class="eyebrow">Active Teams</div>
+      <h1>You&rsquo;re offline</h1>
+      <p class="lede">It looks like your connection dropped. Check your network.</p>
+
+      <!-- <div class="status" id="status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="statusText">No connection &mdash; checking automatically</span>
+      </div> -->
+
+      <div>
+        <button class="retry" id="retry" type="button">Try again</button>
+      </div>
+
+      <p class="hint">The Active Church &middot; you belong.</p>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      // Theme: match the app's stored mode ("light"/"dark"), else system preference.
+      var theme = 'light';
+      try {
+        var stored = localStorage.getItem('themeMode');
+        if (stored === 'dark' || stored === 'light') {
+          theme = stored;
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          theme = 'dark';
+        }
+      } catch (e) { /* storage unavailable */ }
+
+      var root = document.documentElement;
+      root.setAttribute('data-theme', theme);
+
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', theme === 'dark' ? '#0d0d14' : '#f3f2f7');
+
+      // Reconnection handling: reload as soon as we're back online.
+      var statusEl = document.getElementById('status');
+      var statusText = document.getElementById('statusText');
+      var reloaded = false;
+
+      function goOnline() {
+        if (reloaded) return;
+        reloaded = true;
+        statusEl.classList.add('is-online');
+        statusText.textContent = 'Back online \u2014 reloading\u2026';
+        setTimeout(function () { location.reload(); }, 700);
+      }
+
+      function check() {
+        if (navigator.onLine) goOnline();
+      }
+
+      window.addEventListener('online', check);
+      // Belt and braces: the "online" event can be unreliable on some devices.
+      // setInterval(check, 8000);
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) check();
+      });
+      // check();
+
+      document.getElementById('retry').addEventListener('click', function () {
+        var btn = this;
+        btn.disabled = true;
+        btn.textContent = 'Retrying\u2026';
+        if (navigator.onLine) { goOnline(); return; }
+        setTimeout(function () {
+          btn.disabled = false;
+          btn.textContent = 'Try again';
+          statusText.textContent = 'Still offline \u2014 we\u2019ll keep checking';
+        }, 900);
+      });
+    })();
+  </script>
+</body>
+</html>
