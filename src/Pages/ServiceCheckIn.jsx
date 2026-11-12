@@ -1770,31 +1770,36 @@ function ServiceCheckIn() {
     }
   }, [currentSessionId, events, headcountValue, authFetch, fetchEvents, attendees, realTimeData?.attendanceData, realTimeData?.consolidation_count, realTimeData?.consolidations, realTimeData?.newPeople, realTimeData?.new_people, realTimeData?.new_people_count, realTimeData?.present_attendees, realTimeData?.present_count, attendanceCount, user?.email]);
 
-  const [isUnsaveLoading, setIsUnsaveLoading] = useState(false);
+  // session_id of the event currently being reopened. Drives the per-row
+  // Reopen loader in EventHistory; null when no reopen is in flight.
+  const [unsaveLoadingId, setUnsaveLoadingId] = useState(null);
   const handleUnsaveEvent = useCallback(async (event) => {
+    const targetSessionId = event?.session_id;
+    if (!targetSessionId) { toast.error("Please select an event first"); return; }
+    if (unsaveLoadingId) return; // one reopen at a time
+    const currentEvent = events.find(e => e.session_id === targetSessionId);
+    if (!currentEvent) { toast.error("Selected event not found"); return; }
+
+    setUnsaveLoadingId(targetSessionId);
     try {
-      setIsUnsaveLoading(true);
-      const currentSessionId = event?.session_id 
-      if (!currentSessionId) { toast.error("Please select an event first"); return; }
-      const currentEvent = events.find(e => e.session_id === currentSessionId);
-      if (!currentEvent) { toast.error("Selected event not found"); return; }
-      
-      const response = await authFetch(`${BASE_URL}/events/${currentSessionId}/${currentEvent.event_id}/toggle-status`, { method: "PATCH" });
+      const response = await authFetch(`${BASE_URL}/events/${targetSessionId}/${currentEvent.event_id}/toggle-status`, { method: "PATCH" });
       if (!response.ok) { const e = await response.json(); throw new Error(e.detail || "HTTP error"); }
       const result = await response.json();
       if (result.action !== "reopened") { toast.error("Server did not reopen the event. Please try again."); return; }
       toast.success(`Event "${event.eventName}" has been reopened!`);
       setEvents(prev => prev.map(e =>
-        e.session_id === currentSessionId
+        e.session_id === targetSessionId
           ? { ...e, status: "incomplete", closed_by: undefined, closed_at: undefined }
           : e
       ));
-      setCurrentSessionId(currentSessionId);
+      setCurrentSessionId(targetSessionId);
       setTimeout(() => fetchEvents(), 1500);
-      setIsUnsaveLoading(false);
-    } catch (error) { toast.error(error.message || "Failed to reopen event"); }
-    finally { setIsUnsaveLoading(false); }
-  }, [authFetch, fetchEvents]);
+    } catch (error) {
+      toast.error(error.message || "Failed to reopen event");
+    } finally {
+      setUnsaveLoadingId(null);
+    }
+  }, [authFetch, fetchEvents, events, unsaveLoadingId]);
 
   const handleConsolidationClick = useCallback(() => {
     if (!currentSessionId) { toast.error("Please select an event first"); return; }
@@ -2440,7 +2445,7 @@ const mainColumns = useMemo(() => {
               onViewEventStats={handleViewEventStats}
               events={getFilteredClosedEvents()} searchTerm={eventSearch}
               isLoading={isLoadingEvents && events.length === 0 && isLoadingHistory}
-              isUnsaveLoading={isUnsaveLoading}
+              unsaveLoadingId={unsaveLoadingId}
             />
           </Box>
         )}

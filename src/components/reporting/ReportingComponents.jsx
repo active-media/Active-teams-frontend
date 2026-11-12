@@ -361,7 +361,7 @@ export function NewScheduleModal({ open, onClose, onSubmit }) {
         <Stack spacing={2} sx={{ mt: 1 }}>
           <FormControl fullWidth>
             <InputLabel id="report-type-label" sx={{ color: '#B7BEC9' }}>Report type</InputLabel>
-            <Select
+            <Select 
               labelId="report-type-label"
               value={form.reportType}
               label="Report type"
