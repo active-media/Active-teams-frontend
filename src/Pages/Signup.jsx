@@ -1,4 +1,4 @@
-import React, { useState, useContext, useEffect } from "react";
+import React, { useState, useContext, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Box,
@@ -13,8 +13,14 @@ import {
   Alert,
   Paper,
   InputLabel,
+  Avatar,
+  Stack,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
+import {
+  Business as BusinessIcon,
+  PhotoCamera as PhotoCameraIcon,
+} from "@mui/icons-material";
 import { UserContext } from "../contexts/UserContext";
 import { AuthContext, supabase } from "../contexts/AuthContext";
 import { ToastContainer, toast } from "react-toastify";
@@ -159,6 +165,10 @@ const Signup = ({ onSignup, mode }) => {
   const [organizations, setOrganizations] = useState([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
   const [orgsError, setOrgsError] = useState("");
+  const [orgLogoPreview, setOrgLogoPreview] = useState("");
+  const [orgLogoDataUrl, setOrgLogoDataUrl] = useState(null);
+  const [orgLogoError, setOrgLogoError] = useState("");
+  const orgLogoInputRef = useRef(null);
 
   const [orgUsers, setOrgUsers] = useState([]);
   const [orgUsersLoading, setOrgUsersLoading] = useState(false);
@@ -175,6 +185,16 @@ const Signup = ({ onSignup, mode }) => {
   const hasErrors = Object.values(errors).some(Boolean);
   const passwordMismatch =
     form.confirm_password.length > 0 && form.confirm_password !== form.password;
+
+  const typedOrganization = form.organization?.trim() || "";
+  const organizationExists = organizations.some(
+    (o) =>
+      String(o.name || "")
+        .trim()
+        .toLowerCase() === typedOrganization.toLowerCase(),
+  );
+  const isCreatingOrganization =
+    Boolean(typedOrganization) && !orgsLoading && !organizationExists;
 
   useEffect(() => {
     const fetchOrgs = async () => {
@@ -381,6 +401,43 @@ const Signup = ({ onSignup, mode }) => {
     if (errors.gender) setErrors((prev) => ({ ...prev, gender: "" }));
   };
 
+  const handleOrganizationLogoChange = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setOrgLogoError("Please choose an image file");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setOrgLogoError("Logo must be 2 MB or smaller");
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const result = String(reader.result || "");
+      setOrgLogoDataUrl(result);
+      setOrgLogoPreview(result);
+      setOrgLogoError("");
+    });
+    reader.addEventListener("error", () =>
+      setOrgLogoError("Could not read that image"),
+    );
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveOrganizationLogo = () => {
+    setOrgLogoPreview("");
+    setOrgLogoDataUrl(null);
+    setOrgLogoError("");
+  };
+
+  const resetOrganizationLogo = () => {
+    setOrgLogoPreview("");
+    setOrgLogoDataUrl(null);
+    setOrgLogoError("");
+  };
+
   const getUserLabel = (user) => {
     if (typeof user === "string") return user;
     const full = [user.name, user.surname].filter(Boolean).join(" ");
@@ -399,12 +456,21 @@ const Signup = ({ onSignup, mode }) => {
       //   password: form.password,
       // });
       const url = `${import.meta.env.VITE_BACKEND_URL}/signup`;
+      const payload = {
+        ...form,
+        ...(isCreatingOrganization
+          ? {
+              create_organization: true,
+              ...(orgLogoDataUrl ? { organization_logo: orgLogoDataUrl } : {}),
+            }
+          : {}),
+      };
       const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       }); 
       const authResult = await res.json();
       console.log("Signup response:", authResult);
@@ -484,6 +550,7 @@ const Signup = ({ onSignup, mode }) => {
         setSelectedInvitedBy(null);
         setAddressOptions([]);
         setOrgUsers([]);
+        resetOrganizationLogo();
         navigate("/");
       }, 2000);
     } catch (err) {
@@ -784,59 +851,131 @@ const Signup = ({ onSignup, mode }) => {
               />
             </Box>
 
-            <FormControl fullWidth error={!!errors.organization}>
-              <Autocomplete
-                freeSolo
-                options={organizations}
-                value={
-                  organizations.find((o) => o.name === form.organization) ||
-                  null
-                }
-                inputValue={form.organization}
-                onInputChange={(_e, v) => {
-                  setForm((p) => ({ ...p, organization: v }));
-                  if (errors.organization)
-                    setErrors((p) => ({ ...p, organization: "" }));
-                }}
-                onChange={(_e, v) => {
-                  setForm((p) => ({ ...p, organization: v?.name || v || "" }));
-                  if (errors.organization)
-                    setErrors((p) => ({ ...p, organization: "" }));
-                }}
-                getOptionLabel={(o) =>
-                  typeof o === "string" ? o : o.name || ""
-                }
-                loading={orgsLoading}
-                {...dropdownSx}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Organization / Church"
-                    error={!!errors.organization}
-                    helperText={
-                      errors.organization ||
-                      orgsError ||
-                      (orgsLoading
-                        ? "Loading…"
-                        : "Select or type your organization")
-                    }
-                    fullWidth
-                    InputProps={{
-                      ...params.InputProps,
-                      endAdornment: (
-                        <>
-                          {orgsLoading ? (
-                            <CircularProgress color="inherit" size={20} />
-                          ) : null}
-                          {params.InputProps.endAdornment}
-                        </>
-                      ),
-                    }}
-                    sx={errFieldSx("organization")}
-                  />
-                )}
-              />
-            </FormControl>
+            <Box sx={{ gridColumn: "1 / -1" }}>
+              <FormControl fullWidth error={!!errors.organization}>
+                <Autocomplete
+                  freeSolo
+                  options={organizations}
+                  value={
+                    organizations.find((o) => o.name === form.organization) ||
+                    null
+                  }
+                  inputValue={form.organization}
+                  onInputChange={(_e, v) => {
+                    setForm((p) => ({ ...p, organization: v }));
+                    resetOrganizationLogo();
+                    if (errors.organization)
+                      setErrors((p) => ({ ...p, organization: "" }));
+                  }}
+                  onChange={(_e, v) => {
+                    setForm((p) => ({
+                      ...p,
+                      organization: v?.name || v || "",
+                    }));
+                    resetOrganizationLogo();
+                    if (errors.organization)
+                      setErrors((p) => ({ ...p, organization: "" }));
+                  }}
+                  getOptionLabel={(o) =>
+                    typeof o === "string" ? o : o.name || ""
+                  }
+                  loading={orgsLoading}
+                  {...dropdownSx}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Organization / Church"
+                      error={!!errors.organization}
+                      helperText={
+                        errors.organization ||
+                        orgsError ||
+                        (orgsLoading
+                          ? "Loading…"
+                          : "Select or type your organization")
+                      }
+                      fullWidth
+                      InputProps={{
+                        ...params.InputProps,
+                        endAdornment: (
+                          <>
+                            {orgsLoading ? (
+                              <CircularProgress color="inherit" size={20} />
+                            ) : null}
+                            {params.InputProps.endAdornment}
+                          </>
+                        ),
+                      }}
+                      sx={errFieldSx("organization")}
+                    />
+                  )}
+                />
+              </FormControl>
+
+              {isCreatingOrganization && (
+                <Box sx={{ mt: 1.5 }}>
+                  <Alert severity="info" sx={{ mb: 1.5 }}>
+                    “{typedOrganization}” isn’t in the list yet. It will be
+                    created when you sign up.
+                  </Alert>
+                  <Stack
+                    direction="row"
+                    spacing={2}
+                    alignItems="center"
+                    flexWrap="wrap"
+                  >
+                    <Avatar
+                      variant="rounded"
+                      src={orgLogoPreview || undefined}
+                      onClick={() => orgLogoInputRef.current?.click()}
+                      sx={{
+                        width: 64,
+                        height: 64,
+                        bgcolor: "action.hover",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <BusinessIcon />
+                    </Avatar>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<PhotoCameraIcon />}
+                      onClick={() => orgLogoInputRef.current?.click()}
+                    >
+                      {orgLogoPreview ? "Change logo" : "Upload logo"}
+                    </Button>
+                    <input
+                      ref={orgLogoInputRef}
+                      hidden
+                      accept="image/*"
+                      type="file"
+                      onChange={handleOrganizationLogoChange}
+                    />
+                    {orgLogoPreview && (
+                      <Button
+                        color="error"
+                        size="small"
+                        onClick={handleRemoveOrganizationLogo}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </Stack>
+                  {orgLogoError && (
+                    <Typography variant="caption" color="error">
+                      {orgLogoError}
+                    </Typography>
+                  )}
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                  >
+                    Optional. PNG, JPG, GIF, WEBP or SVG up to 2 MB.
+                  </Typography>
+                </Box>
+              )}
+            </Box>
 
             <FormControl fullWidth>
               <Autocomplete

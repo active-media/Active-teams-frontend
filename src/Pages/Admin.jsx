@@ -24,7 +24,8 @@ import {
   Handshake as HandshakeIcon,
   LocalPolice as SecurityIcon,
   Coffee as CoffeeIcon,
-  Phone as PhoneIcon
+  Phone as PhoneIcon,
+  PhotoCamera as PhotoCameraIcon
 } from '@mui/icons-material';
 import NewUserModal from '../components/NewUserModal';
 
@@ -52,16 +53,20 @@ export default function AdminDashboard() {
   const isSupremeAdmin = currentUser?.is_supreme_admin === true;
   const isAdmin = currentUser?.role === "admin";
 
-  const isXsDown = useMediaQuery(theme.breakpoints.down("xs"));
-  const isSmDown = useMediaQuery(theme.breakpoints.down("sm"));
-  const isMdDown = useMediaQuery(theme.breakpoints.down("md"));
-  const isLgDown = useMediaQuery(theme.breakpoints.down("lg"));
+  // MUI's breakpoints.down(key) resolves to the range *below* that key, so
+  // down("xs") is max-width:-0.05px and never matches. Query the next
+  // breakpoint up to get the real range for each tier:
+  //   xs: <600px, sm: <900px, md: <1200px, lg: <1536px
+  const isXsDown = useMediaQuery(theme.breakpoints.down("sm"));
+  const isSmDown = useMediaQuery(theme.breakpoints.down("md"));
+  const isMdDown = useMediaQuery(theme.breakpoints.down("lg"));
+  const isLgDown = useMediaQuery(theme.breakpoints.down("xl"));
 
   const getResponsiveValue = (xs, sm, md, lg, xl) => {
     if (isXsDown) return xs;
     if (isSmDown) return sm;
     if (isMdDown) return md;
-    if (isLgDown) return xl;
+    if (isLgDown) return lg;
     return xl;
   };
 
@@ -103,6 +108,11 @@ export default function AdminDashboard() {
   const [editingOrg, setEditingOrg] = useState(null);
   const [orgFormData, setOrgFormData] = useState({ name: '' });
   const [orgFormErrors, setOrgFormErrors] = useState({});
+  const [orgLogoPreview, setOrgLogoPreview] = useState('');
+  const [orgLogoDataUrl, setOrgLogoDataUrl] = useState(null);
+  const [orgLogoRemoved, setOrgLogoRemoved] = useState(false);
+  const [orgLogoError, setOrgLogoError] = useState('');
+  const orgLogoInputRef = useRef(null);
   const [savingOrg, setSavingOrg] = useState(false);
   const [deletingOrg, setDeletingOrg] = useState(false);
   const [page, setPage] = useState(0);
@@ -261,13 +271,14 @@ export default function AdminDashboard() {
     if (!isSupremeAdmin) return;
     setLoadingOrgs(true);
     try {
-      const res = await authFetch(`${API_BASE_URL}/organizations`, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
+      const res = await authFetch(`${API_BASE_URL}/organizations`, { method: 'GET', headers: { 'Content-Type': 'application/json' }, cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
       const orgs = (data.organizations || []).map(o => ({
         id: o._id || o.id, _id: o._id || o.id,
         name: o.name, address: o.address, phone: o.phone,
-        email: o.email, user_count: o.user_count || 0, created_at: o.created_at
+        email: o.email, logo: o.logo || '', description: o.description || '',
+        user_count: o.user_count || 0, created_at: o.created_at
       }));
       if (mountedRef.current) setOrganizations(orgs);
     } catch (e) {
@@ -322,7 +333,10 @@ export default function AdminDashboard() {
     if (activeTab === 2) {
       fetchActivityLog();
     }
-  }, [activeTab, fetchActivityLog]);
+    if (activeTab === 3 && isSupremeAdmin) {
+      fetchOrgs();
+    }
+  }, [activeTab, fetchActivityLog, fetchOrgs, isSupremeAdmin]);
 
   // ─── org switch ─────────────────────────────────────────────────────────────
   const handleOrgChange = useCallback((orgName) => {
@@ -571,17 +585,31 @@ export default function AdminDashboard() {
   // Mobile card for a user (used when the table is hidden on small screens)
   const UserCard = ({ user }) => (
     <Card sx={{ ...cardStyles, mb: 1 }}>
-      <CardContent>
-        <Stack direction="row" spacing={2} alignItems="center">
-          <Avatar sx={{ bgcolor: '#9c27b0' }}>{getInitials(user.name)}</Avatar>
+      <CardContent sx={{ p: { xs: 1.5, sm: 2 }, '&:last-child': { pb: { xs: 1.5, sm: 2 } } }}>
+        <Stack direction="row" spacing={1.5} alignItems="flex-start">
+          <Avatar sx={{ bgcolor: '#9c27b0', flexShrink: 0 }}>{getInitials(user.name)}</Avatar>
           <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography variant="body1" fontWeight="medium" noWrap>{user.name}</Typography>
-            <Typography variant="body2" color="text.secondary" noWrap>{user.email}</Typography>
-            <Chip label={getRoleDisplay(user.role)} color={getRoleColor(user.role)} size="small" sx={{ mt: 0.5 }} />
+            <Typography variant="body1" fontWeight="medium" noWrap sx={{ overflowWrap: 'anywhere' }}>{user.name}</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{user.email}</Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
+              <Chip label={getRoleDisplay(user.role)} color={getRoleColor(user.role)} size="small" />
+              {user.phoneNumber && <Chip label={user.phoneNumber} variant="outlined" size="small" />}
+              {user.createdAt && <Chip label={new Date(user.createdAt).toLocaleDateString()} variant="outlined" size="small" />}
+              {isSupremeAdmin && user.organization && <Chip label={user.organization} variant="outlined" size="small" sx={{ maxWidth: '100%' }} />}
+            </Stack>
           </Box>
-          <Stack direction="row">
-            <IconButton size="small" onClick={() => { setSelectedUser(user); setShowRoleModal(true); }}><EditIcon /></IconButton>
-            <IconButton size="small" color="error" onClick={() => { setSelectedUser(user); setShowDeleteConfirm(true); }}><Delete /></IconButton>
+          <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
+            <Tooltip title="Change Role">
+              <IconButton size="small" onClick={() => { setSelectedUser(user); setShowRoleModal(true); }}><EditIcon /></IconButton>
+            </Tooltip>
+            {isSupremeAdmin && (
+              <Tooltip title={`Make admin of ${selectedOrg}`}>
+                <IconButton size="small" disabled={user.role === 'admin' || updatingRole} onClick={() => handleMakeAdmin(user)}><AdminPanelSettings /></IconButton>
+              </Tooltip>
+            )}
+            <Tooltip title="Delete user">
+              <IconButton size="small" color="error" onClick={() => { setSelectedUser(user); setShowDeleteConfirm(true); }}><Delete /></IconButton>
+            </Tooltip>
           </Stack>
         </Stack>
       </CardContent>
@@ -589,10 +617,18 @@ export default function AdminDashboard() {
   );
 
   // ─── organization handlers (super admin) ────────────────
+  const resetOrgLogo = (logo) => {
+    setOrgLogoPreview(logo || '');
+    setOrgLogoDataUrl(null);
+    setOrgLogoRemoved(false);
+    setOrgLogoError('');
+  };
+
   const handleOpenCreateOrg = () => {
     setEditingOrg(null);
     setOrgFormData({ name: '' });
     setOrgFormErrors({});
+    resetOrgLogo('');
     setShowOrgModal(true);
     setOrgAnchorEl(null);
   };
@@ -601,8 +637,40 @@ export default function AdminDashboard() {
     setEditingOrg(org);
     setOrgFormData({ name: org.name || '' });
     setOrgFormErrors({});
+    resetOrgLogo(org.logo || '');
     setShowOrgModal(true);
     setOrgAnchorEl(null);
+  };
+
+  const handleOrgLogoChange = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setOrgLogoError('Please choose an image file');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setOrgLogoError('Logo must be 2 MB or smaller');
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      const result = String(reader.result || '');
+      setOrgLogoDataUrl(result);
+      setOrgLogoPreview(result);
+      setOrgLogoRemoved(false);
+      setOrgLogoError('');
+    });
+    reader.addEventListener('error', () => setOrgLogoError('Could not read that image'));
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveOrgLogo = () => {
+    setOrgLogoPreview('');
+    setOrgLogoDataUrl(null);
+    setOrgLogoRemoved(true);
+    setOrgLogoError('');
   };
 
   const handleSaveOrganization = async () => {
@@ -611,16 +679,33 @@ export default function AdminDashboard() {
     setSavingOrg(true);
     try {
       const id = editingOrg ? (editingOrg.id || editingOrg._id) : null;
+      const payload = { name };
+      if (orgLogoDataUrl) payload.logo = orgLogoDataUrl;
+      else if (orgLogoRemoved) payload.logo = '';
       const res = await authFetch(
         id ? `${API_BASE_URL}/organizations/${id}` : `${API_BASE_URL}/organizations`,
-        { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }
+        { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
       );
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to save organization'); }
+      const body = await res.json().catch(() => ({}));
+      const saved = body.organization;
+      if (saved?._id) {
+        setOrganizations(prev => prev.map(o => {
+          if ((o.id || o._id) !== saved._id) return o;
+          return {
+            ...o,
+            name: saved.name ?? o.name,
+            description: saved.description ?? o.description,
+            logo: Object.prototype.hasOwnProperty.call(saved, 'logo') ? (saved.logo || '') : o.logo,
+          };
+        }));
+      }
       addActivityLog(id ? 'ORG_UPDATED' : 'ORG_CREATED', `${id ? 'Updated' : 'Created'} organization: ${name}`);
       setShowOrgModal(false);
       setEditingOrg(null);
       await fetchOrgs();
-    } catch (e) { setOrgFormErrors({ name: e.message }); }
+      if (body.logo_warning) alert(body.logo_warning);
+    } catch (e) { setOrgFormErrors({ form: e.message }); }
     finally { setSavingOrg(false); }
   };
 
@@ -726,31 +811,37 @@ export default function AdminDashboard() {
   };
 
   // ===== render ────────────────
+  const selectedOrgLogo = organizations.find(o => o.name === selectedOrg)?.logo || '';
   return (
-    <Box padding={containerPadding} sx={{ maxWidth: "1400px", margin: "0 auto", mt: getResponsiveValue(2,3,4,5,5), minHeight: "100vh" }}>
+    <Box sx={{ p: containerPadding, maxWidth: "1400px", margin: "0 auto", mt: getResponsiveValue(2,3,4,5,5), minHeight: "100vh", pb: getResponsiveValue(12,12,10,8,8) }}>
 
       {/* Header */}
-      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Typography variant="h4" fontWeight="bold">Admin Dashboard</Typography>
-          {selectedOrg && <Chip icon={<BusinessIcon />} label={selectedOrg} color="primary" variant="outlined" />}
+      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'stretch', sm: 'center' }, flexDirection: { xs: 'column', sm: 'row' }, flexWrap: 'wrap', gap: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1, sm: 2 }, flexWrap: 'wrap', minWidth: 0 }}>
+          <Typography variant="h4" fontWeight="bold" sx={{ fontSize: { xs: '1.5rem', sm: '1.75rem', md: '2.125rem' }, lineHeight: 1.2 }}>Admin Dashboard</Typography>
+          {selectedOrg && <Chip icon={selectedOrgLogo ? <Avatar src={selectedOrgLogo} sx={{ width: 20, height: 20 }} /> : <BusinessIcon />} label={selectedOrg} color="primary" variant="outlined" sx={{ maxWidth: '100%' }} />}
           {isSupremeAdmin && <Chip icon={<AdminPanelSettings />} label="Super Admin" color="error" size="small" />}
         </Box>
         {isSupremeAdmin && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Button variant="outlined" onClick={(e) => setOrgAnchorEl(e.currentTarget)} startIcon={<BusinessIcon />} endIcon={<ArrowDropDown />} sx={{ boxShadow: 1, borderRadius: 2, minWidth: 200, justifyContent: 'space-between' }}>
-              {selectedOrg || 'Active Church'}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: { xs: '100%', sm: 'auto' } }}>
+            <Button variant="outlined" onClick={(e) => setOrgAnchorEl(e.currentTarget)} startIcon={selectedOrgLogo ? <Avatar src={selectedOrgLogo} sx={{ width: 24, height: 24 }} /> : <BusinessIcon />} endIcon={<ArrowDropDown />} sx={{ boxShadow: 1, borderRadius: 2, width: { xs: '100%', sm: 'auto' }, minWidth: { sm: 200 }, maxWidth: '100%', justifyContent: 'space-between', '& .MuiButton-startIcon': { mr: 1 } }}>
+              <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedOrg || 'Active Church'}</Box>
             </Button>
-            <Menu anchorEl={orgAnchorEl} open={Boolean(orgAnchorEl)} onClose={() => setOrgAnchorEl(null)} PaperProps={{ sx: { maxHeight: 400, width: 300 } }}>
+            <Menu anchorEl={orgAnchorEl} open={Boolean(orgAnchorEl)} onClose={() => setOrgAnchorEl(null)} PaperProps={{ sx: { maxHeight: 400, width: 'min(300px, calc(100vw - 32px))' } }}>
               {organizations.map(org => (
                 <MenuItem key={org.id || org._id} onClick={() => handleOrgChange(org.name)} selected={selectedOrg === org.name} sx={{ flexDirection: 'column', alignItems: 'flex-start', py: 1.5 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', mb: 0.5 }}>
-                    <Typography variant="body2" fontWeight="medium">{org.name}</Typography>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%', mb: 0.5, gap: 1, alignItems: 'center' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                      <Avatar src={org.logo || undefined} sx={{ width: 28, height: 28, bgcolor: 'primary.main' }}>
+                        <BusinessIcon sx={{ fontSize: 18 }} />
+                      </Avatar>
+                      <Typography variant="body2" fontWeight="medium" noWrap sx={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{org.name}</Typography>
+                    </Box>
                     <Badge badgeContent={org.user_count} color="primary" max={999} />
                   </Box>
-                  <Box sx={{ display: 'flex', gap: 1, width: '100%' }}>
-                    <Typography variant="caption" color="text.secondary" noWrap>{org.email}</Typography>
-                    <IconButton size="small" onClick={(e) => { e.stopPropagation(); handleOpenEditOrg(org); }} sx={{ ml: 'auto' }}><EditIcon /></IconButton>
+                  <Box sx={{ display: 'flex', gap: 1, width: '100%', alignItems: 'center' }}>
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{org.email}</Typography>
+                    <IconButton size="small" onClick={(e) => { e.stopPropagation(); handleOpenEditOrg(org); }} sx={{ ml: 'auto', flexShrink: 0 }}><EditIcon /></IconButton>
                   </Box>
                 </MenuItem>
               ))}
@@ -765,12 +856,12 @@ export default function AdminDashboard() {
 
       {/* Stats cards */}
       <Grid container spacing={cardSpacing} sx={{ mb: cardSpacing }}>
-        <Grid item xs={6} sm={4} md={2}>
+        <Grid size={{ xs: 6, sm: 4, md: 2 }}>
           <Card sx={cardStyles}>
             <CardContent sx={{ textAlign: 'center', p: getResponsiveValue(1.5,2,2.5,3,3) }}>
-              <Avatar sx={{ bgcolor: '#2196f3', width: 56, height: 56, mb: 2, mx: 'auto', boxShadow: 2 }}><People /></Avatar>
-              <Typography variant="h4" fontWeight="bold">{totalUsers}</Typography>
-              <Typography variant="body2" color="text.secondary">Total People</Typography>
+              <Avatar sx={{ bgcolor: '#2196f3', width: { xs: 40, sm: 48, md: 56 }, height: { xs: 40, sm: 48, md: 56 }, mb: { xs: 1, sm: 2 }, mx: 'auto', boxShadow: 2 }}><People /></Avatar>
+              <Typography variant="h4" fontWeight="bold" sx={{ fontSize: { xs: '1.5rem', sm: '2rem', md: '2.125rem' }, overflowWrap: 'anywhere' }}>{totalUsers}</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>Total People</Typography>
             </CardContent>
           </Card>
         </Grid>
@@ -787,9 +878,9 @@ export default function AdminDashboard() {
               <Grid size={{ xs: 6, sm: 4, md: 2 }} key={role}>
                 <Card sx={cardStyles}>
                   <CardContent sx={{ textAlign: 'center', p: getResponsiveValue(1.5,2,2.5,3,3) }}>
-                    <Avatar sx={{ bgcolor: color, width: 56, height: 56, mb: 2, mx: 'auto', boxShadow: 2 }}>{icon}</Avatar>
-                    <Typography variant="h4" fontWeight="bold">{roleStats[role] || 0}</Typography>
-                    <Typography variant="body2" color="text.secondary">{role}</Typography>
+                    <Avatar sx={{ bgcolor: color, width: { xs: 40, sm: 48, md: 56 }, height: { xs: 40, sm: 48, md: 56 }, mb: { xs: 1, sm: 2 }, mx: 'auto', boxShadow: 2 }}>{icon}</Avatar>
+                    <Typography variant="h4" fontWeight="bold" sx={{ fontSize: { xs: '1.5rem', sm: '2rem', md: '2.125rem' }, overflowWrap: 'anywhere' }}>{roleStats[role] || 0}</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{role}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
@@ -799,9 +890,9 @@ export default function AdminDashboard() {
             <Grid size={{ xs: 6, sm: 4, md: 2 }} key={role}>
               <Card sx={cardStyles}>
                 <CardContent sx={{ textAlign: 'center', p: getResponsiveValue(1.5,2,2.5,3,3) }}>
-                  <Avatar sx={{ bgcolor: roleCardColors[i % roleCardColors.length], width: 56, height: 56, mb: 2, mx: 'auto', boxShadow: 2 }}>{getRoleIcon(role)}</Avatar>
-                  <Typography variant="h4" fontWeight="bold">{count}</Typography>
-                  <Typography variant="body2" color="text.secondary">{role}</Typography>
+                  <Avatar sx={{ bgcolor: roleCardColors[i % roleCardColors.length], width: { xs: 40, sm: 48, md: 56 }, height: { xs: 40, sm: 48, md: 56 }, mb: { xs: 1, sm: 2 }, mx: 'auto', boxShadow: 2 }}>{getRoleIcon(role)}</Avatar>
+                  <Typography variant="h4" fontWeight="bold" sx={{ fontSize: { xs: '1.5rem', sm: '2rem', md: '2.125rem' }, overflowWrap: 'anywhere' }}>{count}</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{role}</Typography>
                 </CardContent>
               </Card>
             </Grid>
@@ -811,17 +902,24 @@ export default function AdminDashboard() {
 
       {/* Main panel */}
       <Paper sx={{ boxShadow: 3, borderRadius: 2, overflow: 'hidden' }}>
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: getResponsiveValue('column','column','row','row','row'), justifyContent: 'space-between', alignItems: getResponsiveValue('stretch','stretch','center','center','center'), p: 2, gap: getResponsiveValue(2,2,0,0,0) }}>
-          <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} variant={isMdDown ? "fullWidth" : "standard"}>
+        <Box sx={{ borderBottom: 1, borderColor: 'divider', display: 'flex', flexDirection: { xs: 'column', md: 'row' }, justifyContent: 'space-between', alignItems: { xs: 'stretch', md: 'center' }, p: { xs: 1, sm: 2 }, gap: { xs: 1.5, md: 2 } }}>
+          <Tabs
+            value={activeTab}
+            onChange={(_, v) => setActiveTab(v)}
+            variant={isMdDown ? "scrollable" : "standard"}
+            scrollButtons="auto"
+            allowScrollButtonsMobile
+            sx={{ minWidth: 0, '& .MuiTab-root': { minWidth: 0, px: { xs: 1.5, sm: 2 }, whiteSpace: 'nowrap' } }}
+          >
             <Tab value={0} label="USERS" sx={{ fontWeight: 600 }} />
             <Tab value={1} label="ROLES & PERMISSIONS" sx={{ fontWeight: 600 }} />
             <Tab value={2} label="ACTIVITY LOG" sx={{ fontWeight: 600 }} />
             {isSupremeAdmin && <Tab value={3} label="ORGANIZATIONS" sx={{ fontWeight: 600 }} />}
             <Tab value={4} label="TARGETS" sx={{ fontWeight: 600 }} />
           </Tabs>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button variant="outlined" startIcon={<Refresh />} onClick={handleManualRefresh} sx={{ boxShadow: 1, borderRadius: 2, height: 40 }} size={getResponsiveValue("small","small","medium","medium","medium")}>Refresh</Button>
-            {isSupremeAdmin && <Button variant="contained" startIcon={<AdminPanelSettings />} onClick={() => setShowSupremeAdminModal(true)} sx={{ boxShadow: 1, borderRadius: 2, height: 40 }} size={getResponsiveValue("small","small","medium","medium","medium")}>Add Supreme</Button>}
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <Button variant="outlined" startIcon={<Refresh />} onClick={handleManualRefresh} sx={{ boxShadow: 1, borderRadius: 2, height: 40, flex: { xs: '1 1 auto', sm: 'none' } }} size={getResponsiveValue("small","small","medium","medium","medium")}>Refresh</Button>
+            {isSupremeAdmin && <Button variant="contained" startIcon={<AdminPanelSettings />} onClick={() => setShowSupremeAdminModal(true)} sx={{ boxShadow: 1, borderRadius: 2, height: 40, flex: { xs: '1 1 auto', sm: 'none' } }} size={getResponsiveValue("small","small","medium","medium","medium")}>Add Supreme</Button>}
           </Box>
         </Box>
 
@@ -847,7 +945,7 @@ export default function AdminDashboard() {
             </Box>
           ) : isMdDown ? (
             <Box>
-              <Box sx={{ maxHeight: 500, overflowY: "auto", border: `1px solid ${theme.palette.divider}`, borderRadius: 1, p: 1 }}>
+              <Box sx={{ maxHeight: 500, overflowY: "auto", border: `1px solid ${theme.palette.divider}`, borderRadius: 1, p: 1, pb: 9 }}>
                 {paginatedUsers.map(u => <UserCard key={u.id} user={u} />)}
               </Box>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>Showing {filteredUsers.length} of {totalUsers} users</Typography>
@@ -855,47 +953,47 @@ export default function AdminDashboard() {
           ) : (
             <Box>
               <TableContainer sx={{ maxHeight: 500, boxShadow: 1, borderRadius: 1 }}>
-                <Table stickyHeader size={getResponsiveValue("small","small","medium","medium","medium")}>
+                <Table stickyHeader size={getResponsiveValue("small","small","medium","medium","medium")} sx={{ minWidth: 720 }}>
                   <TableHead>
                     <TableRow>
                       {['User','Role','Phone','Created', ...(isSupremeAdmin ? ['Organization'] : []),'Actions'].map(h => (
                         <TableCell key={h} align={h === 'Actions' ? 'right' : 'left'} sx={{ fontWeight: 'bold', backgroundColor: 'background.paper' }}>{h}</TableCell>
                       ))}
                     </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {paginatedUsers.map(user => (
-                        <TableRow key={user.id} hover>
-                          <TableCell>
-                            <Stack direction="row" spacing={2} alignItems="center">
-                              <Avatar sx={{ bgcolor: '#9c27b0', boxShadow: 1 }}>{getInitials(user.name)}</Avatar>
-                              <Box>
-                                <Typography variant="body1" fontWeight="medium">{user.name}</Typography>
-                                <Typography variant="body2" color="text.secondary">{user.email}</Typography>
-                              </Box>
-                            </Stack>
-                          </TableCell>
-                          <TableCell><Chip label={getRoleDisplay(user.role)} color={getRoleColor(user.role)} size="small" icon={getRoleIcon(user.role)} sx={{ boxShadow: 1 }} /></TableCell>
-                          <TableCell><Typography variant="body2" color="text.secondary">{user.phoneNumber || 'N/A'}</Typography></TableCell>
-                          <TableCell><Typography variant="body2" color="text.secondary">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</Typography></TableCell>
-                          {isSupremeAdmin && <TableCell><Typography variant="body2" color="text.secondary">{user.organization || 'N/A'}</Typography></TableCell>}
-                          <TableCell align="right">
-                            <Stack direction="row" spacing={1} justifyContent="flex-end">
-                              <Tooltip title="Change Role"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowRoleModal(true); }} sx={{ boxShadow: 1, borderRadius: 1 }}><Shield /></IconButton></Tooltip>
-                              {isSupremeAdmin && (
-                                <Tooltip title={`Make admin of ${selectedOrg}`}>
-                                  <IconButton size="small" disabled={user.role === 'admin' || updatingRole} onClick={() => handleMakeAdmin(user)} sx={{ boxShadow: 1, borderRadius: 1 }}><AdminPanelSettings /></IconButton>
-                                </Tooltip>
-                              )}
-                            </Stack>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>Showing {filteredUsers.length} of {totalUsers} users</Typography>
-              </Box>
+                  </TableHead>
+                  <TableBody>
+                    {paginatedUsers.map(user => (
+                      <TableRow key={user.id} hover>
+                        <TableCell>
+                          <Stack direction="row" spacing={2} alignItems="center" sx={{ minWidth: 0 }}>
+                            <Avatar sx={{ bgcolor: '#9c27b0', boxShadow: 1 }}>{getInitials(user.name)}</Avatar>
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography variant="body1" fontWeight="medium" noWrap>{user.name}</Typography>
+                              <Typography variant="body2" color="text.secondary" noWrap>{user.email}</Typography>
+                            </Box>
+                          </Stack>
+                        </TableCell>
+                        <TableCell><Chip label={getRoleDisplay(user.role)} color={getRoleColor(user.role)} size="small" icon={getRoleIcon(user.role)} sx={{ boxShadow: 1 }} /></TableCell>
+                        <TableCell><Typography variant="body2" color="text.secondary" noWrap>{user.phoneNumber || 'N/A'}</Typography></TableCell>
+                        <TableCell><Typography variant="body2" color="text.secondary" noWrap>{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</Typography></TableCell>
+                        {isSupremeAdmin && <TableCell><Typography variant="body2" color="text.secondary" noWrap>{user.organization || 'N/A'}</Typography></TableCell>}
+                        <TableCell align="right">
+                          <Stack direction="row" spacing={1} justifyContent="flex-end">
+                            <Tooltip title="Change Role"><IconButton size="small" onClick={() => { setSelectedUser(user); setShowRoleModal(true); }} sx={{ boxShadow: 1, borderRadius: 1 }}><Shield /></IconButton></Tooltip>
+                            {isSupremeAdmin && (
+                              <Tooltip title={`Make admin of ${selectedOrg}`}>
+                                <IconButton size="small" disabled={user.role === 'admin' || updatingRole} onClick={() => handleMakeAdmin(user)} sx={{ boxShadow: 1, borderRadius: 1 }}><AdminPanelSettings /></IconButton>
+                              </Tooltip>
+                            )}
+                          </Stack>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>Showing {filteredUsers.length} of {totalUsers} users</Typography>
+            </Box>
           )}
         </Box>)}
 
@@ -909,10 +1007,10 @@ export default function AdminDashboard() {
               <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={role}>
                 <Card sx={cardStyles}>
                   <CardContent>
-                    <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                      <Avatar sx={{ bgcolor: roleCardColors[i % roleCardColors.length], width: 48, height: 48, boxShadow: 2 }}>{getRoleIcon(role)}</Avatar>
-                      <Box>
-                        <Typography variant="h6" fontWeight="bold">{getRoleDisplay(role)}</Typography>
+                    <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2, minWidth: 0 }}>
+                      <Avatar sx={{ bgcolor: roleCardColors[i % roleCardColors.length], width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 }, boxShadow: 2, flexShrink: 0 }}>{getRoleIcon(role)}</Avatar>
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="h6" fontWeight="bold" noWrap sx={{ overflowWrap: 'anywhere' }}>{getRoleDisplay(role)}</Typography>
                         <Typography variant="body2" color="text.secondary">{roleStats[role]} {roleStats[role] === 1 ? 'person' : 'people'}</Typography>
                       </Box>
                     </Stack>
@@ -934,7 +1032,7 @@ export default function AdminDashboard() {
         {/* Activity tab */}
         {activeTab === 2 && (
           <Box sx={{ p: getResponsiveValue(1,2,3,3,3) }}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }} spacing={1} sx={{ mb: 3 }}>
               <Typography variant="h6" fontWeight="bold">Recent Activity</Typography>
               <Stack direction="row" spacing={1} alignItems="center">
                 <Tooltip title="Refresh activity log">
@@ -969,10 +1067,10 @@ export default function AdminDashboard() {
                 <List>
                   {activityLog.map((log, idx) => (
                     <React.Fragment key={log.id}>
-                      <ListItem sx={{ py: 2 }}>
+                      <ListItem sx={{ py: 2, px: { xs: 0.5, sm: 1 } }}>
                         <ListItemText
-                          primary={<Typography variant="body1" fontWeight="medium">{log.details}</Typography>}
-                          secondary={<Typography variant="body2" color="text.secondary">{log.action} • {new Date(log.timestamp).toLocaleString()} • {log.user}</Typography>}
+                          primary={<Typography variant="body1" fontWeight="medium" sx={{ overflowWrap: 'anywhere' }}>{log.details}</Typography>}
+                          secondary={<Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{log.action} • {new Date(log.timestamp).toLocaleString()} • {log.user}</Typography>}
                         />
                       </ListItem>
                       {idx < activityLog.length - 1 && <Divider />}
@@ -994,22 +1092,22 @@ export default function AdminDashboard() {
                   <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={org.id || org._id}>
                     <Card sx={cardStyles}>
                       <CardContent>
-                        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                          <Avatar sx={{ bgcolor: '#1976d2', width: 48, height: 48, boxShadow: 2 }}><BusinessIcon /></Avatar>
-                          <Box>
-                            <Typography variant="h6" fontWeight="bold">{org.name}</Typography>
-                            <Typography variant="body2" color="text.secondary">{org.email}</Typography>
+                        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2, minWidth: 0 }}>
+                          <Avatar src={org.logo || undefined} sx={{ bgcolor: '#1976d2', width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 }, boxShadow: 2, flexShrink: 0 }}><BusinessIcon /></Avatar>
+                          <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="h6" fontWeight="bold" noWrap sx={{ overflowWrap: 'anywhere' }}>{org.name}</Typography>
+                            <Typography variant="body2" color="text.secondary" noWrap sx={{ overflowWrap: 'anywhere' }}>{org.email}</Typography>
                             {org.phone && (
-                              <Typography variant="body2" color="text.secondary">
-                                <PhoneIcon /> {org.phone}
+                              <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <PhoneIcon fontSize="small" /> {org.phone}
                               </Typography>
                             )}
                           </Box>
                         </Stack>
                         {isSupremeAdmin && (
-                          <Box sx={{ display: "flex", justifyContent: "flex-end", my: 1 }}>
-                            <Button variant="outlined" size="small" startIcon={<EditIcon />} sx={{ mr: 1, borderRadius: 1 }} onClick={() => handleOpenEditOrg(org)}>Edit</Button>
-                            <Button variant="outlined" size="small" startIcon={<Delete />} sx={{ ml: 1, borderRadius: 1, color: "error.main"}} onClick={() => { if (window.confirm("Delete " + org.name + "? This cannot be undone.")) { handleDeleteOrganization(org.id || org._id, org.name); }}}>Delete</Button>
+                          <Box sx={{ display: "flex", justifyContent: 'flex-end', my: 1, gap: 1, flexWrap: 'wrap' }}>
+                            <Button variant="outlined" size="small" startIcon={<EditIcon />} sx={{ borderRadius: 1 }} onClick={() => handleOpenEditOrg(org)}>Edit</Button>
+                            <Button variant="outlined" size="small" startIcon={<Delete />} sx={{ borderRadius: 1, color: "error.main" }} onClick={() => { if (window.confirm("Delete " + org.name + "? This cannot be undone.")) { handleDeleteOrganization(org.id || org._id, org.name); }}}>Delete</Button>
                           </Box>
                         )}
                       </CardContent>
@@ -1037,81 +1135,129 @@ export default function AdminDashboard() {
         })()}
 
         {activeTab === 4 && (isAdmin || isSupremeAdmin) && (<Box padding={getResponsiveValue(1, 2, 3, 3, 3)} sx={{ pt: 3 }}>
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ md: 'center' }} sx={{ mb: 3 }}>
-            <Box>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'stretch', md: 'center' }} sx={{ mb: 3 }}>
+            <Box sx={{ minWidth: 0 }}>
               <Typography variant="h6" fontWeight="bold">Targets</Typography>
               <Typography variant="body2" color="text.secondary">
                 Set weekly targets for people in {selectedOrg}.
               </Typography>
             </Box>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-              <FormControl size="small" sx={{ minWidth: 150 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ flexWrap: 'wrap' }}>
+              <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 150 } }}>
                 <InputLabel>Week</InputLabel>
                 <Select label="Week" value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)}>
                   {weekOptions.map(w => <MenuItem key={w} value={w}>{w}{w === getISOWeekId() ? ' (this week)' : ''}</MenuItem>)}
                 </Select>
               </FormControl>
-              <Button variant="contained" startIcon={<AddIcon />} onClick={handleSetTargetManual}>Service target</Button>
-              <Button variant="contained" color="secondary" startIcon={<AddIcon />} onClick={handleSetTwelveTasksTargetManual}>Twelve-tasks target</Button>
-              <Button variant="outlined" onClick={handleCopyLastWeekTargets} disabled={isLoadingTargets}>Copy last week</Button>
+              <Button variant="contained" startIcon={<AddIcon />} onClick={handleSetTargetManual} sx={{ width: { xs: '100%', sm: 'auto' } }}>Service target</Button>
+              <Button variant="contained" color="secondary" startIcon={<AddIcon />} onClick={handleSetTwelveTasksTargetManual} sx={{ width: { xs: '100%', sm: 'auto' } }}>Twelve-tasks target</Button>
+              <Button variant="outlined" onClick={handleCopyLastWeekTargets} disabled={isLoadingTargets} sx={{ width: { xs: '100%', sm: 'auto' } }}>Copy last week</Button>
             </Stack>
           </Stack>
 
           <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Service targets</Typography>
-          <TableContainer sx={{ mb: 4, borderRadius: 1, boxShadow: 1 }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Person</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Email</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>Target</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>Actual</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {isLoadingTargets ? (
-                  <TableRow><TableCell colSpan={4} align="center"><CircularProgress size={20} /></TableCell></TableRow>
-                ) : serviceTargets.length === 0 ? (
-                  <TableRow><TableCell colSpan={4} align="center" sx={{ color: 'text.secondary' }}>No service targets for {selectedWeek}</TableCell></TableRow>
-                ) : serviceTargets.map((t, i) => (
-                  <TableRow key={t.id || t._id || i} hover>
-                    <TableCell>{t.leader_name || personById[t.person_id]?.name || (t.person_id ? t.person_id : 'Leader default')}</TableCell>
-                    <TableCell>{t.email || personById[t.person_id]?.email || '—'}</TableCell>
-                    <TableCell align="right">{t.target_count ?? '—'}</TableCell>
-                    <TableCell align="right">{t.actual_count ?? 0}</TableCell>
+          {isSmDown ? (
+            <Stack spacing={1} sx={{ mb: 4 }}>
+              {isLoadingTargets ? (
+                <Box sx={{ textAlign: 'center', py: 3 }}><CircularProgress size={24} /></Box>
+              ) : serviceTargets.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" textAlign="center">No service targets for {selectedWeek}</Typography>
+              ) : serviceTargets.map((t, i) => (
+                <Card key={t.id || t._id || i} variant="outlined" sx={{ borderRadius: 1 }}>
+                  <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="body2" fontWeight="medium" sx={{ overflowWrap: 'anywhere' }}>
+                      {t.leader_name || personById[t.person_id]?.name || (t.person_id ? t.person_id : 'Leader default')}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', overflowWrap: 'anywhere' }}>
+                      {t.email || personById[t.person_id]?.email || '—'}
+                    </Typography>
+                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                      <Chip size="small" label={`Target: ${t.target_count ?? '—'}`} variant="outlined" />
+                      <Chip size="small" label={`Actual: ${t.actual_count ?? 0}`} color="primary" />
+                    </Stack>
+                  </CardContent>
+                </Card>
+              ))}
+            </Stack>
+          ) : (
+            <TableContainer sx={{ mb: 4, borderRadius: 1, boxShadow: 1 }}>
+              <Table size="small" sx={{ minWidth: 480 }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Person</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Email</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 'bold' }}>Target</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 'bold' }}>Actual</TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
+                </TableHead>
+                <TableBody>
+                  {isLoadingTargets ? (
+                    <TableRow><TableCell colSpan={4} align="center"><CircularProgress size={20} /></TableCell></TableRow>
+                  ) : serviceTargets.length === 0 ? (
+                    <TableRow><TableCell colSpan={4} align="center" sx={{ color: 'text.secondary' }}>No service targets for {selectedWeek}</TableCell></TableRow>
+                  ) : serviceTargets.map((t, i) => (
+                    <TableRow key={t.id || t._id || i} hover>
+                      <TableCell sx={{ overflowWrap: 'anywhere' }}>{t.leader_name || personById[t.person_id]?.name || (t.person_id ? t.person_id : 'Leader default')}</TableCell>
+                      <TableCell sx={{ overflowWrap: 'anywhere' }}>{t.email || personById[t.person_id]?.email || '—'}</TableCell>
+                      <TableCell align="right">{t.target_count ?? '—'}</TableCell>
+                      <TableCell align="right">{t.actual_count ?? 0}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
 
           <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Twelve-tasks targets</Typography>
-          <TableContainer sx={{ borderRadius: 1, boxShadow: 1 }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Person</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>Target</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 'bold' }}>Actual</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Type</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {isLoadingTwelveTasks ? (
-                  <TableRow><TableCell colSpan={4} align="center"><CircularProgress size={20} /></TableCell></TableRow>
-                ) : twelveTasksTargets.length === 0 ? (
-                  <TableRow><TableCell colSpan={4} align="center" sx={{ color: 'text.secondary' }}>No twelve-tasks targets for {selectedWeek}</TableCell></TableRow>
-                ) : twelveTasksTargets.map((t, i) => (
-                  <TableRow key={t.id || t._id || i} hover>
-                    <TableCell>{personById[t.person_id]?.name || t.leader_name || (t.person_id ? t.person_id : 'Leader default')}</TableCell>
-                    <TableCell align="right">{t.target ?? '—'}</TableCell>
-                    <TableCell align="right">{t.actual ?? 0}</TableCell>
-                    <TableCell>{t.is_default ? <Chip size="small" label="Default" /> : <Chip size="small" variant="outlined" label="Custom" />}</TableCell>
+          {isSmDown ? (
+            <Stack spacing={1}>
+              {isLoadingTwelveTasks ? (
+                <Box sx={{ textAlign: 'center', py: 3 }}><CircularProgress size={24} /></Box>
+              ) : twelveTasksTargets.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" textAlign="center">No twelve-tasks targets for {selectedWeek}</Typography>
+              ) : twelveTasksTargets.map((t, i) => (
+                <Card key={t.id || t._id || i} variant="outlined" sx={{ borderRadius: 1 }}>
+                  <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                    <Typography variant="body2" fontWeight="medium" sx={{ overflowWrap: 'anywhere' }}>
+                      {personById[t.person_id]?.name || t.leader_name || (t.person_id ? t.person_id : 'Leader default')}
+                    </Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+                      <Chip size="small" label={`Target: ${t.target ?? '—'}`} variant="outlined" />
+                      <Chip size="small" label={`Actual: ${t.actual ?? 0}`} color="primary" />
+                      {t.is_default ? <Chip size="small" label="Default" /> : <Chip size="small" variant="outlined" label="Custom" />}
+                    </Stack>
+                  </CardContent>
+                </Card>
+              ))}
+            </Stack>
+          ) : (
+            <TableContainer sx={{ borderRadius: 1, boxShadow: 1 }}>
+              <Table size="small" sx={{ minWidth: 480 }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Person</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 'bold' }}>Target</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 'bold' }}>Actual</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Type</TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
+                </TableHead>
+                <TableBody>
+                  {isLoadingTwelveTasks ? (
+                    <TableRow><TableCell colSpan={4} align="center"><CircularProgress size={20} /></TableCell></TableRow>
+                  ) : twelveTasksTargets.length === 0 ? (
+                    <TableRow><TableCell colSpan={4} align="center" sx={{ color: 'text.secondary' }}>No twelve-tasks targets for {selectedWeek}</TableCell></TableRow>
+                  ) : twelveTasksTargets.map((t, i) => (
+                    <TableRow key={t.id || t._id || i} hover>
+                      <TableCell sx={{ overflowWrap: 'anywhere' }}>{personById[t.person_id]?.name || t.leader_name || (t.person_id ? t.person_id : 'Leader default')}</TableCell>
+                      <TableCell align="right">{t.target ?? '—'}</TableCell>
+                      <TableCell align="right">{t.actual ?? 0}</TableCell>
+                      <TableCell>{t.is_default ? <Chip size="small" label="Default" /> : <Chip size="small" variant="outlined" label="Custom" />}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
         </Box>)}
       </Paper>
 
@@ -1119,47 +1265,84 @@ export default function AdminDashboard() {
         <NewUserModal open={showAddUserModal} onClose={() => setShowAddUserModal(false)} onUserCreated={handleCreateUser} loading={creatingUser} />
 
         {/* Supreme admin modal */}
-        <Dialog open={showSupremeAdminModal} onClose={() => !addingSupremeAdmin && setShowSupremeAdminModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+        <Dialog open={showSupremeAdminModal} onClose={() => !addingSupremeAdmin && setShowSupremeAdminModal(false)} maxWidth="xs" fullWidth fullScreen={isXsDown} PaperProps={{ sx: { borderRadius: { xs: 0, sm: 2 } } }}>
           <DialogTitle><Typography variant="h6" fontWeight="bold">Add Supreme Admin</Typography></DialogTitle>
           <DialogContent>
             <Box sx={{ mt: 2 }}>
               <TextField fullWidth label="User Email" type="email" value={supremeAdminEmail} onChange={e => { setSupremeAdminEmail(e.target.value); setSupremeAdminError(''); }} error={!!supremeAdminError} helperText={supremeAdminError} disabled={addingSupremeAdmin} autoFocus />
             </Box>
           </DialogContent>
-          <DialogActions sx={{ p: 2, gap: 1 }}>
-            <Button onClick={() => { setShowSupremeAdminModal(false); setSupremeAdminEmail(''); setSupremeAdminError(''); }} variant="outlined" disabled={addingSupremeAdmin}>Cancel</Button>
-            <Button variant="contained" onClick={handleAddSupremeAdmin} disabled={addingSupremeAdmin || !supremeAdminEmail.trim()} startIcon={addingSupremeAdmin ? <CircularProgress size={20} /> : <AdminPanelSettings />}>
+          <DialogActions sx={{ p: 2, gap: 1, flexWrap: 'wrap', '& > :not(style) ~ :not(style)': { marginLeft: 0 } }}>
+            <Button onClick={() => { setShowSupremeAdminModal(false); setSupremeAdminEmail(''); setSupremeAdminError(''); }} variant="outlined" disabled={addingSupremeAdmin} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Cancel</Button>
+            <Button variant="contained" onClick={handleAddSupremeAdmin} disabled={addingSupremeAdmin || !supremeAdminEmail.trim()} startIcon={addingSupremeAdmin ? <CircularProgress size={20} /> : <AdminPanelSettings />} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>
               {addingSupremeAdmin ? 'Adding...' : 'Add'}
             </Button>
           </DialogActions>
         </Dialog>
 
         {/* Org modal */}
-        <Dialog open={showOrgModal} onClose={() => !savingOrg && setShowOrgModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
-          <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h6" fontWeight="bold">{editingOrg ? 'Edit Organization' : 'New Organization'}</Typography>
+        <Dialog open={showOrgModal} onClose={() => !savingOrg && setShowOrgModal(false)} maxWidth="sm" fullWidth fullScreen={isXsDown} PaperProps={{ sx: { borderRadius: { xs: 0, sm: 2 } } }}>
+          <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
+            <Typography variant="h6" fontWeight="bold" sx={{ overflowWrap: 'anywhere' }}>{editingOrg ? 'Edit Organization' : 'New Organization'}</Typography>
             <IconButton onClick={() => setShowOrgModal(false)} size="small" disabled={savingOrg}><CloseIcon /></IconButton>
           </DialogTitle>
           <Divider />
           <DialogContent>
             <Stack spacing={3} sx={{ mt: 1 }}>
+              {orgFormErrors.form && <Alert severity="error">{orgFormErrors.form}</Alert>}
               <TextField label="Organization Name *" value={orgFormData.name} onChange={e => setOrgFormData({ ...orgFormData, name: e.target.value })} error={!!orgFormErrors.name} helperText={orgFormErrors.name} fullWidth required disabled={savingOrg} />
+              <Stack spacing={1}>
+                <Typography variant="subtitle2" fontWeight="bold">Logo</Typography>
+                <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
+                  <Tooltip title={orgLogoPreview ? 'Click to change logo' : 'Click to upload logo'}>
+                    <Avatar
+                      src={orgLogoPreview || undefined}
+                      variant="rounded"
+                      onClick={() => !savingOrg && orgLogoInputRef.current?.click()}
+                      sx={{ width: 64, height: 64, bgcolor: 'action.hover', cursor: savingOrg ? 'default' : 'pointer' }}
+                    >
+                      <BusinessIcon />
+                    </Avatar>
+                  </Tooltip>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<PhotoCameraIcon />}
+                    onClick={() => orgLogoInputRef.current?.click()}
+                    disabled={savingOrg}
+                  >
+                    {orgLogoPreview ? 'Change logo' : 'Upload logo'}
+                  </Button>
+                  <input
+                    ref={orgLogoInputRef}
+                    hidden
+                    accept="image/*"
+                    type="file"
+                    onChange={handleOrgLogoChange}
+                  />
+                  {orgLogoPreview && (
+                    <Button color="error" size="small" onClick={handleRemoveOrgLogo} disabled={savingOrg}>Remove</Button>
+                  )}
+                </Stack>
+                {orgLogoError && <Typography variant="caption" color="error">{orgLogoError}</Typography>}
+                <Typography variant="caption" color="text.secondary">PNG, JPG, GIF, WEBP or SVG up to 2 MB.</Typography>
+              </Stack>
             </Stack>
           </DialogContent>
-          <DialogActions sx={{ p: 3, gap: 1 }}>
+          <DialogActions sx={{ p: { xs: 2, sm: 3 }, gap: 1, flexWrap: 'wrap', '& > :not(style) ~ :not(style)': { marginLeft: 0 } }}>
             {editingOrg && (
-              <Button variant="outlined" color="error" onClick={() => { const id = editingOrg.id || editingOrg._id; handleDeleteOrganization(id, editingOrg.name); }} disabled={savingOrg || deletingOrg} startIcon={deletingOrg ? <CircularProgress size={20} /> : <Delete />} sx={{ mr: 'auto' }}>
+              <Button variant="outlined" color="error" onClick={() => { const id = editingOrg.id || editingOrg._id; handleDeleteOrganization(id, editingOrg.name); }} disabled={savingOrg || deletingOrg} startIcon={deletingOrg ? <CircularProgress size={20} /> : <Delete />} sx={{ mr: { xs: 0, sm: 'auto' }, flex: { xs: '1 1 100%', sm: 'none' } }}>
                 Deleting...
               </Button>
             )}
-            <Button variant="outlined" onClick={() => setShowOrgModal(false)} disabled={savingOrg}>Cancel</Button>
-            <Button variant="contained" onClick={handleSaveOrganization} disabled={savingOrg} startIcon={savingOrg ? <CircularProgress size={20} /> : <CheckIcon />}>{savingOrg ? 'Saving...' : 'Save'}</Button>
+            <Button variant="outlined" onClick={() => setShowOrgModal(false)} disabled={savingOrg} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Cancel</Button>
+            <Button variant="contained" onClick={handleSaveOrganization} disabled={savingOrg} startIcon={savingOrg ? <CircularProgress size={20} /> : <CheckIcon />} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>{savingOrg ? 'Saving...' : 'Save'}</Button>
           </DialogActions>
         </Dialog>
 
         {/* Set service target */}
-        <Dialog open={showSetTargetModal} onClose={() => !savingTarget && setShowSetTargetModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
-          <DialogTitle><Typography variant="h6" fontWeight="bold">Set service target · {selectedWeek}</Typography></DialogTitle>
+        <Dialog open={showSetTargetModal} onClose={() => !savingTarget && setShowSetTargetModal(false)} maxWidth="xs" fullWidth fullScreen={isXsDown} PaperProps={{ sx: { borderRadius: { xs: 0, sm: 2 } } }}>
+          <DialogTitle><Typography variant="h6" fontWeight="bold" sx={{ overflowWrap: 'anywhere' }}>Set service target · {selectedWeek}</Typography></DialogTitle>
           <DialogContent>
             <Stack spacing={3} sx={{ mt: 1 }}>
               <Autocomplete
@@ -1174,16 +1357,16 @@ export default function AdminDashboard() {
                 onChange={e => setServiceForm(f => ({ ...f, count: e.target.value }))} fullWidth />
             </Stack>
           </DialogContent>
-          <DialogActions sx={{ p: 2, gap: 1 }}>
-            <Button onClick={() => setShowSetTargetModal(false)} disabled={savingTarget} variant="outlined">Cancel</Button>
+          <DialogActions sx={{ p: 2, gap: 1, flexWrap: 'wrap', '& > :not(style) ~ :not(style)': { marginLeft: 0 } }}>
+            <Button onClick={() => setShowSetTargetModal(false)} disabled={savingTarget} variant="outlined" sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Cancel</Button>
             <Button onClick={handleSaveServiceTarget} disabled={savingTarget || !serviceForm.person || serviceForm.count === ''} variant="contained"
-              startIcon={savingTarget ? <CircularProgress size={20} /> : <CheckIcon />}>Save</Button>
+              startIcon={savingTarget ? <CircularProgress size={20} /> : <CheckIcon />} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Save</Button>
           </DialogActions>
         </Dialog>
 
         {/* Set twelve-tasks target */}
-        <Dialog open={showSetTwelveTasksModal} onClose={() => !savingTarget && setShowSetTwelveTasksModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
-          <DialogTitle><Typography variant="h6" fontWeight="bold">Set twelve-tasks target · {selectedWeek}</Typography></DialogTitle>
+        <Dialog open={showSetTwelveTasksModal} onClose={() => !savingTarget && setShowSetTwelveTasksModal(false)} maxWidth="xs" fullWidth fullScreen={isXsDown} PaperProps={{ sx: { borderRadius: { xs: 0, sm: 2 } } }}>
+          <DialogTitle><Typography variant="h6" fontWeight="bold" sx={{ overflowWrap: 'anywhere' }}>Set twelve-tasks target · {selectedWeek}</Typography></DialogTitle>
           <DialogContent>
             <Stack spacing={3} sx={{ mt: 1 }}>
               <Autocomplete
@@ -1198,25 +1381,25 @@ export default function AdminDashboard() {
                 onChange={e => setTwelveForm(f => ({ ...f, count: e.target.value }))} fullWidth />
             </Stack>
           </DialogContent>
-          <DialogActions sx={{ p: 2, gap: 1 }}>
-            <Button onClick={() => setShowSetTwelveTasksModal(false)} disabled={savingTarget} variant="outlined">Cancel</Button>
+          <DialogActions sx={{ p: 2, gap: 1, flexWrap: 'wrap', '& > :not(style) ~ :not(style)': { marginLeft: 0 } }}>
+            <Button onClick={() => setShowSetTwelveTasksModal(false)} disabled={savingTarget} variant="outlined" sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Cancel</Button>
             <Button onClick={handleSaveTwelveTasksTarget} disabled={savingTarget || !twelveForm.person || twelveForm.count === ''} variant="contained"
-              startIcon={savingTarget ? <CircularProgress size={20} /> : <CheckIcon />}>Save</Button>
+              startIcon={savingTarget ? <CircularProgress size={20} /> : <CheckIcon />} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Save</Button>
           </DialogActions>
         </Dialog>
 
         {/* FAB */}
-        <Fab color={isSupremeAdmin ? "primary" : "secondary"} sx={{ position: 'fixed', bottom: 16, right: 16, boxShadow: 4 }} onClick={isSupremeAdmin ? handleOpenCreateOrg : () => setShowAddUserModal(true)}>
+        <Fab color={isSupremeAdmin ? "primary" : "secondary"} sx={{ position: 'fixed', bottom: { xs: 16, sm: 16 }, right: { xs: 12, sm: 16 }, zIndex: (theme) => theme.zIndex.speedDial, boxShadow: 4 }} onClick={isSupremeAdmin ? handleOpenCreateOrg : () => setShowAddUserModal(true)}>
           <AddIcon />
         </Fab>
 
         {/* Role change modal */}
-        <Dialog open={showRoleModal} onClose={() => !updatingRole && setShowRoleModal(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+        <Dialog open={showRoleModal} onClose={() => !updatingRole && setShowRoleModal(false)} maxWidth="sm" fullWidth fullScreen={isXsDown} PaperProps={{ sx: { borderRadius: { xs: 0, sm: 2 } } }}>
           <DialogTitle><Typography variant="h6" fontWeight="bold">Change User Role</Typography></DialogTitle>
           <DialogContent>
             {selectedUser && (
               <>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>User: <strong>{selectedUser.name}</strong></Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1, overflowWrap: 'anywhere' }}>User: <strong>{selectedUser.name}</strong></Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Current: <Chip label={selectedUser.role} size="small" /></Typography>
                 {selectedOrg?.trim().toLowerCase() === 'active church' ? (
                   <>
@@ -1230,59 +1413,59 @@ export default function AdminDashboard() {
                   )
                   : (
                     <>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, gap: 1, flexWrap: 'wrap' }}>
                         <Typography variant="subtitle2" fontWeight="bold">Available Roles:</Typography>
                         <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => { setShowRoleModal(false); setShowCreateRoleModal(true); }} sx={{ borderRadius: 2 }}>ADD ROLE</Button>
                       </Box>
-                      <Stack spacing={1} sx={{ maxHeight: 400, overflowY: 'auto', pr: 1 }}>
+                      <Stack spacing={1} sx={{ maxHeight: { xs: 'none', sm: 400 }, overflowY: { xs: 'visible', sm: 'auto' }, pr: 1 }}>
                         {rolesForModal.map(role => <RoleOption key={role.name} role={role} isSelected={selectedUser?.role === role.name} onSelect={() => handleRoleChange(selectedUser.id, role.name)} />)}
                       </Stack>
                     </>
                   )}
-                </>
-              )}
-            </DialogContent>
-            <DialogActions sx={{ p: 2 }}>
-              <Button onClick={() => setShowRoleModal(false)} disabled={updatingRole} variant="outlined">CANCEL</Button>
-            </DialogActions>
-          </Dialog>
+              </>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setShowRoleModal(false)} disabled={updatingRole} variant="outlined" sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>CANCEL</Button>
+          </DialogActions>
+        </Dialog>
 
         {/* Create role modal */}
-        <Dialog open={showCreateRoleModal} onClose={() => !creatingRole && setShowCreateRoleModal(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+        <Dialog open={showCreateRoleModal} onClose={() => !creatingRole && setShowCreateRoleModal(false)} maxWidth="xs" fullWidth fullScreen={isXsDown} PaperProps={{ sx: { borderRadius: { xs: 0, sm: 2 } } }}>
           <DialogTitle><Typography variant="h6" fontWeight="bold">Create New Role</Typography></DialogTitle>
           <DialogContent>
             <Box sx={{ mt: 2 }}>
               <TextField fullWidth label="Role Name" value={newRoleName} onChange={e => { setNewRoleName(e.target.value); setRoleCreateError(''); }} placeholder="e.g., Welcome Team, Sound Tech" error={!!roleCreateError} helperText={roleCreateError} disabled={creatingRole} autoFocus />
               <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
                 <Typography variant="caption" color="text.secondary" display="block" gutterBottom>Preview:</Typography>
-                <Chip label={newRoleName.trim() || 'New Role'} color={getRoleColor(newRoleName)} icon={getRoleIcon(newRoleName)} />
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                <Chip label={newRoleName.trim() || 'New Role'} color={getRoleColor(newRoleName)} icon={getRoleIcon(newRoleName)} sx={{ maxWidth: '100%' }} />
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1, overflowWrap: 'anywhere' }}>
                   Stored as: <strong>{newRoleName.trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'') || 'new_role'}</strong>
                 </Typography>
               </Box>
             </Box>
           </DialogContent>
-          <DialogActions sx={{ p: 2, gap: 1 }}>
-            <Button onClick={() => { setShowCreateRoleModal(false); setNewRoleName(''); setRoleCreateError(''); }} variant="outlined" disabled={creatingRole}>Cancel</Button>
-            <Button variant="contained" onClick={handleCreateRole} disabled={creatingRole || !newRoleName.trim()} startIcon={<CheckIcon />}>Create Role</Button>
+          <DialogActions sx={{ p: 2, gap: 1, flexWrap: 'wrap', '& > :not(style) ~ :not(style)': { marginLeft: 0 } }}>
+            <Button onClick={() => { setShowCreateRoleModal(false); setNewRoleName(''); setRoleCreateError(''); }} variant="outlined" disabled={creatingRole} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Cancel</Button>
+            <Button variant="contained" onClick={handleCreateRole} disabled={creatingRole || !newRoleName.trim()} startIcon={<CheckIcon />} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Create Role</Button>
           </DialogActions>
         </Dialog>
 
         {/* Delete confirm modal */}
-        <Dialog open={showDeleteConfirm} onClose={() => !deletingUser && setShowDeleteConfirm(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 2 } }}>
+        <Dialog open={showDeleteConfirm} onClose={() => !deletingUser && setShowDeleteConfirm(false)} maxWidth="xs" fullWidth fullScreen={isXsDown} PaperProps={{ sx: { borderRadius: { xs: 0, sm: 2 } } }}>
           <DialogTitle><Typography variant="h6" fontWeight="bold" color="error">Delete User</Typography></DialogTitle>
           <DialogContent>
             {selectedUser && (
               <>
-                <Typography>Are you sure you want to delete <strong>{selectedUser.name}</strong>?</Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Email: {selectedUser.email}</Typography>
+                <Typography sx={{ overflowWrap: 'anywhere' }}>Are you sure you want to delete <strong>{selectedUser.name}</strong>?</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1, overflowWrap: 'anywhere' }}>Email: {selectedUser.email}</Typography>
                 {selectedUser.role === 'admin' && !isSupremeAdmin && <Alert severity="warning" sx={{ mt: 2 }}>You cannot delete another admin user.</Alert>}
               </>
             )}
           </DialogContent>
-          <DialogActions sx={{ p: 2, gap: 1 }}>
-            <Button onClick={() => setShowDeleteConfirm(false)} disabled={deletingUser} variant="outlined">Cancel</Button>
-            <Button variant="contained" color="error" onClick={handleDeleteUser} disabled={deletingUser || (selectedUser?.role === 'admin' && !isSupremeAdmin)} startIcon={deletingUser ? <CircularProgress size={16} /> : <Delete />}>
+          <DialogActions sx={{ p: 2, gap: 1, flexWrap: 'wrap', '& > :not(style) ~ :not(style)': { marginLeft: 0 } }}>
+            <Button onClick={() => setShowDeleteConfirm(false)} disabled={deletingUser} variant="outlined" sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Cancel</Button>
+            <Button variant="contained" color="error" onClick={handleDeleteUser} disabled={deletingUser || (selectedUser?.role === 'admin' && !isSupremeAdmin)} startIcon={deletingUser ? <CircularProgress size={16} /> : <Delete />} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>
               {deletingUser ? 'Deleting...' : 'Delete User'}
             </Button>
           </DialogActions>
@@ -1300,13 +1483,13 @@ const RoleOption = ({ role, onSelect, isSelected }) => (
     borderRadius: 1, transition: 'all 0.2s',
     '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover', transform: 'translateY(-1px)', boxShadow: 1 }
   }} onClick={onSelect}>
-    <Stack direction="row" justifyContent="space-between" alignItems="center">
-      <Stack direction="row" spacing={1} alignItems="center">
-        <Avatar sx={{ width: 24, height: 24, bgcolor: role.color || '#9c27b0' }}><PersonIcon /></Avatar>
-        <Typography variant="body1" fontWeight="medium">{role.name}</Typography>
-        {!role.is_system && <Chip label="custom" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.625rem' }} />}
+    <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+        <Avatar sx={{ width: 24, height: 24, bgcolor: role.color || '#9c27b0', flexShrink: 0 }}><PersonIcon /></Avatar>
+        <Typography variant="body1" fontWeight="medium" noWrap sx={{ overflowWrap: 'anywhere' }}>{role.name}</Typography>
+        {!role.is_system && <Chip label="custom" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.625rem', flexShrink: 0 }} />}
       </Stack>
-      <Typography variant="body2" color="text.secondary">{role.count} {role.count === 1 ? 'person' : 'people'}</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>{role.count} {role.count === 1 ? 'person' : 'people'}</Typography>
     </Stack>
   </Paper>
 );
