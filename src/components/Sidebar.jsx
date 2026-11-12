@@ -34,8 +34,22 @@ import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
 import { normalizeRole, SYSTEM_ROLES, ROLE_HIERARCHY } from '../utils/roleNormalizer';
 import logo from "../assets/active-teams.png"
-
+import { supabase } from '/supabaseClient';
 const BODY = "'Figtree', system-ui, sans-serif";
+
+const ICON_MAP = {
+  Home, Person, Group, Event, BarChart, Assessment, Assignment,
+  HowToReg, AdminPanelSettings, Description, AccessTime,
+  SupportAgent: SupportAgentIcon,
+};
+
+// JSON stores icon names as strings; turn them back into components.
+// Divider items have no icon, so they're left alone.
+const hydrate = (items) =>
+  items.map((item) => ({
+    ...item,
+    icon: typeof item.icon === 'string' ? (ICON_MAP[item.icon] || Home) : item.icon,
+  }));
 
 const allMenuItems = [
   { 
@@ -146,7 +160,7 @@ export default function Sidebar({ mode, setMode }) {
   const { user } = useContext(AuthContext);
   const [, setUserHasCell] = useState(true);
   const [menuItems, setMenuItems] = useState([]);
-
+  const [menuConfig, setMenuConfig] = useState(allMenuItems);
   const isDark = mode === 'dark';
   const line = isDark ? '#2a2a38' : '#e3e1ec';
 
@@ -155,12 +169,40 @@ export default function Sidebar({ mode, setMode }) {
     if (savedMode) setMode(savedMode);
   }, [setMode]);
 
+  useEffect(() => {
+  const orgId = user?.org_id;
+    console.log('org_id:', user?.org_id);
+  if (!orgId) return;
+  const key = `menuConfig:${orgId}`;
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) setMenuConfig(hydrate(JSON.parse(cached)));
+  }catch{}
+
+  // Then fetch the copy in the background
+  let cancelled = false;
+  (async () => {
+    try {
+      const { data } = supabase.storage.from('organization-roles').getPublicUrl(`${orgId}.json`);
+      const res = await fetch(`${data.publicUrl}?t=${Date.now()}`);
+      console.log('Menu config status:', res.status, data.publicUrl); 
+      if (!res.ok || cancelled) return
+      const items = await res.json();
+      localStorage.setItem(key, JSON.stringify(items));
+      setMenuConfig(hydrate(items));
+    } catch (err) {
+      console.warn('Menu config not loaded, using fallback:', err.message);
+    }
+  })();
+  return () => { cancelled = true; };
+}, [user?.org_id])
+
   // Access logic unchanged (only the debug console.log lines were removed)
   useEffect(() => {
     const checkUserAccess = async () => {
       if (!user) {
         setMenuItems([]);
-        return;
+        return
       }
 
       const userRole = normalizeRole(user?.role);
@@ -168,7 +210,7 @@ export default function Sidebar({ mode, setMode }) {
       const isCustomRole = !SYSTEM_ROLES.includes(normalizeRole(userRole));
 
       if (isSupremeAdmin) {
-        setMenuItems(allMenuItems);
+        setMenuItems(menuConfig);
         return;
       }
       let hasCell = true;
@@ -189,7 +231,7 @@ export default function Sidebar({ mode, setMode }) {
       } else {
         setUserHasCell(true);
       }
-      const filteredItems = allMenuItems.filter(item => {
+      const filteredItems = menuConfig.filter(item => {
         // if (userRole === 'admin' ) {
         //   return true;
         // }
@@ -226,7 +268,7 @@ export default function Sidebar({ mode, setMode }) {
     };
 
     checkUserAccess();
-  }, [user]);
+  }, [user, menuConfig]);
 
   const handleToggleMode = () => {
     setMode((prev) => {
