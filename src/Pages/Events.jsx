@@ -1166,6 +1166,7 @@ const Events = () => {
   const [viewMode, setViewMode] = useState("grid");
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [selectedTypeForMenu, setSelectedTypeForMenu] = useState(null);
+  const [selectedEventTypeName, setSelectedEventTypeName] = useState('Events');
 
   const initialViewFilter = useMemo(() => {
     if (isLeaderAt12) {
@@ -3577,6 +3578,7 @@ const getFilteredEventTypes = (allEventTypes) => {
           result.name !== oldName
         ) {
           setSelectedEventTypeFilter(result.name);
+          setSelectedEventTypeName(result.name);
         }
 
         toast.success(
@@ -3593,7 +3595,6 @@ const getFilteredEventTypes = (allEventTypes) => {
   );
   useEffect(() => {
     if (!selectedEventTypeFilter || !showingEvents) return;
-
     const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
     const cached = eventsCache.current[cacheKey];
 
@@ -4160,11 +4161,13 @@ const filteredEventTypes = useMemo(() => {
         const etName = et.name || et.eventTypeName || et.displayName || "";
         return etName.toLowerCase() === typeValue.toLowerCase();
       }) || { name: typeValue };
+      const eventTypeName =
+        eventTypeObj.name || eventTypeObj.eventTypeName || eventTypeObj.displayName || typeValue;
       if (setSelectedEventTypeObj) setSelectedEventTypeObj(eventTypeObj);
       if (setSelectedEventTypeFilter) setSelectedEventTypeFilter(typeValue);
       if (setSelectedStatus) setSelectedStatus("incomplete");
       if (setCurrentPage) setCurrentPage(1);
-
+      setSelectedEventTypeName(eventTypeName);
       if (setSearchQuery) setSearchQuery("");
       if (setShowingEvents) setShowingEvents(true);
    
@@ -4528,7 +4531,7 @@ const getTypeValue = (type) => {
             }}
           >
             {showingEvents
-              ? "Events"
+              ? selectedEventTypeName
               : viewMode === "grid"
                 ? "Select Event Types"
                 : "Event Types"}
@@ -4860,7 +4863,7 @@ const getTypeValue = (type) => {
                   />
                 </div>
               </div>
-              {/* <Box
+              <Box
                 sx={{
                   display: "flex",
                   alignItems: "center",
@@ -4868,7 +4871,7 @@ const getTypeValue = (type) => {
                   flexWrap: "wrap",
                 }}
               >
-                {(isAdmin || isRegistrant || isLeader || isLeaderAt12) && (
+                {/* {(isAdmin || isRegistrant || isLeader || isLeaderAt12) && (
                   <Button
                     variant="contained"
                     size="small"
@@ -4884,9 +4887,9 @@ const getTypeValue = (type) => {
                   >
                     View Converts
                   </Button>
-                )}
-                <ViewFilterButtons />
-              </Box> */}
+                )} */}
+                <ViewFilterButtons /> 
+              </Box> 
             </Box>
           </>
         ) : (
@@ -5674,6 +5677,7 @@ const getTypeValue = (type) => {
               <Box
                 onClick={() => {
                   setSelectedEventTypeFilter(typeName);
+                  setSelectedEventTypeName(typeName);
                   setShowingEvents(true);
                   setCurrentPage(1);
                 }}
@@ -5877,6 +5881,7 @@ const getTypeValue = (type) => {
                         <Box
                           onClick={() => {
                             setSelectedEventTypeFilter(typeName);
+                            setSelectedEventTypeName(typeName);
                             setSelectedStatus("incomplete");
                             setShowingEvents(true);
                             setCurrentPage(1);
