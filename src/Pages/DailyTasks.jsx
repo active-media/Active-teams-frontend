@@ -198,17 +198,27 @@ const getTaskStageKey = (task) => {
   return stage || "open";
 };
 
-const getPillKey = (task) => {
-  const key = getTaskStageKey(task);
-  return key === "completed" || key === "overdue" ? key : "in-progress";
+// Not completed and scheduled for a calendar day after today
+const isTaskUpcoming = (task) => {
+  if (isTaskCompleted(task)) return false;
+  const rawDate = task?.followup_date || task?.date;
+  if (!rawDate) return false;
+  const due = new Date(rawDate);
+  if (Number.isNaN(due.getTime())) return false;
+  return toDateOnly(due) > toDateOnly(new Date());
 };
 
+const getPillKey = (task) => {
+  const key = getTaskStageKey(task);
+  if (key === "completed" || key === "overdue") return key;
+  if (isTaskUpcoming(task)) return "upcoming";
+  return "in-progress";
+};
+
+// Completed/Overdue map to their own pill; other stage filters are already
+// applied server-side, so show everything that came back.
 const stageToPill = (stage) =>
-  stage === "completed" || stage === "overdue"
-    ? stage
-    : stage === "all"
-      ? "all"
-      : "in-progress";
+  stage === "completed" || stage === "overdue" ? stage : "all";
 
 const csvCell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
 
@@ -1481,7 +1491,7 @@ export default function DailyTasks() {
           acc[getPillKey(t)]++;
           return acc;
         },
-        { all: 0, completed: 0, "in-progress": 0, overdue: 0 },
+        { all: 0, completed: 0, "in-progress": 0, upcoming: 0, overdue: 0 },
       ),
     [tasks],
   );
@@ -1491,6 +1501,7 @@ export default function DailyTasks() {
       { key: "all", label: `All (${filterCounts.all})` },
       { key: "completed", label: `Completed (${filterCounts.completed})` },
       { key: "in-progress", label: `In Progress (${filterCounts["in-progress"]})` },
+      { key: "upcoming", label: `Upcoming (${filterCounts.upcoming})` },
       { key: "overdue", label: `Overdue (${filterCounts.overdue})` },
     ],
     [filterCounts],
