@@ -563,10 +563,33 @@ const isSmallGatheringEventType = (eventType, eventTypes = []) => {
   return isSmallGatheringCategory(eventTypeCategory);
 };
 
+// COLLECTING THE DYNAMIC FIELDS THAT ARE SUPPOSED TO BE DISPLAYED BASED ON THE EVENT TYPE
+const handleEventsDynamicFields = ( eventType, eventTypes )=>{
+
+ let columnsToDisplay;
+  eventTypes.map( (array)=>{
+if( array.name === eventType ){
+  let arrayOfColumnFields = array["display_fields"];
+
+  // console.log("Array of fields to display before manipulating it",arrayOfColumnFields )
+  arrayOfColumnFields = arrayOfColumnFields.map( (fieldName)=>{ return fieldName.toLowerCase().replaceAll(" ","")})
+  columnsToDisplay = arrayOfColumnFields;
+
+} else {
+  return;
+}
+  })
+
+// console.log("Current array of the column fields", columnsToDisplay);
+  return columnsToDisplay;
+}
+
 const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter, eventTypes) => {
+
   if (!events || events.length === 0) return [];
 
-  const isCellType = isSmallGatheringEventType(selectedEventTypeFilter, eventTypes);
+  // GETTING THE LIST OF COLUMNS THAT MUST BE DISPLAYED FOR THE SPECIFIC EVENT
+  const columnsToDisplay =  handleEventsDynamicFields( selectedEventTypeFilter, eventTypes );
 
   //STATUS column
   const statusCol = {
@@ -613,63 +636,11 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter, even
       );
     },
   };
-  // NON-CELLS columns
-  if (!isCellType) {
-    return [
-      statusCol,
-      recurringCol,
-      {
-        field: "eventName",
-        headerName: "Event Name",
-        flex: 1.2,
-        minWidth: 120,
-        renderCell: (params) => (
-          <Box sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 }} title={params.value || ""}>
-            {params.value || "-"}
-          </Box>
-        ),
-      },
-      {
-        field: "eventLeaderName",
-        headerName: "Event Leader Name",
-        flex: 1,
-        minWidth: 120,
-        renderCell: (params) => (
-          <Box sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 180 }} title={params.value || ""}>
-            {params.value || "-"}
-          </Box>
-        ),
-      },
-      {
-        field: "eventLeaderEmail",
-        headerName: "Event Leader Email",
-        flex: 1,
-        minWidth: 150,
-        renderCell: (params) => (
-          <Box sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200 }} title={params.value || ""}>
-            {params.value || "-"}
-          </Box>
-        ),
-      },
-      {
-        field: "day",
-        headerName: "Day",
-        flex: 0.7,
-        minWidth: 80,
-        renderCell: (params) => params.value || "-",
-      },
-      {
-        field: "date",
-        headerName: "Date",
-        flex: 0.9,
-        minWidth: 115,
-        renderCell: (params) => formatDate(params.value),
-      },
-    ];
-  }
 
   //CELLS columns
   const sampleEvent = events[0];
+  // console.log("THE VALUES STORED INSIDE OF THE SAMPLE EVENT: ",events);
+  // console.log("THE FIRST VALUE INSIDE OF SA MPLE EVENT: ",events[0]);
   const filteredFields = Object.keys(sampleEvent).filter((key) => {
     const keyLower = key.toLowerCase();
     const excludedFields = [
@@ -683,6 +654,10 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter, even
       "description", "new_people", "consolidations", "total_attendance", "closed_by",
       "closed_at", "created_at", "updated_at", "new_people_count", "consolidation_count","priceTiers"
     ];
+
+    // DO NOT DISPLAY IT IF IT IS NOT PART OF THE REQUIRED FIELDS TO DISPLAY
+    const dontDisplayColumnIfNotRequired = !columnsToDisplay.includes(key.toLowerCase());
+
     const exactMatch = excludedFields.includes(key);
     const caseInsensitiveMatch = excludedFields.some((excluded) => excluded.toLowerCase() === keyLower);
     const containsOverdue = keyLower.includes("overdue");
@@ -690,10 +665,12 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter, even
     const containsOriginated = keyLower.includes("originated");
     const containsLeader12 = keyLower.includes("leader") && keyLower.includes("12");
     const containsLeader1 = keyLower.includes("leader1") || keyLower.includes("leader@1") || keyLower.includes("leader at 1");
-    const shouldExcludeLeader1 = containsLeader1 && !isCellType;
+    const shouldExcludeLeader1 = containsLeader1;
     const containsPersonSteps = keyLower.includes("person") && keyLower.includes("steps");
-    return !(exactMatch || caseInsensitiveMatch || containsOverdue || containsDisplayDate || containsOriginated || containsLeader12 || shouldExcludeLeader1 || containsPersonSteps);
+    // console.log("UNDERSTANDING THE MAIN PURPOSE OF THE FILTER KEYS",!(exactMatch || caseInsensitiveMatch || containsOverdue || containsDisplayDate || containsOriginated || containsLeader12 || shouldExcludeLeader1 || containsPersonSteps));
+    return !( dontDisplayColumnIfNotRequired || exactMatch || caseInsensitiveMatch || containsOverdue || containsDisplayDate || containsOriginated || containsLeader12 || shouldExcludeLeader1 || containsPersonSteps);
   });
+
 
   // Keep every column that starts with "event" together (Event Name,
   // Event Leader, Event Leader Email, ...) so they read as one block no
@@ -704,7 +681,12 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter, even
     return aEvent === bEvent ? 0 : aEvent ? -1 : 1;
   });
 
+  console.log( "The columns that actually need to be displayed for the event: ",columnsToDisplay);
+  console.log( "The fields that were selected: ",groupedEventFields);
+
+
   const columns = [statusCol, recurringCol];
+
   columns.push(
     ...groupedEventFields.map((key) => ({
       field: key,
@@ -738,9 +720,17 @@ const MobileEventCard = ({
   styles,
   isAdmin,
 
+  // FUNCTIONS AND VARIABLES THAT ARE USED TO MAKE SURE THAT THE FIELDS BEING DISPLAYED ARE DYNAMIC
+  generateDynamicColumns,
   selectedEventTypeFilter,
   eventTypes,
 }) => {
+
+  // STORING THE INFORMATION THAT WILL BE DISPLAYED ON EVERY CARD
+  const fieldsToDisplay = generateDynamicColumns([event], isOverdue, selectedEventTypeFilter, eventTypes);
+  console.log( "THE FIELDS THAT WILL BE DISPLAYED: ",fieldsToDisplay)
+  console.log("THE CURRENT EVENT CARD THAT WILL BE DISPLAYED",event)
+
   const { authFetch } = React.useContext(AuthContext);
   if (!theme) {
     return <Box sx={{ height: 100 }} />;
@@ -748,7 +738,6 @@ const MobileEventCard = ({
   const isDark = theme.palette.mode === "dark";
   const borderColor = isDark ? theme.palette.divider : "#e9ecef";
   const attendeesCount = event.attendees?.length || 0;
-  const isCellEvent = isSmallGatheringEventType(selectedEventTypeFilter, eventTypes);
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
   const escapeHtml = (s) =>
     String(s || "")
@@ -758,6 +747,8 @@ const MobileEventCard = ({
 
 const findEventTypeByName = (typeName) => {
     // Look for the event type in your eventTypes array
+
+
     const found = typeName && eventTypes.find((et) => {
       const etName = et.name || et.eventTypeName || et.displayName || "";
       return etName.toLowerCase() === typeName.toLowerCase();
@@ -788,6 +779,7 @@ const findEventTypeByName = (typeName) => {
       Object.keys(r || {}).forEach((k) => set.add(k));
       return set;
     }, new Set());
+
     const headers = Array.from(headerSet);
 
     const columnWidths = headers.map((header) => {
@@ -935,19 +927,38 @@ ${xmlCols}
         backgroundColor: isDark ? theme.palette.background.default : "#fff",
       }}
     >
-      <Typography
+
+      {fieldsToDisplay.map( ( { field, headerName },index)=>{ 
+
+        if( field === "eventName" ){ 
+          return(
+ <Typography
         variant="h6"
+        key={index}
         sx={{
           fontWeight: "bold",
           marginBottom: "0.75rem",
           color: isDark ? "#fff" : "#333",
         }}
       >
-        {event.eventName || "N/A"}
-      </Typography>
-      {event.is_recurring &&
-        event.recurring_days &&
-        event.recurring_days.length > 1 && (
+        { event[field] || "N/A"}
+      </Typography>)
+        } else if ( field === "overdue"  ) {
+          return(
+            <>{isOverdue &&
+<Typography
+          variant="caption"
+          sx={{ color: theme.palette.error.main, fontWeight: "bold" }}
+          key={index}
+        >
+          OVERDUE!
+        </Typography> }
+        </>)
+        } else if ( field === "recurring_info" ){
+
+             return( <>{ event[field] &&
+        event[field] &&
+        event[field].length > 1 &&
           <Box
             sx={{
               display: "flex",
@@ -958,6 +969,7 @@ ${xmlCols}
               backgroundColor: isDark ? "rgba(33, 150, 243, 0.1)" : "#e3f2fd",
               borderRadius: "8px",
             }}
+            key={index}
           >
             <Typography
               variant="caption"
@@ -978,36 +990,25 @@ ${xmlCols}
             >
               {formatRecurringDays(event.recurring_days)}
             </Typography>
-          </Box>
-        )}
-      {isOverdue && isCellEvent && (
-        <Typography
-          variant="caption"
-          sx={{ color: theme.palette.error.main, fontWeight: "bold" }}
-        >
-          OVERDUE!
-        </Typography>
-      )}
-      <div style={styles.mobileCardRow}>
-        <span style={styles.mobileCardLabel}>Date:</span>
-        <span style={styles.mobileCardValue}>{formatDate(event.date)}</span>
-      </div>
-      <div style={styles.mobileCardRow}>
-        <span style={styles.mobileCardLabel}>Leader:</span>
+          </Box> }
+            </> )
+        } else if( field === "date" ){
+          return(
+               <div style={styles.mobileCardRow} key={index} >
+        <span style={styles.mobileCardLabel}>{headerName}:</span>
+        <span style={styles.mobileCardValue}>{formatDate(event[field])}</span>
+      </div>)
+        } else {
+      return(
+      <div style={styles.mobileCardRow} key={index} >
+        <span style={styles.mobileCardLabel}>{headerName}:</span>
         <span style={styles.mobileCardValue}>
-          {event.eventLeaderName || "N/A"}
+          {event[field] || "N/A"}
         </span>
       </div>
-      {isCellEvent && (
-        <div style={styles.mobileCardRow}>
-          <span style={styles.mobileCardLabel}>Leader @1:</span>
-          <span style={styles.mobileCardValue}>{event.leader1 || "N/A"}</span>
-        </div>
-      )}
-      <div style={styles.mobileCardRow}>
-        <span style={styles.mobileCardLabel}>Leader @12:</span>
-        <span style={styles.mobileCardValue}>{event.leader12 || "N/A"}</span>
-      </div>
+      )
+        }
+      }) }
       <div style={styles.mobileActions}>
         <Tooltip title={`View Attendance (${attendeesCount} people)`}>
           <IconButton
@@ -1757,6 +1758,7 @@ const fetchEventTypes = useCallback(async () => {
     setEventTypes(filteredTypes);
     setCustomEventTypes(filteredTypes);
     setUserCreatedEventTypes(filteredTypes);
+    // console.log("THE FIELDS I WANT TO HAVE ACCESS TO AFTER BEING FILTERED OUT BECAUSE THEY CONTAIN THE COLUMNS TO BE DISPLAYED ON THE SCREEN: ",filteredTypes)
     return filteredTypes;
   } catch (error) {
     console.error("Error fetching event types:", error);
@@ -4997,6 +4999,7 @@ const getTypeValue = (type) => {
                           currentUserLeaderAt1={currentUserLeaderAt1}
                           selectedEventTypeFilter={selectedEventTypeFilter}
                           eventTypes={eventTypes}
+                          generateDynamicColumns={generateDynamicColumns}
                         />
                       </>
                     ))
@@ -5017,6 +5020,7 @@ const getTypeValue = (type) => {
                           currentUserLeaderAt1={currentUserLeaderAt1}
                           selectedEventTypeFilter={selectedEventTypeFilter}
                           eventTypes={eventTypes}
+                          generateDynamicColumns={generateDynamicColumns}
                         />
                       </>
                     ))}
