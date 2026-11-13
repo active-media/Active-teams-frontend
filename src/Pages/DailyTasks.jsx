@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { Phone, Plus, Filter, X, Check, Search, Users, ChevronDown, MapPin, Calendar } from "lucide-react";
+import { Phone, Plus, Filter, X, Check, Search, Users, ChevronDown, MapPin } from "lucide-react";
 import { useTheme } from "@mui/material/styles";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
@@ -29,9 +29,7 @@ import {
 } from "@mui/material";
 import { useMediaQuery } from "@mui/material";
 
-// ─── Design System Colors ──────────────────────────────────────────────
 const COLORS = {
-  // Light mode
   light: {
     background: "#f8f9fa",
     backgroundSecondary: "#ffffff",
@@ -61,7 +59,6 @@ const COLORS = {
     sidebarBorder: "#e5e7eb",
     sidebarActive: "#f3f4f6",
   },
-  // Dark mode
   dark: {
     background: "#111827",
     backgroundSecondary: "#1e1e1e",
@@ -93,12 +90,9 @@ const COLORS = {
   },
 };
 
-// ─── People cache helpers (mirrors the working Daily Tasks branch) ────────────
 const CACHE_DURATION = 30 * 60 * 1000;
 
 const getRawCachedPeople = () => {
-  // Daily Tasks keeps its own lightweight cache so it never overwrites the
-  // richer person objects cached by the People page.
   if (Array.isArray(window.dailyTasksPeopleCache) && window.dailyTasksPeopleCache.length > 0) {
     return window.dailyTasksPeopleCache;
   }
@@ -115,8 +109,6 @@ const getPeopleCacheTimestamp = () =>
     ? window.dailyTasksPeopleCacheTimestamp || 0
     : window.globalCacheTimestamp || 0;
 
-// Fallback data (people/all-minimal) is capped at 1000 people, so it must not
-// be treated as fresh — the full cache load should still upgrade it later.
 const isPeopleCachePartial = () =>
   Array.isArray(window.dailyTasksPeopleCache) && window.dailyTasksPeopleCache.length > 0
     ? window.dailyTasksPeopleCachePartial === true
@@ -170,6 +162,14 @@ const searchPeopleLocal = (peopleList, searchValue) => {
 
 const COMPLETED_STAGES = ["completed", "done", "closed", "finished"];
 
+const DATE_RANGE_OPTIONS = [
+  { value: "this_week", label: "This Week" },
+  { value: "last_week", label: "Last Week" },
+  { value: "this_month", label: "This Month" },
+  { value: "previous_month", label: "Previous Month" },
+  { value: "custom", label: "Custom Range" },
+];
+
 const toDateOnly = (date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
@@ -188,7 +188,6 @@ const isTaskOverdue = (task) => {
   return !Number.isNaN(due.getTime()) && due.getTime() < Date.now();
 };
 
-// Maps a task to one of the filter stage keys (completed/overdue/awaiting task/open).
 const getTaskStageKey = (task) => {
   const stage = String(task?.taskStage ?? task?.status ?? "open")
     .toLowerCase()
@@ -198,6 +197,96 @@ const getTaskStageKey = (task) => {
   if (stage === "awaiting task" || stage === "awaiting") return "awaiting task";
   return stage || "open";
 };
+
+const getPillKey = (task) => {
+  const key = getTaskStageKey(task);
+  return key === "completed" || key === "overdue" ? key : "in-progress";
+};
+
+const stageToPill = (stage) =>
+  stage === "completed" || stage === "overdue"
+    ? stage
+    : stage === "all"
+      ? "all"
+      : "in-progress";
+
+const csvCell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+
+const DT_CSS = `
+.dt-root{display:flex;flex-direction:column;min-height:100%;background:var(--dt-surface);color:var(--dt-fg);box-sizing:border-box}
+.dt-root *{box-sizing:border-box}
+.dt-topbar{padding:32px 40px 16px;border-bottom:1px solid var(--dt-surface-border)}
+.dt-topbar h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.02em;color:var(--dt-fg)}
+.dt-main{flex:1;min-width:0;padding:0 40px 64px}
+.dt-heading-row{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:24px}
+.dt-title{margin:0;font-size:36px;font-weight:700;letter-spacing:-.02em;color:var(--dt-fg)}
+.dt-actions{display:flex;gap:12px;flex-wrap:wrap}
+.dt-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:10px;padding:12px 20px;font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;font-family:inherit;background:var(--dt-card);color:var(--dt-fg);border:1px solid var(--dt-border)}
+.dt-btn--primary{background:var(--dt-primary);color:var(--dt-primary-fg);border-color:var(--dt-primary-border)}
+.dt-btn--teal{background:transparent;color:var(--dt-teal);border-color:var(--dt-teal)}
+.dt-btn--small{padding:10px 16px;font-size:13px}
+.dt-btn--solid{background:var(--dt-fg);color:var(--dt-bg);border:none;font-weight:600;padding:10px 16px;font-size:13px}
+.dt-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:16px;margin-top:32px}
+.dt-stat{border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:24px 32px;min-width:160px}
+.dt-stat-num{font-size:48px;font-weight:700;line-height:1;color:var(--dt-fg)}
+.dt-stat-label{margin-top:8px;font-size:11px;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--dt-muted)}
+.dt-pills{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dt-pill{border-radius:10px;padding:10px 16px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;white-space:nowrap;font-family:inherit;background:var(--dt-card);color:var(--dt-fg);border:1px solid var(--dt-border)}
+.dt-pill.is-active{background:var(--dt-primary);color:var(--dt-primary-fg);border-color:var(--dt-primary)}
+.dt-controls{margin-left:auto;display:flex;align-items:center;gap:12px}
+.dt-select-wrap{position:relative;display:inline-flex;align-items:center}
+.dt-select{appearance:none;-webkit-appearance:none;border-radius:10px;border:1px solid var(--dt-border);background:var(--dt-card);color:var(--dt-fg);padding:10px 36px 10px 16px;font-size:13px;font-weight:500;font-family:inherit;cursor:pointer;min-width:0}
+.dt-select-wrap svg{position:absolute;right:12px;pointer-events:none;color:var(--dt-fg)}
+.dt-custom-range{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
+.dt-custom-range input{border-radius:10px;border:1px solid var(--dt-border);background:var(--dt-card);color:var(--dt-fg);padding:8px 12px;font-size:13px;font-family:inherit}
+.dt-list{display:flex;flex-direction:column;gap:16px;margin-top:40px}
+.dt-row{display:flex;align-items:center;gap:20px;border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:24px;cursor:pointer;transition:background .15s}
+.dt-row:hover{background:var(--dt-card-hover)}
+.dt-avatar{width:48px;height:48px;flex-shrink:0;border-radius:50%;background:var(--dt-border);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;color:var(--dt-fg);text-transform:uppercase}
+.dt-row-body{min-width:0;flex:1}
+.dt-row-name{font-size:18px;font-weight:600;color:var(--dt-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dt-row-sub{margin-top:4px;font-size:14px;color:var(--dt-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dt-row-meta{display:flex;flex-shrink:0;align-items:center;gap:20px;margin-left:auto}
+.dt-row-date{font-size:14px;color:var(--dt-muted);white-space:nowrap}
+.dt-empty{border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:40px;text-align:center;font-size:14px;color:var(--dt-muted)}
+.dt-loading{padding:40px;color:var(--dt-muted);display:flex;flex-direction:column;align-items:center;gap:16px}
+.dt-more{align-self:center;margin-top:8px}
+@media (max-width:1100px){
+  .dt-controls{margin-left:0;width:100%}
+}
+@media (max-width:768px){
+  .dt-topbar{padding:20px 20px 12px}
+  .dt-main{padding:0 20px 40px}
+  .dt-title{font-size:28px}
+  .dt-actions{width:100%}
+  .dt-actions .dt-btn{flex:1 1 auto}
+  .dt-toolbar{gap:12px;margin-top:24px}
+  .dt-stat{width:100%;display:flex;align-items:baseline;gap:16px;padding:16px 20px}
+  .dt-stat-label{margin-top:0}
+  .dt-stat-num{font-size:36px}
+  .dt-pills{flex-wrap:nowrap;overflow-x:auto;width:100%;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .dt-pills::-webkit-scrollbar{display:none}
+  .dt-pill{flex-shrink:0}
+  .dt-list{margin-top:24px;gap:12px}
+  .dt-row{flex-wrap:wrap;padding:16px;gap:12px 16px}
+  .dt-row-meta{width:100%;margin-left:0;justify-content:space-between;padding-top:12px;border-top:1px solid var(--dt-border)}
+}
+@media (max-width:480px){
+  .dt-topbar{padding:16px 16px 12px}
+  .dt-main{padding:0 16px 32px}
+  .dt-title{font-size:24px}
+  .dt-btn{padding:11px 14px;font-size:13px}
+  .dt-actions .dt-btn--teal{flex-basis:100%}
+  .dt-controls{flex-wrap:wrap}
+  .dt-select-wrap{flex:1}
+  .dt-select{width:100%}
+  .dt-btn--solid{flex:1 1 100%}
+  .dt-avatar{width:40px;height:40px;font-size:16px}
+  .dt-row-name{font-size:16px}
+  .dt-row-sub{font-size:13px}
+}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+`;
 
 function Spinner({ size = 16, color = "#6b7280" }) {
   return (
@@ -217,37 +306,22 @@ function Spinner({ size = 16, color = "#6b7280" }) {
 }
 
 function StatusBadge({ status, colors }) {
-  const normalizedStatus = String(status || "open").toLowerCase();
-  const isAwaiting = normalizedStatus === "awaiting task" || normalizedStatus === "awaiting";
-  const backgroundColor = normalizedStatus === "completed"
-    ? `${colors.completed}20`
-    : normalizedStatus === "in-progress"
-      ? `${colors.inProgress}20`
-      : normalizedStatus === "overdue"
-        ? `${colors.overdue}20`
-        : isAwaiting
-          ? `${colors.awaiting}20`
-          : `${colors.border}80`;
-  const color = normalizedStatus === "completed"
-    ? colors.completed
-    : normalizedStatus === "in-progress"
-      ? colors.inProgress
-      : normalizedStatus === "overdue"
-        ? colors.overdue
-        : isAwaiting
-          ? colors.awaiting
-          : colors.mutedForeground;
-
-  const label = normalizedStatus === "awaiting task" || normalizedStatus === "awaiting"
-    ? "Awaiting Task"
-    : normalizedStatus === "in-progress"
-      ? "In Progress"
-      : normalizedStatus
-        ? normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1)
-        : "Open";
+  const normalized = String(status || "open").toLowerCase();
+  const map = {
+    completed: [colors.completed, "Completed"],
+    overdue: [colors.awaiting, "Overdue"],
+    "in-progress": [colors.inProgress, "In Progress"],
+    "in progress": [colors.inProgress, "In Progress"],
+    "awaiting task": [colors.gold, "Awaiting Task"],
+    awaiting: [colors.gold, "Awaiting Task"],
+  };
+  const [color, label] = map[normalized] || [
+    colors.mutedForeground,
+    normalized.charAt(0).toUpperCase() + normalized.slice(1),
+  ];
 
   return (
-    <span style={{ borderRadius: 999, padding: "6px 10px", backgroundColor, color, fontSize: 12, fontWeight: 600 }}>
+    <span style={{ color, fontSize: 14, fontWeight: 600, whiteSpace: "nowrap" }}>
       {label}
     </span>
   );
@@ -266,16 +340,28 @@ function CallTaskModal({
   isLoadingPeople,
   modalType,
 }) {
+  const isSmall = useMediaQuery("(max-width:600px)");
+
   const availableTaskTypes = taskTypes.length
     ? taskTypes.map((taskType) => typeof taskType === "string" ? taskType : taskType.name).filter(Boolean)
     : ["Awaiting Call", "Service Invitation", "Service Follow Up", "Follow Up", "New Member Care"];
 
-  // Never let a preselected task type fall outside the select's options.
   if (taskData.taskType && !availableTaskTypes.includes(taskData.taskType)) {
     availableTaskTypes.unshift(taskData.taskType);
   }
 
   const stageOptions = ["Awaiting Task", "Open", "Completed"];
+
+  const todayStr = toDateOnly(new Date());
+  const isFutureDate = !!taskData.dueDate && taskData.dueDate > todayStr;
+
+  // If the date is moved to the future, "Completed" is no longer valid, so revert to "Open"
+  useEffect(() => {
+    if (isFutureDate && taskData.taskStage === "Completed") {
+      handleChange({ target: { name: "taskStage", value: "Open" } });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFutureDate, taskData.taskStage]);
 
   const [recipientSearch, setRecipientSearch] = useState(taskData.recipientDisplay || "");
   const [recipientOpen, setRecipientOpen] = useState(false);
@@ -303,7 +389,6 @@ function CallTaskModal({
     setRecipientSearch(value);
     setRecipientOpen(true);
 
-    // Typing invalidates a previously selected recipient.
     if (taskData.recipient && value !== taskData.recipientDisplay) {
       handleChange({ target: { name: "recipient", value: null } });
     }
@@ -377,14 +462,15 @@ function CallTaskModal({
       onClose={onClose}
       fullWidth
       maxWidth="sm"
+      fullScreen={isSmall}
       PaperProps={{
         sx: {
-          borderRadius: "18px",
+          borderRadius: isSmall ? 0 : "18px",
           background: "background.paper",
         },
       }}
     >
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} noValidate>
         <DialogTitle sx={{ fontWeight: 700 }}>
           {modalType === "visit" ? "Visit Task" : "Call Task"}
         </DialogTitle>
@@ -402,7 +488,6 @@ function CallTaskModal({
             ))}
           </TextField>
 
-          {/* Recipient — who the task is for */}
           <Box sx={{ position: "relative" }}>
             <TextField
               required
@@ -438,7 +523,6 @@ function CallTaskModal({
               )}
           </Box>
 
-          {/* Assigned To — searchable, defaults to the current user */}
           <Box sx={{ position: "relative" }}>
             <TextField
               required
@@ -468,7 +552,6 @@ function CallTaskModal({
               )}
           </Box>
 
-          {/* Due date is automatic; only the time is editable */}
           <Box>
             <Typography
               variant="caption"
@@ -476,14 +559,17 @@ function CallTaskModal({
             >
               Due Date &amp; Time
             </Typography>
-            <Box sx={{ display: "flex", gap: 1.5 }}>
+            <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
               <TextField
                 label="Due Date"
                 type="date"
+                name="dueDate"
+                required
                 value={taskData.dueDate || ""}
-                disabled
-                fullWidth
+                onChange={handleChange}
+                sx={{ flex: "1 1 140px" }}
                 InputLabelProps={{ shrink: true }}
+                inputProps={{ min: todayStr }}
               />
               <TextField
                 label="Time"
@@ -491,13 +577,12 @@ function CallTaskModal({
                 name="dueTime"
                 value={taskData.dueTime || ""}
                 onChange={handleChange}
-                fullWidth
+                sx={{ flex: "1 1 140px" }}
                 InputLabelProps={{ shrink: true }}
               />
             </Box>
           </Box>
 
-          {/* Task Stage instead of Status */}
           <TextField
             select
             required
@@ -505,9 +590,20 @@ function CallTaskModal({
             name="taskStage"
             value={taskData.taskStage || "Open"}
             onChange={handleChange}
+            helperText={
+              isFutureDate
+                ? "Scheduled for a future date, so it can only be completed on or after that date."
+                : ""
+            }
           >
             {stageOptions.map((stage) => (
-              <MenuItem key={stage} value={stage}>{stage}</MenuItem>
+              <MenuItem
+                key={stage}
+                value={stage}
+                disabled={stage === "Completed" && isFutureDate}
+              >
+                {stage}
+              </MenuItem>
             ))}
           </TextField>
         </DialogContent>
@@ -553,12 +649,11 @@ function NewTaskTypeModal({ isOpen, onClose, newTaskTypeName, setNewTaskTypeName
   );
 }
 
-// Person Filter Modal Component
-function PersonFilterModal({ 
-  open, 
-  onClose, 
-  teamMembers, 
-  selectedPeople, 
+function PersonFilterModal({
+  open,
+  onClose,
+  teamMembers,
+  selectedPeople,
   onSelectionChange,
   isDarkMode,
   isAdmin,
@@ -566,7 +661,6 @@ function PersonFilterModal({
   const [searchResults, setSearchResults] = useState([]);
   const [localSearch, setLocalSearch] = useState("");
 
-  // Reset the search each time the picker opens so the full list is visible.
   useEffect(() => {
     if (open) setLocalSearch("");
   }, [open]);
@@ -605,7 +699,6 @@ function PersonFilterModal({
 
   const isSelected = (person) => selectedPeople.some((p) => p.email === person.email);
 
-  // Keep the request URL manageable when an admin selects a whole organization.
   const selectAllLimit = 200;
   const selectAllPeople = teamMembers.slice(0, selectAllLimit);
 
@@ -643,7 +736,7 @@ function PersonFilterModal({
             Clear All
           </Button>
         </Box>
-        
+
         <Box sx={{ mb: 2 }}>
           <TextField
             fullWidth
@@ -663,7 +756,7 @@ function PersonFilterModal({
         </Box>
 
         <Divider />
-        
+
         <List dense>
           {searchResults.map((person) => (
             <ListItem
@@ -671,12 +764,12 @@ function PersonFilterModal({
               button
               onClick={() => handleToggle(person)}
               sx={{
-                backgroundColor: isSelected(person) 
-                  ? (isDarkMode ? "rgba(25, 118, 210, 0.12)" : "rgba(25, 118, 210, 0.08)") 
+                backgroundColor: isSelected(person)
+                  ? (isDarkMode ? "rgba(25, 118, 210, 0.12)" : "rgba(25, 118, 210, 0.08)")
                   : "transparent",
                 "&:hover": {
-                  backgroundColor: isDarkMode 
-                    ? "rgba(25, 118, 210, 0.08)" 
+                  backgroundColor: isDarkMode
+                    ? "rgba(25, 118, 210, 0.08)"
                     : "rgba(25, 118, 210, 0.04)",
                 },
               }}
@@ -694,7 +787,7 @@ function PersonFilterModal({
             </ListItem>
           ))}
         </List>
-        
+
         {searchResults.length === 0 && (
           <Box sx={{ p: 3, textAlign: "center", color: "text.secondary" }}>
             {teamMembers.length === 0
@@ -713,7 +806,6 @@ function PersonFilterModal({
   );
 }
 
-// Advanced Filter Panel Modal
 function FilterPanelModal({
   open,
   onClose,
@@ -721,7 +813,6 @@ function FilterPanelModal({
   isDarkMode,
   canViewTeam,
   isAdmin,
-  // pending values
   pendingViewFilter,
   setPendingViewFilter,
   pendingFilterType,
@@ -759,14 +850,6 @@ function FilterPanelModal({
     { value: "overdue", label: "Overdue" },
   ];
 
-  const dateRangeOptions = [
-    { value: "this_week", label: "This Week" },
-    { value: "last_week", label: "Last Week" },
-    { value: "this_month", label: "This Month" },
-    { value: "previous_month", label: "Previous Month" },
-    { value: "custom", label: "Custom Range" },
-  ];
-
   const viewOptions = [
     { value: "personal", label: "Personal", description: "Only your own tasks" },
     ...(canViewTeam || isAdmin
@@ -788,6 +871,40 @@ function FilterPanelModal({
     setPendingDateRange("this_week");
     setCustomDateRange({ start: "", end: "" });
     onClearPeople();
+  };
+
+  const toggleButtonSx = (isActive) => ({
+    textTransform: "none",
+    fontWeight: 600,
+    borderRadius: "10px",
+    background: isActive
+      ? isDarkMode
+        ? "#fff"
+        : "#111"
+      : "transparent",
+    color: isActive
+      ? isDarkMode
+        ? "#111"
+        : "#fff"
+      : isDarkMode
+        ? "#e5e7eb"
+        : "#374151",
+    borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
+    "&:hover": {
+      background: isActive
+        ? isDarkMode
+          ? "#f3f4f6"
+          : "#000"
+        : isDarkMode
+          ? "rgba(255,255,255,0.08)"
+          : "rgba(17,17,17,0.06)",
+    },
+  });
+
+  const sectionLabelSx = {
+    fontWeight: 700,
+    color: isDarkMode ? "#9ca3af" : "#6b7280",
+    letterSpacing: "0.08em",
   };
 
   return (
@@ -823,12 +940,8 @@ function FilterPanelModal({
       </DialogTitle>
 
       <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 3, py: 3 }}>
-        {/* View selector */}
         <Box>
-          <Typography
-            variant="overline"
-            sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
-          >
+          <Typography variant="overline" sx={sectionLabelSx}>
             View
           </Typography>
           <Box sx={{ display: "flex", gap: 1, mt: 1, flexWrap: "wrap" }}>
@@ -845,33 +958,7 @@ function FilterPanelModal({
                       onClearPeople();
                     }
                   }}
-                  sx={{
-                    textTransform: "none",
-                    fontWeight: 600,
-                    borderRadius: "10px",
-                    background: isActive
-                      ? isDarkMode
-                        ? "#fff"
-                        : "#111"
-                      : "transparent",
-                    color: isActive
-                      ? isDarkMode
-                        ? "#111"
-                        : "#fff"
-                      : isDarkMode
-                        ? "#e5e7eb"
-                        : "#374151",
-                    borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
-                    "&:hover": {
-                      background: isActive
-                        ? isDarkMode
-                          ? "#f3f4f6"
-                          : "#000"
-                        : isDarkMode
-                          ? "rgba(255,255,255,0.08)"
-                          : "rgba(17,17,17,0.06)",
-                    },
-                  }}
+                  sx={toggleButtonSx(isActive)}
                 >
                   {option.label}
                 </Button>
@@ -882,7 +969,6 @@ function FilterPanelModal({
             {viewOptions.find((o) => o.value === pendingViewFilter)?.description}
           </Typography>
 
-          {/* Person filter — only for the disciples view, not personal/all */}
           {pendingViewFilter === "disciples" && (
             <Box
               sx={{
@@ -958,16 +1044,12 @@ function FilterPanelModal({
 
         <Divider />
 
-        {/* Time Period */}
         <Box>
-          <Typography
-            variant="overline"
-            sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
-          >
+          <Typography variant="overline" sx={sectionLabelSx}>
             Time Period
           </Typography>
           <Box sx={{ display: "flex", gap: 1, mt: 1, flexWrap: "wrap" }}>
-            {dateRangeOptions.map((option) => {
+            {DATE_RANGE_OPTIONS.map((option) => {
               const isActive = pendingDateRange === option.value;
               return (
                 <Button
@@ -975,41 +1057,14 @@ function FilterPanelModal({
                   size="small"
                   variant={isActive ? "contained" : "outlined"}
                   onClick={() => setPendingDateRange(option.value)}
-                  sx={{
-                    textTransform: "none",
-                    fontWeight: 600,
-                    borderRadius: "10px",
-                    background: isActive
-                      ? isDarkMode
-                        ? "#fff"
-                        : "#111"
-                      : "transparent",
-                    color: isActive
-                      ? isDarkMode
-                        ? "#111"
-                        : "#fff"
-                      : isDarkMode
-                        ? "#e5e7eb"
-                        : "#374151",
-                    borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
-                    "&:hover": {
-                      background: isActive
-                        ? isDarkMode
-                          ? "#f3f4f6"
-                          : "#000"
-                        : isDarkMode
-                          ? "rgba(255,255,255,0.08)"
-                          : "rgba(17,17,17,0.06)",
-                    },
-                  }}
+                  sx={toggleButtonSx(isActive)}
                 >
                   {option.label}
                 </Button>
               );
             })}
           </Box>
-          
-          {/* Custom date range inputs */}
+
           {pendingDateRange === "custom" && (
             <Box sx={{ display: "flex", gap: 2, mt: 2, flexWrap: "wrap" }}>
               <TextField
@@ -1018,7 +1073,7 @@ function FilterPanelModal({
                 size="small"
                 value={customDateRange.start}
                 onChange={(e) => setCustomDateRange({ ...customDateRange, start: e.target.value })}
-                sx={{ minWidth: 200 }}
+                sx={{ flex: "1 1 180px" }}
                 InputLabelProps={{ shrink: true }}
               />
               <TextField
@@ -1027,7 +1082,7 @@ function FilterPanelModal({
                 size="small"
                 value={customDateRange.end}
                 onChange={(e) => setCustomDateRange({ ...customDateRange, end: e.target.value })}
-                sx={{ minWidth: 200 }}
+                sx={{ flex: "1 1 180px" }}
                 InputLabelProps={{ shrink: true }}
               />
             </Box>
@@ -1036,12 +1091,8 @@ function FilterPanelModal({
 
         <Divider />
 
-        {/* Task Stage Filter */}
         <Box>
-          <Typography
-            variant="overline"
-            sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
-          >
+          <Typography variant="overline" sx={sectionLabelSx}>
             Task Stage
           </Typography>
           <FormControl fullWidth size="small" sx={{ mt: 1 }}>
@@ -1061,12 +1112,8 @@ function FilterPanelModal({
 
         <Divider />
 
-        {/* Task Type */}
         <Box>
-          <Typography
-            variant="overline"
-            sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
-          >
+          <Typography variant="overline" sx={sectionLabelSx}>
             Task Type
           </Typography>
           <FormControl fullWidth size="small" sx={{ mt: 1 }}>
@@ -1080,7 +1127,6 @@ function FilterPanelModal({
                   {option.label}
                 </MenuItem>
               ))}
-              {/* Include any custom task types loaded from backend */}
               {taskTypes
                 .map((t) => (t.name || "").toLowerCase().trim())
                 .filter(
@@ -1100,12 +1146,8 @@ function FilterPanelModal({
 
         <Divider />
 
-        {/* Batch size */}
         <Box>
-          <Typography
-            variant="overline"
-            sx={{ fontWeight: 700, color: isDarkMode ? "#9ca3af" : "#6b7280", letterSpacing: "0.08em" }}
-          >
+          <Typography variant="overline" sx={sectionLabelSx}>
             Tasks Per Fetch
           </Typography>
           <Box sx={{ display: "flex", gap: 1, mt: 1, flexWrap: "wrap" }}>
@@ -1117,24 +1159,7 @@ function FilterPanelModal({
                   size="small"
                   variant={isActive ? "contained" : "outlined"}
                   onClick={() => setBatchSize(size)}
-                  sx={{
-                    textTransform: "none",
-                    fontWeight: 600,
-                    borderRadius: "10px",
-                    minWidth: 64,
-                    background: isActive ? (isDarkMode ? "#fff" : "#111") : "transparent",
-                    color: isActive ? (isDarkMode ? "#111" : "#fff") : isDarkMode ? "#e5e7eb" : "#374151",
-                    borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
-                    "&:hover": {
-                      background: isActive
-                        ? isDarkMode
-                          ? "#f3f4f6"
-                          : "#000"
-                        : isDarkMode
-                          ? "rgba(255,255,255,0.08)"
-                          : "rgba(17,17,17,0.06)",
-                    },
-                  }}
+                  sx={{ ...toggleButtonSx(isActive), minWidth: 64 }}
                 >
                   {size}
                 </Button>
@@ -1144,7 +1169,7 @@ function FilterPanelModal({
         </Box>
       </DialogContent>
 
-      <DialogActions sx={{ p: 2, gap: 1 }}>
+      <DialogActions sx={{ p: 2, gap: 1, flexWrap: "wrap" }}>
         <Button
           onClick={clearAllFilters}
           sx={{ textTransform: "none", fontWeight: 600, color: isDarkMode ? "#9ca3af" : "#6b7280" }}
@@ -1178,7 +1203,6 @@ function FilterPanelModal({
 export default function DailyTasks() {
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
-  // Use sidebar background color for main content
   const sidebarBg = isDarkMode ? "#1e1e1e" : "#ffffff";
   const sidebarBorder = isDarkMode ? "#374151" : "#e5e7eb";
   const colors = isDarkMode ? COLORS.dark : COLORS.light;
@@ -1213,9 +1237,8 @@ export default function DailyTasks() {
   const [newTaskTypeName, setNewTaskTypeName] = useState("");
   const [addingTaskType, setAddingTaskType] = useState(false);
 
-  // Advanced filter state
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
-  const [pendingViewFilter, setPendingViewFilter] = useState("personal"); // personal, disciples, all
+  const [pendingViewFilter, setPendingViewFilter] = useState("personal");
   const [pendingFilterType, setPendingFilterType] = useState("all");
   const [pendingStageFilter, setPendingStageFilter] = useState("all");
   const [pendingDateRange, setPendingDateRange] = useState("this_week");
@@ -1226,20 +1249,16 @@ export default function DailyTasks() {
   const [canViewTeam, setCanViewTeam] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // Quick filter pills state (synced with pendingStageFilter)
   const [filter, setFilter] = useState("all");
 
-  // Pagination state
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [totalTasks, setTotalTasks] = useState(0);
 
-  // Person filter modal state
   const [personFilterOpen, setPersonFilterOpen] = useState(false);
 
   const API_URL = `${import.meta.env.VITE_BACKEND_URL}`;
 
-  // ─── People cache loading ───────────────────────────────────────────────────
   const isFetchingPeopleRef = useRef(false);
   const peopleFetchPromiseRef = useRef(null);
   const peoplePollRef = useRef(null);
@@ -1260,8 +1279,6 @@ export default function DailyTasks() {
     return mapped;
   }, [userOrgKey]);
 
-  // Fast single-query fallback so recipient/assignee search is usable right
-  // away while the full people cache is still loading in the background.
   const fetchMinimalPeopleFallback = useCallback(async () => {
     try {
       const fallbackRes = await authFetch(`${API_URL}/people/all-minimal`);
@@ -1280,7 +1297,7 @@ export default function DailyTasks() {
   const pollPeopleCache = useCallback(() => {
     if (peoplePollRef.current) clearInterval(peoplePollRef.current);
     let attempts = 0;
-    const MAX_ATTEMPTS = 90; // 3 minutes at 2s intervals
+    const MAX_ATTEMPTS = 90;
     let pollInFlight = false;
 
     peoplePollRef.current = setInterval(async () => {
@@ -1299,15 +1316,12 @@ export default function DailyTasks() {
             peoplePollRef.current = null;
             setIsLoadingPeople(false);
 
-            // Last-resort fallback so recipient search still has data.
             if (mapped.length === 0) {
               await fetchMinimalPeopleFallback();
             }
             return;
           }
 
-          // Dropdowns are empty — serve the fast fallback while the heavy
-          // cache load finishes in the background.
           if (mapped.length === 0 && attempts <= 2) {
             fetchMinimalPeopleFallback();
           }
@@ -1368,9 +1382,6 @@ export default function DailyTasks() {
           return mapped;
         }
 
-        // While the cache loads (partial or empty), kick off the quick
-        // minimal-people fetch so searches work immediately, then keep
-        // polling until the full cache lands.
         if (mapped.length === 0) {
           fetchMinimalPeopleFallback();
         }
@@ -1379,7 +1390,6 @@ export default function DailyTasks() {
       } catch (err) {
         console.error("Fetch people error:", err.message);
         setIsLoadingPeople(false);
-        // Serve whatever we have and get the minimal fallback loading.
         await fetchMinimalPeopleFallback();
         return getCachedPeople();
       } finally {
@@ -1402,7 +1412,6 @@ export default function DailyTasks() {
     };
   }, []);
 
-  // ─── Resolve team hierarchy from the loaded People cache ───────────────────
   useEffect(() => {
     const userName = `${user?.name || ""} ${user?.surname || ""}`.trim().toLowerCase();
     const userEmail = (user?.email || "").trim().toLowerCase();
@@ -1459,35 +1468,29 @@ export default function DailyTasks() {
     return hasSelf ? base : [currentUserPerson, ...base];
   }, [isAdmin, canViewTeam, allPeople, teamPeopleObjects, currentUserPerson]);
 
-  // People an admin/leader may pick in the Disciples filter.
   const selectablePeople = useMemo(
     () => (isAdmin ? allPeople : teamPeopleObjects),
     [isAdmin, allPeople, teamPeopleObjects],
   );
 
-  // ─── Dynamic filter counts from actual tasks ──────────────────────────────
-  const filterCounts = useMemo(() => {
-    const counts = tasks.reduce(
-      (acc, t) => {
-        const stage = getTaskStageKey(t);
-        acc.all++;
-        if (stage === "completed") acc.completed++;
-        else if (stage === "open") acc.open++;
-        else if (stage === "awaiting task") acc["awaiting task"]++;
-        else if (stage === "overdue") acc.overdue++;
-        return acc;
-      },
-      { all: 0, completed: 0, open: 0, "awaiting task": 0, overdue: 0 },
-    );
-    return counts;
-  }, [tasks]);
+  const filterCounts = useMemo(
+    () =>
+      tasks.reduce(
+        (acc, t) => {
+          acc.all++;
+          acc[getPillKey(t)]++;
+          return acc;
+        },
+        { all: 0, completed: 0, "in-progress": 0, overdue: 0 },
+      ),
+    [tasks],
+  );
 
   const FILTERS = useMemo(
     () => [
       { key: "all", label: `All (${filterCounts.all})` },
-      { key: "open", label: `Open (${filterCounts.open})` },
       { key: "completed", label: `Completed (${filterCounts.completed})` },
-      { key: "awaiting task", label: `Awaiting Task (${filterCounts["awaiting task"]})` },
+      { key: "in-progress", label: `In Progress (${filterCounts["in-progress"]})` },
       { key: "overdue", label: `Overdue (${filterCounts.overdue})` },
     ],
     [filterCounts],
@@ -1532,14 +1535,14 @@ export default function DailyTasks() {
 
   const [taskData, setTaskData] = useState({
     taskType: "",
-    recipient: null, // selected recipient person
+    recipient: null,
     recipientDisplay: "",
     contactedPersonName: "",
     contactedPersonEmail: "",
     contactedPersonPhone: "",
-    assignedTo: currentUserFullName || "Me", // defaults to current user
+    assignedTo: currentUserFullName || "Me",
     assignedEmail: user?.email || "",
-    dueDate: getTodayDateInput(), // fixed / read-only
+    dueDate: getTodayDateInput(),
     dueTime: getCurrentTimeInput(),
     taskStage: "Open",
   });
@@ -1632,8 +1635,6 @@ export default function DailyTasks() {
       (person) => person.email && person.email === assigneeEmail.toLowerCase(),
     );
 
-    // `task.type` holds the task-type label after normalization, so rely on
-    // the preserved kind or infer a visit from the task type.
     const taskKindLabel = `${task.taskKind || ""} ${task.taskType || ""}`.toLowerCase();
     const isVisitTask =
       task.taskKind === "visit" ||
@@ -1699,6 +1700,23 @@ export default function DailyTasks() {
     e.preventDefault();
     if (submitting) return;
 
+    const todayStr = getTodayDateInput();
+    const chosenDate = taskData.dueDate || todayStr;
+    const originalDate = editingTask
+      ? toLocalDateInput(editingTask.followup_date || editingTask.date)
+      : null;
+
+    // Past dates are only tolerated when editing a task and leaving its date untouched
+    if (chosenDate < todayStr && chosenDate !== originalDate) {
+      toast.error("Due date cannot be in the past.");
+      return;
+    }
+
+    if (chosenDate > todayStr && normalizeStage(taskData.taskStage) === "Completed") {
+      toast.error("A task scheduled for a future date can't be marked as completed yet.");
+      return;
+    }
+
     const person = taskData.recipient;
     if (!person?.fullName) {
       toast.error("Please select a recipient from the list.");
@@ -1716,7 +1734,6 @@ export default function DailyTasks() {
       let assigneeEmail = (taskData.assignedEmail || "").trim().toLowerCase();
       let resolvedAssigneeName = assigneeName;
 
-      // If the user typed a name without picking a suggestion, resolve it.
       if (!assigneeEmail) {
         const normalizedAssigneeName = assigneeName.toLowerCase().trim();
         const match = assigneePeople.find(
@@ -1739,7 +1756,6 @@ export default function DailyTasks() {
         resolvedAssigneeName = currentUserFullName || "Me";
       }
 
-      // Due date is fixed; combine it with the editable time.
       const dueDatePart = taskData.dueDate || getTodayDateInput();
       const dueTimePart = taskData.dueTime || getCurrentTimeInput();
       const localDue = new Date(`${dueDatePart}T${dueTimePart}:00`);
@@ -1797,16 +1813,14 @@ export default function DailyTasks() {
     }
   };
 
-  // ─── Helper: Calculate date range for filter panel presets ────────────────────
   const getFilterDateRangeParams = useCallback((range, customRange) => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
     switch (range) {
       case "this_week": {
-        // Start from Monday
         const day = today.getDay();
-        const diff = day === 0 ? -6 : 1 - day; // Monday = 1
+        const diff = day === 0 ? -6 : 1 - day;
         const start = new Date(today);
         start.setDate(today.getDate() + diff);
         const end = new Date(start);
@@ -1816,7 +1830,7 @@ export default function DailyTasks() {
       }
       case "last_week": {
         const day = today.getDay();
-        const diff = day === 0 ? -6 : 1 - day; // Monday = 1
+        const diff = day === 0 ? -6 : 1 - day;
         const thisWeekStart = new Date(today);
         thisWeekStart.setDate(today.getDate() + diff);
         const lastWeekStart = new Date(thisWeekStart);
@@ -1849,7 +1863,6 @@ export default function DailyTasks() {
     }
   }, []);
 
-  // ─── Fetch user tasks with filters ───────────────────────────────────
   const fetchUserTasks = useCallback(async (pageNum = 1, append = false) => {
     if (!user?.email) return;
     setLoading(true);
@@ -1860,28 +1873,22 @@ export default function DailyTasks() {
         page: pageNum.toString(),
         limit: batchSize.toString(),
       });
-      
-      // Date range filters
+
       if (dateParams.start_date) params.append("start_date", dateParams.start_date);
       if (dateParams.end_date) params.append("end_date", dateParams.end_date);
       if (dateParams.all_dates) params.append("all_dates", "true");
-      
-      // Task Stage filter (from advanced modal)
+
       if (pendingStageFilter !== "all") {
         params.append("task_stage", pendingStageFilter);
       }
-      
-      // Task type filter (from advanced modal)
+
       if (pendingFilterType !== "all") {
         params.append("task_type", pendingFilterType);
       }
-      
-      // View filter (personal/disciples/all)
+
       if (pendingViewFilter === "all") {
         params.append("view_all", "true");
       } else if (pendingViewFilter === "disciples" && selectedPeople.length > 0) {
-        // Send selected people emails as one comma-separated value so the
-        // backend receives every selected person (repeated params only keep one).
         const discipleEmails = [
           ...new Set(selectedPeople.map((person) => person.email).filter(Boolean)),
         ];
@@ -1889,14 +1896,12 @@ export default function DailyTasks() {
           params.set("email", discipleEmails.join(","));
         }
       }
-      // For "personal" view, only the user's email is sent (already in params)
-      
+
       const res = await authFetch(`${API_URL}/tasks?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to fetch tasks");
       const data = await res.json();
       const fetchedTasks = Array.isArray(data) ? data : data.tasks || [];
-      
-      // Normalize tasks
+
       const normalized = fetchedTasks.map((task) => ({
         ...task,
         taskKind: task.type === "visit" ? "visit" : "call",
@@ -1906,25 +1911,23 @@ export default function DailyTasks() {
         taskStage: (task.taskStage || task.status || "open"),
         date: task.followup_date || task.date || task.created_at || new Date().toISOString(),
       }));
-      
+
       if (append) {
         setTasks((prev) => [...prev, ...normalized]);
       } else {
         setTasks(normalized);
       }
-      
+
       setHasMore(data.has_more || false);
       setTotalTasks(data.total || data.total_tasks || normalized.length);
       setPage(pageNum);
     } catch (err) {
       console.error("Error fetching tasks:", err.message);
-      // Don't update state on error to avoid infinite retry loops
     } finally {
       setLoading(false);
     }
   }, [user, authFetch, API_URL, pendingDateRange, customDateRange, pendingStageFilter, pendingFilterType, pendingViewFilter, selectedPeople, batchSize, getFilterDateRangeParams]);
 
-  // Load tasks on mount and when filters change
   useEffect(() => {
     if (user) {
       setPage(1);
@@ -1940,297 +1943,180 @@ export default function DailyTasks() {
     }
   }, [updateCount, fetchUserTasks]);
 
-  // Filter tasks based on stage filter (overdue is derived from the due date)
-  const visibleTasks = tasks.filter(
-    (t) => filter === "all" || getTaskStageKey(t) === filter,
-  );
+  const visibleTasks = tasks.filter((t) => filter === "all" || getPillKey(t) === filter);
   const totalCount = tasks.length;
-  // Design stat card: completed + awaiting tasks in the current view.
-  const completedTaskCount = visibleTasks.filter((t) =>
-    ["completed", "awaiting task"].includes(getTaskStageKey(t)),
-  ).length;
+  const completedTaskCount = filterCounts.completed;
 
-  // ─── Main Render ────────────────────────────────────────────────────
+  const downloadFilteredTasks = () => {
+    const header = ["Recipient", "Assigned To", "Task Type", "Stage", "Date"];
+    const rows = visibleTasks.map((t) => [
+      t.person,
+      t.name,
+      t.type,
+      getTaskStageKey(t),
+      formatTaskDate(t.date),
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `daily-tasks-${toDateOnly(new Date())}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div
+      className="dt-root"
       style={{
-        // height: "100vh",
-        // overflow: "hidden",
-        display: "flex",
-        flexDirection: "column",
-        backgroundColor: sidebarBg,
+        "--dt-surface": sidebarBg,
+        "--dt-surface-border": sidebarBorder,
+        "--dt-bg": colors.background,
+        "--dt-card": colors.card,
+        "--dt-card-hover": colors.cardHover,
+        "--dt-border": colors.border,
+        "--dt-fg": colors.foreground,
+        "--dt-muted": colors.mutedForeground,
+        "--dt-primary": colors.primary,
+        "--dt-primary-fg": colors.primaryForeground,
+        "--dt-primary-border": colors.primaryBorder,
+        "--dt-teal": colors.teal,
       }}
     >
-      {/* Main column */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        {/* Top bar */}
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "32px 40px 16px 40px",
-            backgroundColor: sidebarBg,
-            borderBottom: `1px solid ${sidebarBorder}`,
-          }}
-        >
-          <h1 style={{ fontSize: "20px", fontWeight: "600", letterSpacing: "-0.02em", color: colors.foreground }}>
-            Daily Tasks Overview
-          </h1>
-        </header>
+      <style>{DT_CSS}</style>
 
-        <main style={{ flex: 1, padding: "0 40px 64px 40px" }}>
-          {/* Heading + action buttons */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "24px" }}>
-            <h2 style={{ fontSize: "36px", fontWeight: "700", letterSpacing: "-0.02em", color: colors.foreground }}>
-              Daily Tasks
-            </h2>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <button
-                onClick={() => handleOpen("call")}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  borderRadius: "10px",
-                  backgroundColor: colors.primary,
-                  color: colors.primaryForeground,
-                  fontWeight: "500",
-                  padding: "12px 20px",
-                  fontSize: "14px",
-                  border: `1px solid ${colors.primaryBorder}`,
-                  cursor: "pointer",
-                }}
-              >
-                <Phone size={16} />
-                Call Task
-              </button>
-              <button
-                onClick={() => handleOpen("visit")}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  borderRadius: "10px",
-                  backgroundColor: colors.card,
-                  color: colors.foreground,
-                  fontWeight: "500",
-                  padding: "12px 20px",
-                  fontSize: "14px",
-                  border: `1px solid ${colors.border}`,
-                  cursor: "pointer",
-                }}
-              >
-                <MapPin size={16} />
-                Visit Task
-              </button>
-              <button
-                onClick={() => {
-                  setIsAddTypeModalOpen(true);
-                  setNewTaskTypeName("");
-                }}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  borderRadius: "10px",
-                  border: `1px solid ${colors.tealBorder}`,
-                  backgroundColor: "transparent",
-                  color: colors.teal,
-                  fontWeight: "500",
-                  padding: "12px 20px",
-                  fontSize: "14px",
-                  cursor: "pointer",
-                }}
-              >
-                <Plus size={16} />
-                New Task Type
-              </button>
-            </div>
-          </div>
-
-          {/* Filter Panel Button */}
-          <button
-            onClick={() => setFilterPanelOpen(true)}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "8px",
-              borderRadius: "10px",
-              backgroundColor: colors.card,
-              color: colors.foreground,
-              fontWeight: "500",
-              padding: "12px 20px",
-              fontSize: "14px",
-              border: `1px solid ${colors.border}`,
-              cursor: "pointer",
-            }}
-          >
-            <Filter size={16} />
-            Filters
-          </button>
-
-          {/* Stat card + filter pills + right controls */}
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "16px", marginTop: "32px" }}>
-            <div
-              style={{
-                borderRadius: "14px",
-                border: `1px solid ${colors.border}`,
-                backgroundColor: colors.card,
-                padding: "24px 32px",
+      <main className="dt-main">
+        <div className="dt-heading-row">
+          <h2 className="dt-title">Daily Tasks</h2>
+          <div className="dt-actions">
+            <button className="dt-btn dt-btn--primary" onClick={() => handleOpen("call")}>
+              <Phone size={16} />
+              Call Task
+            </button>
+            <button className="dt-btn" onClick={() => handleOpen("visit")}>
+              <MapPin size={16} />
+              Visit Task
+            </button>
+            <button
+              className="dt-btn dt-btn--teal"
+              onClick={() => {
+                setIsAddTypeModalOpen(true);
+                setNewTaskTypeName("");
               }}
             >
-              <div style={{ fontSize: "48px", fontWeight: "700", lineHeight: "1", color: colors.foreground }}>
-                {completedTaskCount}
-              </div>
-              <div style={{ marginTop: "8px", fontSize: "11px", fontWeight: "500", letterSpacing: "0.18em", textTransform: "uppercase", color: colors.mutedForeground }}>
-                TASKS COMPLETE
-              </div>
-            </div>
+              <Plus size={16} />
+              New Task Type
+            </button>
+          </div>
+        </div>
 
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" }}>
-              {FILTERS.map((f) => (
-                <button
-                  key={f.key}
-                  onClick={() => {
-                    setFilter(f.key);
-                    setPendingStageFilter(f.key); // sync with advanced filter modal
-                    setPage(1);
-                    fetchUserTasks(1, false);
-                  }}
-                  style={{
-                    borderRadius: "10px",
-                    padding: "10px 16px",
-                    fontSize: "13px",
-                    fontWeight: "500",
-                    cursor: "pointer",
-                    transition: "all 0.2s",
-                    backgroundColor: filter === f.key ? colors.primary : colors.card,
-                    color: filter === f.key ? colors.primaryForeground : colors.foreground,
-                    border: filter === f.key ? "none" : `1px solid ${colors.border}`,
-                  }}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-
-            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "12px" }}>
-              <button
-                style={{
-                  borderRadius: "10px",
-                  backgroundColor: colors.foreground,
-                  color: colors.background,
-                  fontWeight: "600",
-                  padding: "10px 16px",
-                  fontSize: "13px",
-                  border: "none",
-                  cursor: "pointer",
-                }}
-              >
-                Download Filtered Tasks
-              </button>
-            </div>
+        <div className="dt-toolbar">
+          <div className="dt-stat">
+            <div className="dt-stat-num">{completedTaskCount}</div>
+            <div className="dt-stat-label">Tasks Complete</div>
           </div>
 
-          {/* Task rows */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginTop: "40px" }}>
-            {loading ? (
-              <div style={{ textAlign: "center", padding: "40px", color: colors.mutedForeground }}>
-                <Spinner size={32} color={colors.primary} />
-                <div style={{ marginTop: "16px" }}>Loading tasks...</div>
-              </div>
-            ) : visibleTasks.length === 0 ? (
-              <div
-                style={{
-                  borderRadius: "14px",
-                  border: `1px solid ${colors.border}`,
-                  backgroundColor: colors.card,
-                  padding: "40px",
-                  textAlign: "center",
-                  fontSize: "14px",
-                  color: colors.mutedForeground,
-                }}
+          <div className="dt-pills" role="tablist" aria-label="Task status">
+            {FILTERS.map((f) => (
+              <button
+                key={f.key}
+                role="tab"
+                aria-selected={filter === f.key}
+                className={`dt-pill${filter === f.key ? " is-active" : ""}`}
+                onClick={() => setFilter(f.key)}
               >
-                No tasks in this view.
-              </div>
-            ) : (
-              visibleTasks.map((task) => (
-                <div
-                  key={task._id || task.id || `${task.name}-${task.date}`}
-                  onClick={() => handleEdit(task)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "20px",
-                    borderRadius: "14px",
-                    border: `1px solid ${colors.border}`,
-                    backgroundColor: colors.card,
-                    padding: "24px",
-                    cursor: "pointer",
-                    overflow:"auto"
-                  }}
-                >
-                  <div
-                    style={{
-                      width: "48px",
-                      height: "48px",
-                      flexShrink: 0,
-                      borderRadius: "50%",
-                      backgroundColor: colors.border,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "18px",
-                      fontWeight: "600",
-                      color: colors.mutedForeground,
-                      overflow:"auto"
-                    }}
-                  >
-                    {(task.person || task.name || "?").charAt(0)}
-                  </div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: "18px", fontWeight: "600", color: colors.foreground }}>
-                      {task.person || "No recipient"}
-                    </div>
-                    <div style={{ marginTop: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: "14px", color: colors.mutedForeground }}>
-                      {task.name} <span style={{ margin: "0 8px" }}>•</span> {task.type}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: "32px", marginLeft: "auto" }}>
-                    <StatusBadge status={getTaskStageKey(task)} colors={colors} />
-                    <span style={{ fontSize: "13px", color: colors.mutedForeground }}>
-                      {formatTaskDate(task.date)}
-                    </span>
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="dt-controls">
+            <div className="dt-select-wrap">
+              <select
+                className="dt-select"
+                aria-label="Time period"
+                value={pendingDateRange}
+                onChange={(e) => setPendingDateRange(e.target.value)}
+              >
+                {DATE_RANGE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={16} />
+            </div>
+            <button className="dt-btn dt-btn--small" onClick={() => setFilterPanelOpen(true)}>
+              <Filter size={16} />
+              Filters
+            </button>
+            <button className="dt-btn dt-btn--solid" onClick={downloadFilteredTasks}>
+              Download Filtered Tasks
+            </button>
+          </div>
+        </div>
+
+        {pendingDateRange === "custom" && (
+          <div className="dt-custom-range">
+            <input
+              type="date"
+              aria-label="Start date"
+              value={customDateRange.start}
+              onChange={(e) => setCustomDateRange({ ...customDateRange, start: e.target.value })}
+            />
+            <input
+              type="date"
+              aria-label="End date"
+              value={customDateRange.end}
+              onChange={(e) => setCustomDateRange({ ...customDateRange, end: e.target.value })}
+            />
+          </div>
+        )}
+
+        <div className="dt-list">
+          {loading ? (
+            <div className="dt-loading">
+              <Spinner size={32} color={colors.primary} />
+              <div>Loading tasks...</div>
+            </div>
+          ) : visibleTasks.length === 0 ? (
+            <div className="dt-empty">No tasks in this view.</div>
+          ) : (
+            visibleTasks.map((task) => (
+              <div
+                key={task._id || task.id || `${task.name}-${task.date}`}
+                className="dt-row"
+                role="button"
+                tabIndex={0}
+                onClick={() => handleEdit(task)}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleEdit(task)}
+              >
+                <div className="dt-avatar">{(task.person || task.name || "?").charAt(0)}</div>
+                <div className="dt-row-body">
+                  <div className="dt-row-name">{task.person || "No recipient"}</div>
+                  <div className="dt-row-sub">
+                    {task.name} <span style={{ margin: "0 6px" }}>•</span> {task.type}
                   </div>
                 </div>
-              ))
-            )}
-            {/* Load More */}
-            {hasMore && !loading && (
-              <button
-                onClick={() => fetchUserTasks(page + 1, true)}
-                style={{
-                  marginTop: "24px",
-                  padding: "12px 24px",
-                  borderRadius: "10px",
-                  backgroundColor: colors.primary,
-                  color: colors.primaryForeground,
-                  fontWeight: "600",
-                  fontSize: "14px",
-                  border: "none",
-                  cursor: "pointer",
-                  alignSelf: "center",
-                }}
-              >
-                Load More ({totalCount} of {totalTasks})
-              </button>
-            )}
-          </div>
-        </main>
-      </div>
+                <div className="dt-row-meta">
+                  <StatusBadge status={getTaskStageKey(task)} colors={colors} />
+                  <span className="dt-row-date">{formatTaskDate(task.date)}</span>
+                </div>
+              </div>
+            ))
+          )}
 
-      {/* Modals */}
+          {hasMore && !loading && (
+            <button
+              className="dt-btn dt-btn--primary dt-more"
+              onClick={() => fetchUserTasks(page + 1, true)}
+            >
+              Load More ({totalCount} of {totalTasks})
+            </button>
+          )}
+        </div>
+      </main>
+
       {isModalOpen && (
         <CallTaskModal
           isOpen={isModalOpen}
@@ -2261,7 +2147,6 @@ export default function DailyTasks() {
         />
       )}
 
-      {/* Person Filter Modal */}
       <PersonFilterModal
         open={personFilterOpen}
         onClose={() => setPersonFilterOpen(false)}
@@ -2272,14 +2157,12 @@ export default function DailyTasks() {
         isAdmin={isAdmin}
       />
 
-      {/* Advanced Filter Panel Modal */}
       <FilterPanelModal
         open={filterPanelOpen}
         onClose={() => setFilterPanelOpen(false)}
         onApply={() => {
           setFilterPanelOpen(false);
-          // Keep the quick stage pills in sync with the advanced stage filter.
-          setFilter(pendingStageFilter);
+          setFilter(stageToPill(pendingStageFilter));
           setPage(1);
           fetchUserTasks(1, false);
         }}
@@ -2306,7 +2189,6 @@ export default function DailyTasks() {
         taskTypes={taskTypes}
       />
 
-      {/* Toast container */}
       <ToastContainer
         position="top-right"
         autoClose={3000}
@@ -2316,13 +2198,6 @@ export default function DailyTasks() {
         pauseOnHover
         theme={isDarkMode ? "dark" : "light"}
       />
-
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 }
