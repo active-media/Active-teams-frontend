@@ -237,7 +237,7 @@ const DT_CSS = `
 .dt-btn--small{padding:10px 16px;font-size:13px}
 .dt-btn--solid{background:var(--dt-fg);color:var(--dt-bg);border:none;font-weight:600;padding:10px 16px;font-size:13px}
 .dt-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:16px;margin-top:32px}
-.dt-stat{border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:24px 32px;min-width:160px}
+.dt-stat{border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:10px 10px;min-width:160px}
 .dt-stat-num{font-size:48px;font-weight:700;line-height:1;color:var(--dt-fg)}
 .dt-stat-label{margin-top:8px;font-size:11px;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--dt-muted)}
 .dt-pills{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
@@ -261,6 +261,25 @@ const DT_CSS = `
 .dt-empty{border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:40px;text-align:center;font-size:14px;color:var(--dt-muted)}
 .dt-loading{padding:40px;color:var(--dt-muted);display:flex;flex-direction:column;align-items:center;gap:16px}
 .dt-more{align-self:center;margin-top:8px}
+@media (max-width:1366px){
+  .dt-main{padding:0 28px 48px}
+  .dt-heading-row{gap:12px;margin-top:20px}
+  .dt-title{font-size:32px}
+  .dt-actions{gap:8px}
+  .dt-btn{padding:10px 16px;font-size:13px}
+  .dt-toolbar{gap:12px;margin-top:24px}
+  .dt-stat{min-width:140px;padding:18px 24px}
+  .dt-stat-num{font-size:40px}
+  .dt-pills{gap:6px}
+  .dt-pill{padding:8px 12px}
+  .dt-controls{gap:8px}
+  .dt-select{padding:9px 30px 9px 12px}
+  .dt-list{gap:12px;margin-top:28px}
+  .dt-row{gap:16px;padding:18px}
+  .dt-avatar{width:44px;height:44px}
+  .dt-row-name{font-size:16px}
+  .dt-row-sub,.dt-row-date{font-size:13px}
+}
 @media (max-width:1100px){
   .dt-controls{margin-left:0;width:100%}
 }
