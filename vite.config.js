@@ -15,6 +15,7 @@ export default defineConfig({
     workbox: {
       maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       navigateFallback: '/index.html', // keeps your SPA working offline
+      importScripts: ['/push-sw.js'],
       runtimeCaching: [
         {
           urlPattern: ({ request }) => request.mode === 'navigate',
