@@ -15,7 +15,7 @@ import { PeopleSection as People } from "./Pages/People";
 import Events from "./Pages/Events";
 import Stats from "./Pages/Stats";
 import Reports from "./Pages/Reports";
-import CellsDrilldown from "./Pages/CellsDrilldown";
+import CellsDrilldown from "./Pages/Cellsdrilldown";
 import ScheduledReports from "./Pages/ScheduledReports";
 import ReportingDashboard from "./Pages/ReportingDashboard";
 import ReportingDashboardLegacy from "./features/reporting/_legacy/ReportingDashboardLegacy";

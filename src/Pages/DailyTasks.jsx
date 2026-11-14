@@ -249,7 +249,7 @@ const DT_CSS = `
 .dt-select-wrap svg{position:absolute;right:12px;pointer-events:none;color:var(--dt-fg)}
 .dt-custom-range{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
 .dt-custom-range input{border-radius:10px;border:1px solid var(--dt-border);background:var(--dt-card);color:var(--dt-fg);padding:8px 12px;font-size:13px;font-family:inherit}
-.dt-list{display:flex;flex-direction:column;gap:16px;margin-top:40px}
+.dt-list{display:flex;flex-direction:column;gap:16px;margin-top:40px;min-height:55vh}
 .dt-row{display:flex;align-items:center;gap:20px;border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:24px;cursor:pointer;transition:background .15s}
 .dt-row:hover{background:var(--dt-card-hover)}
 .dt-avatar{width:48px;height:48px;flex-shrink:0;border-radius:50%;background:var(--dt-border);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;color:var(--dt-fg);text-transform:uppercase}
