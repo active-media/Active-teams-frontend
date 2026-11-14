@@ -472,11 +472,12 @@ function CallTaskModal({
       onClose={onClose}
       fullWidth
       maxWidth="sm"
-      fullScreen={isSmall}
+      // fullScreen={!isSmall}/
       PaperProps={{
         sx: {
-          borderRadius: isSmall ? 0 : "18px",
+          borderRadius: isSmall ? "6px" : "18px",
           background: "background.paper",
+
         },
       }}
     >
@@ -2001,8 +2002,8 @@ export default function DailyTasks() {
           <h2 className="dt-title">Daily Tasks</h2>
           <div className="dt-actions">
             <button className="dt-btn dt-btn--primary" onClick={() => handleOpen("call")}>
-              <Phone size={16} />
-              Call Task
+              <Phone sizes={16} />
+              Call Tasks
             </button>
             <button className="dt-btn" onClick={() => handleOpen("visit")}>
               <MapPin size={16} />
