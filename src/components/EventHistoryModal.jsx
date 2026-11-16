@@ -68,7 +68,7 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
     if (open) {
       setSearchTerm('');
       setPage(0);
-      setActiveTab(0);
+      setActiveTab(type === 'newPeople' ? 1 : type === 'consolidated' ? 2 : 0);
     }
   }, [open]);
 
@@ -86,6 +86,35 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
       consolidations: Array.isArray(data.consolidations) ? data.consolidations : Array.isArray(data.consolidatedData) ? data.consolidatedData : [],
     };
   }, [data]);
+
+  const commitmentSummary = useMemo(() => {
+    const rows = normalizedData.consolidations || [];
+    return rows.reduce(
+      (summary, item) => {
+        const raw = [
+          item?.decision_type,
+          item?.decision_display_name,
+          item?.consolidation_type,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        summary.total += 1;
+        if (raw.includes('first')) summary.first_time += 1;
+        else if (
+          raw.includes('recommit') ||
+          raw.includes('re-commit') ||
+          raw.includes('rededic')
+        ) {
+          summary.recommitment += 1;
+        } else {
+          summary.other += 1;
+        }
+        return summary;
+      },
+      { total: 0, first_time: 0, recommitment: 0, other: 0 },
+    );
+  }, [normalizedData.consolidations]);
 
   const tabData = useMemo(() => {
     switch (activeTab) {
@@ -120,7 +149,7 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
 
     const headers =
       activeTab === 1
-        ? ['Name', 'Surname', 'Email', 'Phone', 'Gender', 'Invited By', 'Leader @1', 'Leader @12', 'Leader @144']
+        ? ['Full Name', 'Email', 'Phone', 'Gender', 'Invited By', 'Leader @1', 'Leader @12', 'Leader @144']
         : activeTab === 2
           ? ['Name', 'Surname', 'Email', 'Phone', 'Decision Type', 'Assigned To', 'Status', 'Leader @1', 'Leader @12', 'Leader @144']
           : ['Name', 'Surname', 'Email', 'Phone', 'Leader @1', 'Leader @12', 'Leader @144'];
@@ -128,8 +157,9 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
     const rows = filteredData.map((item) => {
       if (activeTab === 1) {
         return [
-          item.name || '',
-          item.surname || '',
+          // item.name || '',
+          // item.surname || '',
+          item.full_name || '',
           item.email || '',
           item.phone || '',
           item.gender || '',
@@ -255,9 +285,9 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
       </TableCell>
       <TableCell>{item.email || item.person_email || '—'}</TableCell>
       <TableCell>{item.phone || item.person_phone || '—'}</TableCell>
-      <TableCell>{item.leader1 || '—'}</TableCell>
-      <TableCell>{item.leader12 || '—'}</TableCell>
-      <TableCell>{item.leader144 || '—'}</TableCell>
+      <TableCell>{item.leader_at_1 || '—'}</TableCell>
+      <TableCell>{item.leader_at_12 || '—'}</TableCell>
+      <TableCell>{item.leader_at_144 || '—'}</TableCell>
       {activeTab === 2 && (
         <>
           <TableCell>{item.decision_type || item.consolidation_type || '—'}</TableCell>
@@ -320,6 +350,41 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
           })}
         </Tabs>
 
+        {activeTab === 2 && (
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: {
+                xs: 'repeat(2, minmax(0, 1fr))',
+                sm: 'repeat(4, minmax(0, 1fr))',
+              },
+              gap: 1.25,
+              mb: 2,
+            }}
+          >
+            {[
+              { key: 'total', label: 'Total decisions', value: commitmentSummary.total, color: 'primary.main' },
+              { key: 'first_time', label: 'First-time', value: commitmentSummary.first_time, color: 'success.main' },
+              { key: 'recommitment', label: 'Recommitment', value: commitmentSummary.recommitment, color: 'info.main' },
+              { key: 'other', label: 'Other / unspecified', value: commitmentSummary.other, color: 'warning.main' },
+            ].map((card) => (
+              <Card key={card.key} variant="outlined" sx={{ boxShadow: 0 }}>
+                <CardContent sx={{ p: 1.4, '&:last-child': { pb: 1.4 } }}>
+                  <Typography
+                    variant="h5"
+                    sx={{ fontWeight: 700, color: card.color, lineHeight: 1.1 }}
+                  >
+                    {card.value}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {card.label}
+                  </Typography>
+                </CardContent>
+              </Card>
+            ))}
+          </Box>
+        )}
+
         <TextField
           size="small"
           placeholder="Search this tab..."
@@ -332,7 +397,7 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
           sx={{ mb: 2, boxShadow: 1 }}
         />
 
-        {isLoading ? (
+        {isLoading ===true ? (
           <Box display="flex" justifyContent="center" py={6}>
             <CircularProgress />
           </Box>

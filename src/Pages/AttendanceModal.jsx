@@ -1756,8 +1756,8 @@ const AttendanceModal = ({
     const personSurname = nameParts.slice(1).join(" ") || "";
     console.log("LOOK HERE!",event)
     const payload = {
-      person_name: person.name || personName,
-      person_surname: person.surname || personSurname,
+      person_name: personName,
+      person_surname:  personSurname,
       person_email: person.email || "",
       person_phone: person.phone || "",
       decision_type: decisionType, // "first_time" or "recommitment"
@@ -2216,7 +2216,7 @@ const AttendanceModal = ({
       let liveResponseOk = false;
       if (syncsServiceCheckIn) {
         const liveResponse = await authFetch(
-          `${BACKEND_URL}/service-checkin/real-time-data?event_id=${encodeURIComponent(attendanceEventId)}`,
+          `${BACKEND_URL}/service-checkin/real-time-data?event_id=${event.event_id}`,
           { headers: { Authorization: `Bearer ${token}` } },
         );
         if (liveResponse.ok) {
@@ -2682,11 +2682,12 @@ const AttendanceModal = ({
             const formatted = peopleArray.map((person) => {
               const fullName =
                 `${person.Name || ""} ${person.Surname || ""}`.trim();
-              const leader1 = person["Leader @1"] || person.leader1 || "";
-              const leader12 = person["Leader @12"] || person.leader12 || "";
+              const leader1 = person["Leader @1"] || person.leader1 ||leader_at_1 || "";
+              const leader12 = person["Leader @12"] || person.leader12 || person.leader_at_12 || "";
               const leader144 = person["Leader @144"] || person.leader144 || "";
               const leader1728 =
                 person["Leader @1728"] || person.leader1728 || "";
+                console.log("Formatted person:", person)
 
               return {
                 id: person._id,
@@ -3247,7 +3248,6 @@ const AttendanceModal = ({
       const shouldMarkAsDidNotMeet =
         didNotMeet && attendeesList.length === 0 && finalHeadcount === 0;
       const payload = {
-        event_id: eventId,
         attendees: shouldMarkAsDidNotMeet ? [] : selectedAttendees,
         persistent_attendees: persistentCommonAttendees.map((p) => {
           const ticketOverride = isTicketedEvent
@@ -3679,7 +3679,7 @@ const AttendanceModal = ({
             id: p.id,
             fullName: p.fullName,
             email: p.email || "",
-            leader12: p.leader12 || "",
+            leader12: p.leader_at_12 || "",
             leader144: p.leader144 || "",
             phone: p.phone || "",
             ...(isTicketedEvent && {
@@ -4755,6 +4755,7 @@ const AttendanceModal = ({
                           const nameParts = (person.fullName || person.full_name || "").split(" ");
                           const firstName = nameParts[0] || "";
                           const lastName = nameParts.slice(1).join(" ") || "";
+                          console.log("Rendering row for person:", person, "Ticket info:", ticketInfo, "Financials:", financials);
 
                           return (
                             <tr key={person.id}>

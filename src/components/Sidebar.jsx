@@ -10,7 +10,6 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material';
-import { alpha } from '@mui/material/styles';
 import { Link, useLocation } from 'react-router-dom';
 import MenuIcon from '@mui/icons-material/Menu';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
@@ -156,7 +155,6 @@ export default function Sidebar({ mode, setMode }) {
   const [, setUserHasCell] = useState(true);
   const [menuItems, setMenuItems] = useState([]);
 
-  const accent = theme.palette.primary.main;
   const isDark = mode === 'dark';
   const line = isDark ? '#2a2a38' : '#e3e1ec';
 
@@ -173,7 +171,7 @@ export default function Sidebar({ mode, setMode }) {
         return;
       }
 
-      const userRole = user?.role?.toLowerCase() || '';
+      const userRole = normalizeRole(user?.role);
       const isSupremeAdmin = user?.is_supreme_admin || user?.email === "tkgenia1234@gmail.com";
       const isCustomRole = !SYSTEM_ROLES.includes(normalizeRole(userRole));
 
@@ -251,7 +249,6 @@ export default function Sidebar({ mode, setMode }) {
   };
 
   // Flatter, truer black in dark mode to match the design
-  const bgColor = mode === 'dark' ? '#0a0a0a' : '#ffffff';
   const textColor = mode === 'dark' ? '#ffffff' : '#000000';
   const activeTextColor = mode === 'dark' ? '#ffffff' : '#000000';
   const activeBorderColor = mode === 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)';
@@ -263,11 +260,12 @@ export default function Sidebar({ mode, setMode }) {
   const drawerContent = (
     <Box
       sx={{
-        width: 240,
+        // width: 240,
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
         overflowY: 'auto',
+        // overflowX: 'hidden !important',
         backgroundColor: theme.palette.background.paper,
         borderRight: `1px solid ${line}`,
         fontFamily: BODY,
@@ -370,7 +368,7 @@ export default function Sidebar({ mode, setMode }) {
       </List>
 
       {/* Bottom-left settings/theme control, matching the gear icon in the design */}
-      <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
+      <Box sx={{ p: 2, display: 'flex', justifyContent: 'center', }}>
         <IconButton
           onClick={handleToggleMode}
           size="small"
@@ -414,12 +412,14 @@ export default function Sidebar({ mode, setMode }) {
         sx={{
           width: 240,
           flexShrink: 0,
+          
           '& .MuiDrawer-paper': {
             width: 240,
             boxSizing: 'border-box',
             height: '100vh',
             backgroundColor: theme.palette.background.paper,
             borderRight: `1px solid ${line}`,
+
           },
         }}
       >
