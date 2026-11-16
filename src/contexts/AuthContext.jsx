@@ -330,7 +330,11 @@ export const AuthProvider = ({ children }) => {
    * Supabase sets the session automatically from the URL; we just update the password.
    * The `_token` param is accepted for API compatibility but is not needed.
    */
-  const resetPassword = async (_token, newPassword) => {
+  const resetPassword = async (newPassword) => {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw new Error(sessionError.message || 'Failed to validate password reset session');
+    if (!session?.user) throw new Error('This reset link is invalid or expired. Request a new one.');
+
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     if (error) throw new Error(error.message || 'Failed to reset password');
     return { message: 'Password updated' };
