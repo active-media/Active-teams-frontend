@@ -234,6 +234,131 @@ const peopleFilterAvatarSx = (index) => ({
   bgcolor: ["#9b5cf6", "#ff7a18", "#3986f6", "#d845e8", "#f0a300", "#10b981", "#ef4444"][index % 7],
 });
 
+const DiscipleshipRollup = React.memo(({ sections }) => {
+  const sectionColors = ["#12a5b5", "#7c5cf6", "#f59e0b"];
+
+  return (
+    <Stack spacing={1.5}>
+      {sections.map((section, sectionIndex) => {
+        const totals = section.rows.reduce(
+          (acc, row) => ({
+            total: acc.total + row.total,
+            completed: acc.completed + row.completed,
+            incomplete: acc.incomplete + row.incomplete,
+          }),
+          { total: 0, completed: 0, incomplete: 0 },
+        );
+        return (
+          <Paper
+            key={section.key}
+            variant="outlined"
+            sx={{ p: 1.5, borderRadius: 2, borderColor: "divider" }}
+          >
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+              <Box
+                sx={{
+                  width: 9,
+                  height: 9,
+                  borderRadius: "50%",
+                  bgcolor: sectionColors[sectionIndex % sectionColors.length],
+                }}
+              />
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, flex: 1 }}>
+                {section.title}
+              </Typography>
+              <Chip
+                size="small"
+                label={`${totals.completed}/${totals.total} completed`}
+                sx={{ height: 22, fontSize: "0.62rem", fontWeight: 600 }}
+              />
+            </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.25 }}>
+              {section.description}
+            </Typography>
+
+            {section.rows.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ py: 1.5, textAlign: "center" }}>
+                No people found in this part of your discipleship tree.
+              </Typography>
+            ) : (
+              <Stack spacing={0.8}>
+                {section.rows.map((row) => {
+                  const rate = row.total ? Math.round((row.completed / row.total) * 100) : 0;
+                  return (
+                    <Box
+                      key={row.key}
+                      sx={{
+                        p: 1.1,
+                        borderRadius: 1.5,
+                        border: "1px solid",
+                        borderColor: "divider",
+                        bgcolor: (theme) =>
+                          theme.palette.mode === "dark" ? "rgba(255,255,255,0.02)" : "rgba(18,165,181,0.03)",
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        <Avatar
+                          sx={{
+                            width: 27,
+                            height: 27,
+                            fontSize: "0.7rem",
+                            fontWeight: 700,
+                            bgcolor: sectionColors[sectionIndex % sectionColors.length],
+                          }}
+                        >
+                          {(row.fullName || "?").charAt(0).toUpperCase()}
+                        </Avatar>
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography variant="body2" noWrap sx={{ fontWeight: 600 }}>
+                            {row.fullName || "Unnamed person"}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
+                            {row.email || "No email on record"}
+                          </Typography>
+                        </Box>
+                        <Chip
+                          size="small"
+                          label={`${row.completed} done`}
+                          color={row.completed > 0 ? "success" : "default"}
+                          variant={row.completed > 0 ? "filled" : "outlined"}
+                          sx={{ height: 21, fontSize: "0.6rem" }}
+                        />
+                        <Chip
+                          size="small"
+                          label={`${row.incomplete} open`}
+                          color={row.incomplete > 0 ? "warning" : "default"}
+                          variant={row.incomplete > 0 ? "filled" : "outlined"}
+                          sx={{ height: 21, fontSize: "0.6rem" }}
+                        />
+                      </Stack>
+                      <Tooltip title={`${rate}% of ${row.total} tasks completed in this period`}>
+                        <LinearProgress
+                          variant="determinate"
+                          value={rate}
+                          sx={{
+                            mt: 0.9,
+                            height: 5,
+                            borderRadius: 3,
+                            bgcolor: "action.hover",
+                            "& .MuiLinearProgress-bar": {
+                              borderRadius: 3,
+                              bgcolor: sectionColors[sectionIndex % sectionColors.length],
+                            },
+                          }}
+                        />
+                      </Tooltip>
+                    </Box>
+                  );
+                })}
+              </Stack>
+            )}
+          </Paper>
+        );
+      })}
+    </Stack>
+  );
+});
+
 const TaskGroupRow = React.memo(
   ({ group, isExpanded, onToggle, formatDate }) => {
     const { user, Tasks:tasks, totalCount, completedCount, incompleteCount } = group;
@@ -460,6 +585,7 @@ const StatsDashboard = () => {
   const [cellFilter, setCellFilter] = useState("all");
   const [selectedCellPerson, setSelectedCellPerson] = useState("all");
   const [taskFilter, setTaskFilter] = useState("all");
+  const [taskView, setTaskView] = useState("people");
   const [taskPersonSearch, setTaskPersonSearch] = useState("");
   const [taskPeopleScope, setTaskPeopleScope] = useState("all");
   const [selectedTeamLeader, setSelectedTeamLeader] = useState(null);
@@ -1006,6 +1132,96 @@ const StatsDashboard = () => {
     };
   }, [stats.allTasks, taskPersonSearch, taskPeopleScope, taskPeople, user, selectedTeamLeader]);
 
+  const discipleshipSections = useMemo(() => {
+    const keyOf = (value) => String(value || "").trim().toLowerCase();
+    const personKeys = (person) =>
+      [person?._id, person?.id, person?.email, person?.fullName]
+        .filter(Boolean)
+        .map(keyOf);
+
+    const root =
+      taskPeople.find((person) => keyOf(person.email) === keyOf(user?.email)) ||
+      taskPeople.find(
+        (person) =>
+          keyOf(person._id) === keyOf(user?._id || user?.id),
+      ) ||
+      null;
+
+    const rootKeys = new Set(personKeys(root));
+    const direct = root
+      ? taskPeople.filter(
+          (person) =>
+            person !== root &&
+            keyOf(person.leader12) &&
+            rootKeys.has(keyOf(person.leader12)),
+        )
+      : [];
+    const directKeys = new Set(direct.flatMap(personKeys));
+    const subDisciples = root
+      ? taskPeople.filter(
+          (person) =>
+            person !== root &&
+            !direct.includes(person) &&
+            (
+              rootKeys.has(keyOf(person.leader144)) ||
+              rootKeys.has(keyOf(person.leader1728)) ||
+              directKeys.has(keyOf(person.leader12))
+            ),
+        )
+      : [];
+
+    const rowFor = (person) => {
+      const keys = new Set(personKeys(person));
+      const personTasks = filteredTasks.filter((task) =>
+        keys.has(keyOf(task.assignedfor)),
+      );
+      const completed = personTasks.filter(isTaskCompleted).length;
+      const fullName =
+        person.fullName ||
+        [person.name, person.surname].filter(Boolean).join(" ") ||
+        person.email ||
+        "Unnamed person";
+      return {
+        key: person.email || person._id || fullName,
+        fullName,
+        email: person.email || "",
+        total: personTasks.length,
+        completed,
+        incomplete: personTasks.length - completed,
+      };
+    };
+
+    const fallbackSelf = {
+      _id: user?._id || user?.id,
+      email: user?.email,
+      fullName: [user?.name, user?.surname].filter(Boolean).join(" "),
+    };
+    const self = root || fallbackSelf;
+    const sortRows = (rows) =>
+      [...rows].sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+    return [
+      {
+        key: "self",
+        title: "My Tasks",
+        description: "Your own task completion for the selected period.",
+        rows: self?.email || self?.fullName ? [rowFor(self)] : [],
+      },
+      {
+        key: "direct",
+        title: "Direct Disciples",
+        description: "People whose leader@12 is you.",
+        rows: sortRows(direct.map(rowFor)),
+      },
+      {
+        key: "sub",
+        title: "Sub-disciples",
+        description: "People under your direct disciples (leader@144 / leader@1728).",
+        rows: sortRows(subDisciples.map(rowFor)),
+      },
+    ];
+  }, [taskPeople, filteredTasks, user]);
+
   const getPeriodDisplayText = (periodType) => {
     switch (periodType) {
       case "today":
@@ -1539,8 +1755,8 @@ const StatsDashboard = () => {
       <Paper
         variant="outlined"
         sx={{
-          p: getResponsiveValue({ xs: 1, sm: 1.5, md: 1.5, lg: 2, xl: 2 }),
-          textAlign: "center",
+          p: getResponsiveValue({ xs: 0.75, sm: 1, md: 1, lg: 1.25, xl: 1.25 }),
+          textAlign: "left",
           boxShadow: 1,
           height: "100%",
           borderTop: `3px solid ${theme.palette[color].main}`,
@@ -1551,13 +1767,15 @@ const StatsDashboard = () => {
         <Stack
           direction="row"
           alignItems="center"
-          justifyContent="center"
+          justifyContent="space-between"
           spacing={1}
-          mb={0.5}
+          mb={0.25}
+          sx={{ width: "100%" }}
         >
           <Avatar
             sx={{
               bgcolor: `${color}.main`,
+              flexShrink: 0,
               width: getResponsiveValue({
                 xs: 28,
                 sm: 32,
@@ -1586,6 +1804,7 @@ const StatsDashboard = () => {
             })}
             fontWeight={600}
             color={`${color}.main`}
+            sx={{ flex: 1, textAlign: "right" }}
           >
             {value}
           </Typography>
@@ -1599,6 +1818,8 @@ const StatsDashboard = () => {
             xl: "body2",
           })}
           color="text.secondary"
+          noWrap
+          sx={{ display: "block" }}
         >
           {title}
         </Typography>
@@ -1721,7 +1942,7 @@ const StatsDashboard = () => {
       maxWidth="xl"
       sx={{
         p: getResponsiveValue({ xs: 1, sm: 1.5, md: 2, lg: 2.5, xl: 3 }),
-        mt: { xs: 4, md: 6 },
+        mt: { xs: 1, md: 1.5 },
       }}
     >
       {/* Header */}
@@ -1729,9 +1950,9 @@ const StatsDashboard = () => {
         display="flex"
         justifyContent="space-between"
         alignItems={isXsDown ? "flex-start" : "center"}
-        mb={3}
+        mb={1}
         flexDirection={isXsDown ? "column" : "row"}
-        gap={2}
+        gap={1}
       >
         <Box>
           <Typography variant="h5" fontWeight="medium">
@@ -1747,10 +1968,10 @@ const StatsDashboard = () => {
 
       </Box>
 
-      {(stats.loading || cellsLoading) && <LinearProgress sx={{ mb: 3 }} />}
+      {(stats.loading || cellsLoading) && <LinearProgress sx={{ mb: 1 }} />}
 
       {/* Stat Cards */}
-      <Grid container spacing={2} mb={3}>
+      <Grid container spacing={1} mb={1}>
         <Grid item xs={6} sm={3} md={2.5}>
           <StatCard
             title="Overdue Cells"
@@ -1772,7 +1993,7 @@ const StatsDashboard = () => {
       </Grid>
 
       {/* Tabs */}
-      <Paper variant="outlined" sx={{ mb: 2 }}>
+      <Paper variant="outlined" sx={{ mb: 1 }}>
         <Tabs
           variant={isSmDown ? "scrollable" : "standard"}
           centered
@@ -1791,8 +2012,8 @@ const StatsDashboard = () => {
         {activeTab === 0 && (
           <Paper
             sx={{
-              p: 3,
-              height: "calc(100vh - 380px)",
+              p: { xs: 1, sm: 1.5, md: 2 },
+              height: "calc(100vh - 300px)",
               display: "flex",
               flexDirection: "column",
               borderRadius: 2,
@@ -1816,9 +2037,9 @@ const StatsDashboard = () => {
               gap={1.5}
               alignItems="center"
               flexWrap="wrap"
-              mb={1.5}
+              mb={0.75}
             >
-                <FormControl size="small" sx={{ minWidth: 150 }}>
+                <FormControl size="small" sx={{ minWidth: { xs: 130, sm: 150 } }}>
                   <InputLabel id="overdue-period-label">Period</InputLabel>
                   <Select
                     labelId="overdue-period-label"
@@ -1834,7 +2055,7 @@ const StatsDashboard = () => {
                   </Select>
                 </FormControl>
                 {period === "custom" && customRangeFields}
-                <FormControl size="small" sx={{ minWidth: 180 }}>
+                <FormControl size="small" sx={{ minWidth: { xs: 150, sm: 180 } }}>
                   <InputLabel id="cell-person-label">All People</InputLabel>
                   <Select
                     labelId="cell-person-label"
@@ -1867,51 +2088,51 @@ const StatsDashboard = () => {
                       onClick={() => fetchOverdueCells(true)}
                       disabled={cellsLoading}
                       size="small"
-                      sx={{ ml: "auto", width: 38, height: 38 }}
+                      sx={{ ml: { xs: 0, md: 1 }, width: 38, height: 38 }}
                     >
                       <Refresh />
                     </IconButton>
                   </span>
                 </Tooltip>
-            </Box>
-
-            <Tabs
-              value={cellFilter}
-              onChange={(_, value) => setCellFilter(value)}
-              variant={isSmDown ? "scrollable" : "standard"}
-              scrollButtons="auto"
-              sx={{
-                minHeight: 36,
-                mb: 1.5,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-                "& .MuiTabs-flexContainer": { justifyContent: "flex-start" },
-                "& .MuiTab-root": {
+              <Tabs
+                value={cellFilter}
+                onChange={(_, value) => setCellFilter(value)}
+                variant="scrollable"
+                scrollButtons="auto"
+                sx={{
+                  minWidth: 0,
+                  flex: "1 1 420px",
                   minHeight: 36,
-                  minWidth: "auto",
-                  px: { xs: 1, sm: 1.5, md: 2 },
-                  py: 0.5,
-                  fontSize: "0.75rem",
-                  fontWeight: 500,
-                  textTransform: "uppercase",
-                  color: "text.secondary",
-                  "&.Mui-selected": {
-                    color: "text.primary",
-                    fontWeight: 600,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  "& .MuiTabs-flexContainer": { justifyContent: "flex-start" },
+                  "& .MuiTab-root": {
+                    minHeight: 36,
+                    minWidth: "auto",
+                    px: { xs: 0.75, sm: 1 },
+                    py: 0.5,
+                    fontSize: "0.7rem",
+                    fontWeight: 500,
+                    textTransform: "uppercase",
+                    color: "text.secondary",
+                    "&.Mui-selected": {
+                      color: "text.primary",
+                      fontWeight: 600,
+                    },
                   },
-                },
-                "& .MuiTabs-indicator": {
-                  backgroundColor: "primary.main",
-                  height: 3,
-                },
-              }}
-            >
-              <Tab value="overdue" label={`OVERDUE (${cellFilterCounts.overdue})`} />
-              <Tab value="incomplete" label={`INCOMPLETE (${cellFilterCounts.incomplete})`} />
-              <Tab value="completed" label={`COMPLETED (${cellFilterCounts.completed})`} />
-              <Tab value="did_not_meet" label={`DID NOT MEET (${cellFilterCounts.didNotMeet})`} />
-              <Tab value="all" label={`ALL (${cellFilterCounts.all})`} />
-            </Tabs>
+                  "& .MuiTabs-indicator": {
+                    backgroundColor: "primary.main",
+                    height: 3,
+                  },
+                }}
+              >
+                <Tab value="overdue" label={`OVERDUE (${cellFilterCounts.overdue})`} />
+                <Tab value="incomplete" label={`INCOMPLETE (${cellFilterCounts.incomplete})`} />
+                <Tab value="completed" label={`COMPLETED (${cellFilterCounts.completed})`} />
+                <Tab value="did_not_meet" label={`DID NOT MEET (${cellFilterCounts.didNotMeet})`} />
+                <Tab value="all" label={`ALL (${cellFilterCounts.all})`} />
+              </Tabs>
+            </Box>
 
             {cellsLoading ? (
               <Box
@@ -2138,20 +2359,20 @@ const StatsDashboard = () => {
           <Paper
             sx={{
               p: getResponsiveValue({ xs: 1, sm: 1.5, md: 2, lg: 2, xl: 2 }),
-              height: "calc(100vh - 320px)",
+              height: "calc(100vh - 300px)",
               display: "flex",
               flexDirection: "column",
               borderRadius: 2,
               boxShadow: 1,
             }}
           >
-            {/* Top Filter Row: Period, People, Export */}
+            {/* Filters, status tabs, and actions */}
             <Box
               sx={{
                 display: "flex",
                 justifyContent: "flex-start",
                 alignItems: "center",
-                mb: 2,
+                mb: 0.75,
                 flexWrap: "wrap",
                 gap: 1.5,
               }}
@@ -2352,6 +2573,19 @@ const StatsDashboard = () => {
 
               <Button
                 size="small"
+                variant={taskView === "discipleship" ? "contained" : "outlined"}
+                startIcon={<People />}
+                onClick={() =>
+                  setTaskView((current) =>
+                    current === "discipleship" ? "people" : "discipleship",
+                  )
+                }
+                sx={{ textTransform: "none", height: 40, whiteSpace: "nowrap" }}
+              >
+                {taskView === "discipleship" ? "All People" : "Discipleship"}
+              </Button>
+              <Button
+                size="small"
                 variant="outlined"
                 startIcon={<Download />}
                 onClick={downloadTasksExcel}
@@ -2367,54 +2601,52 @@ const StatsDashboard = () => {
                     onClick={() => fetchStats(true)}
                     disabled={stats.loading}
                     size="small"
-                    sx={{ ml: "auto", width: 38, height: 38 }}
+                    sx={{ ml: { xs: 0, md: 1 }, width: 38, height: 38 }}
                   >
                     <Refresh />
                   </IconButton>
                 </span>
               </Tooltip>
-            </Box>
 
-            {/* Bottom Filter Row: Tabs */}
-            <Tabs
-              value={taskFilter}
-              onChange={(_, value) => setTaskFilter(value)}
-              variant={isSmDown ? "scrollable" : "standard"}
-              scrollButtons="auto"
-              sx={{
-                minHeight: 36,
-                mb: 1.5,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-                "& .MuiTabs-flexContainer": {
-                  justifyContent: "flex-start", // Aligns tabs to the left like the screenshot
-                },
-                "& .MuiTab-root": {
+              <Tabs
+                value={taskFilter}
+                onChange={(_, value) => setTaskFilter(value)}
+                variant="scrollable"
+                scrollButtons="auto"
+                sx={{
+                  minWidth: 0,
+                  flex: "1 1 420px",
                   minHeight: 36,
-                  minWidth: "auto",
-                  px: { xs: 1, sm: 1.5, md: 2 },
-                  py: 0.5,
-                  fontSize: "0.75rem",
-                  fontWeight: 500,
-                  textTransform: "uppercase",
-                  color: "text.secondary",
-                  "&.Mui-selected": {
-                    color: "text.primary",
-                    fontWeight: 600,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  "& .MuiTabs-flexContainer": { justifyContent: "flex-start" },
+                  "& .MuiTab-root": {
+                    minHeight: 36,
+                    minWidth: "auto",
+                    px: { xs: 0.75, sm: 1 },
+                    py: 0.5,
+                    fontSize: "0.7rem",
+                    fontWeight: 500,
+                    textTransform: "uppercase",
+                    color: "text.secondary",
+                    "&.Mui-selected": {
+                      color: "text.primary",
+                      fontWeight: 600,
+                    },
                   },
-                },
-                "& .MuiTabs-indicator": {
-                  backgroundColor: "primary.main",
-                  height: 3,
-                },
-              }}
-            >
-              <Tab value="all" label={`ALL CONTACTS (${taskFilterCounts.all})`} />
-              <Tab value="pending" label={`PENDING (${taskFilterCounts.pending})`} />
-              <Tab value="completed" label={`COMPLETED (${taskFilterCounts.completed})`} />
-              <Tab value="incomplete" label={`INCOMPLETE (${taskFilterCounts.incomplete})`} />
-              <Tab value="consolidation" label={`CONSOLIDATION (${taskFilterCounts.consolidation})`} />
-            </Tabs>
+                  "& .MuiTabs-indicator": {
+                    backgroundColor: "primary.main",
+                    height: 3,
+                  },
+                }}
+              >
+                <Tab value="all" label={`ALL CONTACTS (${taskFilterCounts.all})`} />
+                <Tab value="pending" label={`PENDING (${taskFilterCounts.pending})`} />
+                <Tab value="completed" label={`COMPLETED (${taskFilterCounts.completed})`} />
+                <Tab value="incomplete" label={`INCOMPLETE (${taskFilterCounts.incomplete})`} />
+                <Tab value="consolidation" label={`CONSOLIDATION (${taskFilterCounts.consolidation})`} />
+              </Tabs>
+            </Box>
 
             {/* Task List Content */}
             <Box
@@ -2435,7 +2667,9 @@ const StatsDashboard = () => {
                 "&::-webkit-scrollbar-thumb:hover": { background: "#555" },
               }}
             >
-              {visibleGroupedTasks.length === 0 && !stats.loading ? (
+              {taskView === "discipleship" ? (
+                <DiscipleshipRollup sections={discipleshipSections} />
+              ) : visibleGroupedTasks.length === 0 && !stats.loading ? (
                 <Box
                   sx={{
                     textAlign: "center",

@@ -193,6 +193,50 @@ const EventHistory = React.memo(function EventHistory({
     });
 
     cols.push({
+      field: "consolidationCount",
+      headerName: isXs ? "#" : isSm ? "Con" : "Consolidated",
+      width: isXs ? 52 : isSm ? 56 : 100,
+      sortable: true,
+      align: "center",
+      headerAlign: "center",
+      valueGetter: (_, row) => getConsolidatedCount(row),
+      renderCell: (params) => (
+        <Button
+          variant="outlined"
+          size="small"
+          disabled={params.value === 0}
+          aria-label={`View consolidated (${params.value})`}
+          onClick={() => handleView(params.row, "consolidated")}
+          sx={countButtonSx(params.value === 0)}
+        >
+          {params.value}
+        </Button>
+      ),
+    });
+
+    cols.push({
+      field: "newPeopleCount",
+      headerName: isXs ? "#" : isSm ? "New" : "New People",
+      width: isXs ? 52 : isSm ? 56 : 100,
+      sortable: true,
+      align: "center",
+      headerAlign: "center",
+      valueGetter: (_, row) => getNewPeopleCount(row),
+      renderCell: (params) => (
+        <Button
+          variant="outlined"
+          size="small"
+          disabled={params.value === 0}
+          aria-label={`View new people (${params.value})`}
+          onClick={() => handleView(params.row, "newPeople")}
+          sx={countButtonSx(params.value === 0)}
+        >
+          {params.value}
+        </Button>
+      ),
+    });
+
+    cols.push({
       field: 'viewStats',
       headerName: '',
       width: isSm ? 84 : 150,

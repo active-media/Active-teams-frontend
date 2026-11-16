@@ -18,6 +18,7 @@ import {
   VisibilityOff,
   Close
 } from '@mui/icons-material';
+import PasswordField, { isPasswordValid } from './PasswordField';
 
 const NewUserModal = ({ 
   open, 
@@ -46,7 +47,6 @@ const NewUserModal = ({
   });
   
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [formErrors, setFormErrors] = useState({});
   const [peopleList, setPeopleList] = useState([]);
@@ -97,6 +97,7 @@ const NewUserModal = ({
     if (!newUser.surname?.trim()) errors.surname = 'Surname is required';
     if (!newUser.email?.trim()) errors.email = 'Email is required';
     if (!newUser.password?.trim()) errors.password = 'Password is required';
+    else if (!isPasswordValid(newUser.password)) errors.password = 'Password does not meet all requirements';
     if (newUser.password !== confirmPassword) errors.confirmPassword = 'Passwords do not match';
     if (!newUser.phone_number?.trim()) errors.phone_number = 'Phone number is required';
     if (!newUser.date_of_birth?.trim()) errors.date_of_birth = 'Date of birth is required';
@@ -347,32 +348,17 @@ const NewUserModal = ({
             sx={inputStyles}
           />
 
-          <TextField
+          <PasswordField
             label="Password"
-            type={showPassword ? 'text' : 'password'}
             value={newUser.password}
-            onChange={(e) => { 
-              setNewUser({...newUser, password: e.target.value}); 
-              setFormErrors({...formErrors, password: ''}); 
+            onChange={(password) => {
+              setNewUser({...newUser, password});
+              setFormErrors({...formErrors, password: ''});
             }}
-            fullWidth
             size="small"
             error={!!formErrors.password}
             helperText={formErrors.password}
             disabled={loading}
-            InputProps={{
-              endAdornment: (
-                <InputAdornment position="end">
-                  <IconButton
-                    onClick={() => setShowPassword(!showPassword)}
-                    edge="end"
-                    size="small"
-                  >
-                    {showPassword ? <VisibilityOff /> : <Visibility />}
-                  </IconButton>
-                </InputAdornment>
-              ),
-            }}
             sx={inputStyles}
           />
 

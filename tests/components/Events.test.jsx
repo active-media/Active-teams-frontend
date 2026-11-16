@@ -23,8 +23,9 @@ import {
 // table.
 vi.mock("../../src/services/supabase-client", () => {
   const rows = [
-    { _id: "type-1", name: "Service", isBuiltIn: true },
-    { _id: "type-2", name: "Cells", isBuiltIn: true },
+    { _id: "type-1", name: "Service", event_type_category: "service", isBuiltIn: true },
+    { _id: "type-2", name: "Cells", event_type_category: "small_gatherings", isBuiltIn: true },
+    { _id: "type-3", name: "Community", event_type_category: "small_gatherings", isBuiltIn: true },
   ];
   const query = {
     select: () => query,
@@ -201,11 +202,24 @@ const makeEvt = (overrides = {}) => ({
 const makeType = (overrides = {}) => ({
   _id: "type-1",
   name: "Service",
+  event_type_category: "service",
   isBuiltIn: true,
   ...overrides,
 });
 
-const eventTypes = [makeType(), makeType({ _id: "type-2", name: "Cells" })];
+const eventTypes = [
+  makeType(),
+  makeType({
+    _id: "type-2",
+    name: "Cells",
+    event_type_category: "small_gatherings",
+  }),
+  makeType({
+    _id: "type-3",
+    name: "Community",
+    event_type_category: "small_gatherings",
+  }),
+];
 
 const fullEvent = {
   ...makeEvt(),
@@ -254,6 +268,15 @@ const eventsRoutes = ({
         total_pages,
       },
     },
+    {
+      method: "GET",
+      url: (url) => /\/events\/cells(?:\?.*)?$/.test(String(url)),
+      data: {
+        events,
+        total_events: total_events ?? events.length,
+        total_pages,
+      },
+    },
     { method: "GET", url: isEventById, data: fullEvent },
     { method: "DELETE", url: isEventById, data: { message: "deleted" } },
   ]);
@@ -290,6 +313,11 @@ const eventsDataCalls = (routes, match = () => true) =>
   routes.mock.calls
     .map(([u]) => String(u))
     .filter((u) => u.includes("/events/eventsdata") && match(u));
+
+const cellsCalls = (routes, match = () => true) =>
+  routes.mock.calls
+    .map(([u]) => String(u))
+    .filter((u) => u.includes("/events/cells") && match(u));
 
 /** Render, wait for the type selector, click the Service card, wait for rows. */
 const openEventsView = async (routes) => {
@@ -342,8 +370,28 @@ describe("Events page actions", () => {
       await waitFor(() => expect(eventsDataCalls(routes).length).toBe(0));
       expect(screen.getByText("Service")).toBeInTheDocument();
       expect(screen.getByText("Cells")).toBeInTheDocument();
+      expect(screen.queryByText(/All Cells/i)).not.toBeInTheDocument();
       // Types view is the landing view — no event rows yet.
       expect(screen.queryByTestId("datagrid")).not.toBeInTheDocument();
+    });
+
+    test("Active Teams shows actual event types instead of a hard-coded All Cells type", async () => {
+      localStorage.setItem(
+        "userProfile",
+        JSON.stringify({
+          role: "admin",
+          email: "leader@x.com",
+          org_id: "active-teams",
+          Organization: "Active Church",
+          name: "Test Leader",
+          surname: "Leader",
+        }),
+      );
+      renderEvents(eventsRoutes());
+
+      expect(await screen.findByText(/^Select Event Types?$/)).toBeInTheDocument();
+      expect(screen.getByText("Cells")).toBeInTheDocument();
+      expect(screen.queryByText(/All Cells/i)).not.toBeInTheDocument();
     });
 
     test("the type search box filters the visible cards", async () => {
@@ -371,6 +419,17 @@ describe("Events page actions", () => {
       // and did-not-meet event. It must now leave the status unfiltered.
       expect(urls.some((u) => u.includes("status="))).toBe(false);
       expect(screen.queryByText(/^Select Event Types?$/)).not.toBeInTheDocument();
+    });
+
+    test("small-gathering categories use the cells endpoint regardless of event type name", async () => {
+      const routes = eventsRoutes();
+      renderEvents(routes);
+      await screen.findByText(/^Select Event Types?$/);
+      fireEvent.click(typeCard("Community"));
+      await screen.findByText("Sunday Celebration");
+
+      expect(cellsCalls(routes).some((u) => u.includes("event_type=Community"))).toBe(true);
+      expect(eventsDataCalls(routes, (u) => u.includes("event_type=Community"))).toHaveLength(0);
     });
 
     test("the Back button returns to the type selector", async () => {

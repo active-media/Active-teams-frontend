@@ -40,6 +40,7 @@ const EventTypesModal = ({
 
   useEffect(() => {
     if (open && selectedEventType) {
+      console.log("Selected Event Type in Modal: ==>", selectedEventType);
       setFormData({
         name: selectedEventType.name || "",
         description: selectedEventType.description || "",
@@ -48,6 +49,7 @@ const EventTypesModal = ({
         isGlobal: typeof selectedEventType.isGlobal === "boolean"
           ? selectedEventType.isGlobal
           : false,
+        event_category: selectedEventType.event_type_category || "",
       });
     } else if (open && !selectedEventType) {
       resetForm();
@@ -122,8 +124,8 @@ const handleSubmit = async () => {
     };
 
     let result;
-    if (selectedEventType?._id) {
-      result = await onSubmit(eventTypeData, selectedEventType._id);
+    if (selectedEventType?.event_type_id) {
+      result = await onSubmit(eventTypeData, selectedEventType.event_type_id);
     } else {
       result = await onSubmit(eventTypeData);
     }
