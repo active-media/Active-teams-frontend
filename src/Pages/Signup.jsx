@@ -190,9 +190,7 @@ const Signup = ({ onSignup, mode }) => {
         setOrganizations(data ?? []);
       } catch (err) {
         console.error("Error fetching organizations:", err);
-        setOrgsError(
-          "Could not load organizations. You can still type manually.",
-        );
+        setOrgsError("Could not load organizations. Please refresh the page.");
         setOrganizations([]);
       } finally {
         setOrgsLoading(false);
@@ -334,6 +332,15 @@ const Signup = ({ onSignup, mode }) => {
     if (!form.gender) e.gender = "Select a gender";
     if (!form.organization?.trim())
       e.organization = "Organization/Church is required";
+    else if (
+      !organizations.some(
+        (o) =>
+          String(o.name || "")
+            .trim()
+            .toLowerCase() === form.organization.trim().toLowerCase(),
+      )
+    )
+      e.organization = "Select an organization from the list";
     if (!form.password) e.password = "Password is required";
     else if (!isPasswordValid(form.password))
       e.password = "Password does not meet all requirements";
@@ -381,6 +388,14 @@ const Signup = ({ onSignup, mode }) => {
     if (errors.gender) setErrors((prev) => ({ ...prev, gender: "" }));
   };
 
+  const handleOrganizationChange = (_e, v) => {
+    setForm((p) => ({
+      ...p,
+      organization: v?.name || "",
+    }));
+    if (errors.organization) setErrors((p) => ({ ...p, organization: "" }));
+  };
+
   const getUserLabel = (user) => {
     if (typeof user === "string") return user;
     const full = [user.name, user.surname].filter(Boolean).join(" ");
@@ -399,12 +414,13 @@ const Signup = ({ onSignup, mode }) => {
       //   password: form.password,
       // });
       const url = `${import.meta.env.VITE_BACKEND_URL}/signup`;
+      const payload = { ...form };
       const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       }); 
       const authResult = await res.json();
       console.log("Signup response:", authResult);
@@ -784,59 +800,57 @@ const Signup = ({ onSignup, mode }) => {
               />
             </Box>
 
-            <FormControl fullWidth error={!!errors.organization}>
-              <Autocomplete
-                freeSolo
-                options={organizations}
-                value={
-                  organizations.find((o) => o.name === form.organization) ||
-                  null
-                }
-                inputValue={form.organization}
-                onInputChange={(_e, v) => {
-                  setForm((p) => ({ ...p, organization: v }));
-                  if (errors.organization)
-                    setErrors((p) => ({ ...p, organization: "" }));
-                }}
-                onChange={(_e, v) => {
-                  setForm((p) => ({ ...p, organization: v?.name || v || "" }));
-                  if (errors.organization)
-                    setErrors((p) => ({ ...p, organization: "" }));
-                }}
-                getOptionLabel={(o) =>
-                  typeof o === "string" ? o : o.name || ""
-                }
-                loading={orgsLoading}
-                {...dropdownSx}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Organization / Church"
-                    error={!!errors.organization}
-                    helperText={
-                      errors.organization ||
-                      orgsError ||
-                      (orgsLoading
-                        ? "Loading…"
-                        : "Select or type your organization")
-                    }
-                    fullWidth
-                    InputProps={{
-                      ...params.InputProps,
-                      endAdornment: (
-                        <>
-                          {orgsLoading ? (
-                            <CircularProgress color="inherit" size={20} />
-                          ) : null}
-                          {params.InputProps.endAdornment}
-                        </>
-                      ),
-                    }}
-                    sx={errFieldSx("organization")}
-                  />
-                )}
-              />
-            </FormControl>
+            <Box sx={{ gridColumn: "1 / -1" }}>
+              <FormControl fullWidth error={!!errors.organization}>
+                <Autocomplete
+                  options={organizations}
+                  value={
+                    organizations.find((o) => o.name === form.organization) ||
+                    null
+                  }
+                  inputValue={form.organization}
+                  onInputChange={(_e, v) => {
+                    setForm((p) => ({ ...p, organization: v }));
+                    if (errors.organization)
+                      setErrors((p) => ({ ...p, organization: "" }));
+                  }}
+                  onChange={handleOrganizationChange}
+                  getOptionLabel={(o) =>
+                    typeof o === "string" ? o : o.name || ""
+                  }
+                  loading={orgsLoading}
+                  noOptionsText="No organizations found"
+                  {...dropdownSx}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Organization / Church"
+                      error={!!errors.organization}
+                      helperText={
+                        errors.organization ||
+                        orgsError ||
+                        (orgsLoading
+                          ? "Loading…"
+                          : "Select your organization")
+                      }
+                      fullWidth
+                      InputProps={{
+                        ...params.InputProps,
+                        endAdornment: (
+                          <>
+                            {orgsLoading ? (
+                              <CircularProgress color="inherit" size={20} />
+                            ) : null}
+                            {params.InputProps.endAdornment}
+                          </>
+                        ),
+                      }}
+                      sx={errFieldSx("organization")}
+                    />
+                  )}
+                />
+              </FormControl>
+            </Box>
 
             <FormControl fullWidth>
               <Autocomplete

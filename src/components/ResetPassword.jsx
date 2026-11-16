@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   TextField,
@@ -17,8 +17,6 @@ import { AuthContext } from "../contexts/AuthContext";
 import PasswordField, { isPasswordValid } from "./PasswordField";
 
 const ResetPassword = ({ mode }) => {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get("token");
   const navigate = useNavigate();
   const theme = useTheme();
   const isSmallScreen = useMediaQuery(theme.breakpoints.down("sm"));
@@ -29,22 +27,50 @@ const ResetPassword = ({ mode }) => {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checkingRecovery, setCheckingRecovery] = useState(true);
+  const [recoveryReady, setRecoveryReady] = useState(false);
 
-  const { resetPassword } = useContext(AuthContext);
+  const { supabase, resetPassword } = useContext(AuthContext);
 
   useEffect(() => {
-    if (!token) {
-      setError("Invalid or expired reset token.");
-    }
-  }, [token]);
+    let active = true;
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY" && session?.user) {
+        setRecoveryReady(true);
+        setError("");
+        setCheckingRecovery(false);
+      }
+    });
+
+    const checkRecoverySession = async () => {
+      const { data, error: sessionError } = await supabase.auth.getSession();
+      if (!active) return;
+
+      const hasSession = Boolean(data?.session?.user);
+      setRecoveryReady(hasSession);
+      setCheckingRecovery(false);
+      if (sessionError || !hasSession) {
+        setError("This reset link is invalid or expired. Request a new one.");
+      }
+    };
+
+    checkRecoverySession();
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setMessage("");
 
-    if (!token) {
-      setError("Invalid or expired reset token.");
+    if (!recoveryReady) {
+      setError("This reset link is invalid or expired. Request a new one.");
       return;
     }
     if (!isPasswordValid(password)) {
@@ -59,7 +85,7 @@ const ResetPassword = ({ mode }) => {
     setLoading(true);
 
     try {
-      await resetPassword(token, password);
+      await resetPassword(password);
       setMessage("Password reset successful. Redirecting to login...");
       setTimeout(() => navigate("/login"), 2000);
     } catch (err) {
@@ -191,7 +217,7 @@ const ResetPassword = ({ mode }) => {
           type="submit"
           variant="contained"
           fullWidth
-          disabled={loading || !token}
+          disabled={loading || checkingRecovery || !recoveryReady}
           sx={{
             backgroundColor: mode === "dark" ? "#fff" : "#000",
             color: mode === "dark" ? "#000" : "#fff",
