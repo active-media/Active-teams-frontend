@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 
 const useFixtures = import.meta.env.VITE_USE_REPORT_FIXTURES === "true";
 const fixtureSchedules = [];
+export const reportFixturesEnabled = useFixtures;
 
 export function buildQueryString(params = {}) {
   const query = new URLSearchParams();
@@ -209,6 +210,13 @@ export function deleteSchedule(authFetch, id) {
     return Promise.resolve({ success: true });
   }
   return requestJson(authFetch, `/report-schedules/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function runScheduleNow(authFetch, id) {
+  if (useFixtures) {
+    return Promise.reject(new Error("Send now is unavailable while report fixture mode is enabled."));
+  }
+  return requestJson(authFetch, `/reports/schedules/${encodeURIComponent(id)}/run-now`, { method: "POST" });
 }
 
 function normalizeSchedule(schedule) {

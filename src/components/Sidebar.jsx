@@ -29,7 +29,8 @@ import {
   HowToReg,
   AdminPanelSettings,
   Description,
-  AccessTime
+  AccessTime,
+  TrackChanges,
 } from '@mui/icons-material';
 import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
@@ -86,6 +87,13 @@ const allMenuItems = [
     label: 'Daily Tasks', 
     path: '/daily-tasks', 
     icon: Assignment, 
+    roles: ['admin', 'leader', 'leaderat12', 'user', 'registrant'],
+    level: 1
+  },
+  {
+    label: 'Targets',
+    path: '/targets',
+    icon: TrackChanges,
     roles: ['admin', 'leader', 'leaderat12', 'user', 'registrant'],
     level: 1
   },

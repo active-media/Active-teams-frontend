@@ -35,6 +35,7 @@ import SplashScreen from "./components/SplashScreen";
 
 import withAuthCheck from "./components/withAuthCheck";
 import Admin from "./Pages/Admin";
+import Targets from "./Pages/Targets";
 import NotFound from "./Pages/NotFound";
 
 // Wrap protected pages WITH ROLES - UPDATED WITH leaderAt12
@@ -54,6 +55,7 @@ const ProtectedReportingDashboardLegacy = withAuthCheck(ReportingDashboardLegacy
 const ProtectedCheckIn = withAuthCheck(ServiceCheckIn, ['admin', 'registrant', 'leaderAt12']);
 const ProtectedDailyTasks = withAuthCheck(DailyTasks, ['admin', 'leader', 'leaderAt12', 'user', 'registrant']);
 const ProtectedAdmin = withAuthCheck(Admin, ['admin']);
+const ProtectedTargets = withAuthCheck(Targets, ['admin', 'leader', 'leaderAt12', 'registrant', 'user']);
 const ProtectedCreateEvents = withAuthCheck(CreateEvents, ['admin', 'leader', 'leaderat12']);
 const ProtectedAttendance = withAuthCheck(AttendanceModal, ['admin', 'leader', 'leaderat12']);
 const ProtectedEventDetails = withAuthCheck(EventDetails, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
@@ -242,6 +244,7 @@ function App() {
             {/* Protected routes with role restrictions - normalized roles (lowercase) */}
             <Route path="/" element={<ProtectedHome />} />
             <Route path="/admin" element={<ProtectedAdmin />} />
+            <Route path="/targets" element={<ProtectedTargets title="Targets" />} />
             <Route path="/profile" element={<ProtectedProfile title="Profile" />} />
             <Route path="/people" element={<ProtectedPeople title="People" />} />
             <Route path="/events" element={<ProtectedEvents title="Events" />} />

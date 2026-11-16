@@ -41,7 +41,7 @@ export const LEGACY_SCHEDULE_TYPES = {
 };
 
 export const SCHEDULE_FREQUENCIES = ["daily", "weekly", "monthly"];
-export const SCHEDULE_FORMATS = ["pdf", "csv", "xlsx"];
+export const SCHEDULE_FORMATS = ["xlsx"];
 export const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
 export const toCatalogReportType = (reportType) => LEGACY_SCHEDULE_TYPES[reportType] || reportType;

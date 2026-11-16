@@ -1,17 +1,22 @@
 ﻿import { useCallback, useContext, useEffect, useState } from "react";
-import { Alert, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, MenuItem, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, MenuItem, Paper, Snackbar, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import PauseCircleOutlineIcon from "@mui/icons-material/PauseCircleOutline";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
 import { AuthContext } from "../contexts/AuthContext";
-import { createSchedule, deleteSchedule, getCatalog, getSchedules, updateSchedule } from "../api/reportingApi";
+import { createSchedule, deleteSchedule, getCatalog, getSchedules, reportFixturesEnabled, runScheduleNow, updateSchedule } from "../api/reportingApi";
 import { SCHEDULE_FORMATS, SCHEDULE_FREQUENCIES, WEEKDAYS, getReportTitle } from "../features/reporting/constants";
 import { ReportErrorState } from "../features/reporting/components/ReportStates";
 
-const emptyForm = { report_type: "", frequency: "weekly", weekday: "monday", day_of_month: 1, time: "07:00", format: "pdf", recipients: "" };
+const emptyForm = { report_type: "", frequency: "weekly", weekday: "monday", day_of_month: 1, time: "07:00", format: "xlsx", recipients: "" };
 const titleCase = (value = "") => value.charAt(0).toUpperCase() + value.slice(1);
+const formatDateTime = (value) => {
+  if (!value) return "Never";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+};
 
 function scheduleSummary(schedule) {
   if (schedule.frequency === "daily") return `Daily at ${schedule.time}`;
@@ -30,6 +35,8 @@ export default function ScheduledReports() {
   const [form, setForm] = useState(emptyForm);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [sendingId, setSendingId] = useState(null);
+  const [feedback, setFeedback] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -62,7 +69,7 @@ export default function ScheduledReports() {
       weekday: schedule.weekday || "monday",
       day_of_month: schedule.day_of_month || 1,
       time: schedule.time || "07:00",
-      format: schedule.format,
+      format: "xlsx",
       recipients: (schedule.recipients || []).join(", "),
     });
     setFormError("");
@@ -117,23 +124,47 @@ export default function ScheduledReports() {
     }
   };
 
+  const sendNow = async (schedule) => {
+    setSendingId(schedule.id);
+    try {
+      await runScheduleNow(authFetch, schedule.id);
+      setFeedback({ severity: "success", message: `Report sent to ${(schedule.recipients || []).join(", ")}.` });
+      await load();
+    } catch (requestError) {
+      setFeedback({ severity: "error", message: requestError.message || "Unable to send the report." });
+      await load();
+    } finally {
+      setSendingId(null);
+    }
+  };
+
   return (
     <Box sx={{ px: { xs: 2, md: 4 }, py: 3, maxWidth: 1440, mx: "auto" }}>
       <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={2} sx={{ mb: 2.5 }}>
         <Box><Typography variant="h4" component="h1" fontWeight={800}>Scheduled Reports</Typography><Typography color="text.secondary" sx={{ mt: 0.5 }}>Manage recurring report delivery.</Typography></Box>
         <Button variant="contained" startIcon={<AddIcon />} onClick={createNew}>New schedule</Button>
       </Stack>
+      {reportFixturesEnabled && <Alert severity="warning" sx={{ mb: 2 }}>Report fixture mode is on. Schedules are stored in browser memory only and will not be emailed. Set VITE_USE_REPORT_FIXTURES=false to use the backend.</Alert>}
       {error && <ReportErrorState error={error} onRetry={load} />}
       <Paper variant="outlined" sx={{ borderRadius: 1, overflow: "hidden" }}>
         {loading ? <Box sx={{ py: 5, display: "grid", placeItems: "center" }}><CircularProgress size={28} /></Box> : schedules.length === 0 ? <Typography color="text.secondary" sx={{ p: 3 }}>No scheduled reports yet.</Typography> : (
-          <Table size="small"><TableHead><TableRow>{["Report", "Schedule", "Format", "Recipients", "Status", "Actions"].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead>
+          <Table size="small"><TableHead><TableRow>{["Report", "Schedule", "Format", "Recipients", "Status / last run", "Actions"].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead>
             <TableBody>{schedules.map((schedule) => <TableRow key={schedule.id} hover>
               <TableCell sx={{ fontWeight: 600 }}>{getReportTitle(catalog, schedule.report_type)}</TableCell>
               <TableCell>{scheduleSummary(schedule)}</TableCell>
               <TableCell>{schedule.format?.toUpperCase()}</TableCell>
               <TableCell><Tooltip title={(schedule.recipients || []).join(", ")}><span>{schedule.recipients?.length || 0} recipient(s)</span></Tooltip></TableCell>
-              <TableCell><Chip size="small" label={schedule.active ? "Active" : "Paused"} color={schedule.active ? "success" : "default"} variant={schedule.active ? "filled" : "outlined"} /></TableCell>
+              <TableCell>
+                <Stack spacing={0.5} alignItems="flex-start">
+                  <Chip size="small" label={schedule.active ? "Active" : "Paused"} color={schedule.active ? "success" : "default"} variant={schedule.active ? "filled" : "outlined"} />
+                  <Typography variant="caption" color="text.secondary">Last run: {formatDateTime(schedule.last_run_at)}</Typography>
+                  {schedule.last_run_status && <Typography variant="caption" color={schedule.last_run_status === "failed" ? "error.main" : "text.secondary"}>
+                    {titleCase(schedule.last_run_status)}{schedule.last_run_error ? `: ${schedule.last_run_error}` : ""}
+                  </Typography>}
+                </Stack>
+              </TableCell>
               <TableCell align="right">
+                <Button size="small" disabled={reportFixturesEnabled || sendingId !== null} onClick={() => sendNow(schedule)}>{sendingId === schedule.id ? "Sending..." : "Send now"}</Button>
                 <Tooltip title={schedule.active ? "Pause" : "Resume"}><IconButton size="small" onClick={() => toggle(schedule)}>{schedule.active ? <PauseCircleOutlineIcon fontSize="small" /> : <PlayCircleOutlineIcon fontSize="small" />}</IconButton></Tooltip>
                 <Tooltip title="Edit"><IconButton size="small" onClick={() => edit(schedule)}><EditOutlinedIcon fontSize="small" /></IconButton></Tooltip>
                 <Tooltip title="Delete"><IconButton size="small" onClick={() => remove(schedule)}><DeleteOutlineIcon fontSize="small" /></IconButton></Tooltip>
@@ -161,6 +192,9 @@ export default function ScheduledReports() {
         </Stack></DialogContent>
         <DialogActions sx={{ p: 2 }}><Button disabled={saving} onClick={() => setDialogOpen(false)}>Cancel</Button><Button variant="contained" disabled={saving} onClick={save}>{saving ? "Saving..." : "Save schedule"}</Button></DialogActions>
       </Dialog>
+      <Snackbar open={Boolean(feedback)} autoHideDuration={7000} onClose={() => setFeedback(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+        <Alert onClose={() => setFeedback(null)} severity={feedback?.severity || "info"} sx={{ width: "100%" }}>{feedback?.message}</Alert>
+      </Snackbar>
     </Box>
   );
 }

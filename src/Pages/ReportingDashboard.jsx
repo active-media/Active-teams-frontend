@@ -351,8 +351,15 @@ function ChartCard({ title, empty, children }) {
   );
 }
 
-function cellColor(column) {
+function cellColor(column, value) {
   const k = `${column.key} ${column.label}`.toLowerCase();
+  const num = typeof value === "number" ? value : null;
+  if (k.includes("attendance") || k.includes("completion") || k.includes("percent")) {
+    if (num == null) return "text.secondary";
+    if (num >= 80) return "success.main";
+    if (num >= 50) return "warning.main";
+    return "error.main";
+  }
   if (k.includes("attendance")) return "primary.main";
   if (k.includes("completion")) return "success.main";
   return "text.primary";
@@ -384,7 +391,7 @@ function PerformanceTable({ table }) {
             {table.rows.map((row, ri) => (
               <TableRow key={ri}>
                 {table.columns.map((c, ci) => (
-                  <TableCell key={c.key} sx={ci === 0 ? { fontWeight: 600 } : { color: cellColor(c) }}>
+                  <TableCell key={c.key} sx={ci === 0 ? { fontWeight: 600 } : { color: cellColor(c, row[c.key]) }}>
                     {formatCell(c, row[c.key])}
                   </TableCell>
                 ))}
