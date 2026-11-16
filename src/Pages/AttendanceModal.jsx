@@ -2461,7 +2461,7 @@ const AttendanceModal = ({
 
       try {
         const res = await authFetch(
-          `${BACKEND_URL}/people/paginated?${params.toString()}`,
+          `${BACKEND_URL}/people?${params.toString()}`,
           {
             headers: {
               Authorization: `Bearer ${localStorage.getItem("access_token")}`,
@@ -2809,27 +2809,70 @@ const AttendanceModal = ({
     }
 
     try {
-      const queryParams = new URLSearchParams({
-        email: person.email,
-        full_name: person.fullName,
-      }).toString();
-      const token = localStorage.getItem("token");
-      const personResponse = await authFetch(
-        `${BACKEND_URL}/get_person_uuid?${queryParams}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-      if (!personResponse.ok) {
-        throw new Error(`Person lookup failed: ${personResponse.status}`);
+      const searchQuery = (person.email || person.fullName || "").trim();
+      if (!searchQuery) {
+        throw new Error("Person email or name is required for lookup.");
       }
 
-      const personId = await personResponse.json();
+      const token = localStorage.getItem("token");
+      const headers = {
+        Authorization: `Bearer ${token}`,
+      };
+      const searchParams = new URLSearchParams({
+        query: searchQuery,
+        limit: "25",
+      }).toString();
+      const searchResponse = await authFetch(
+        `${BACKEND_URL}/people/search-fast?${searchParams}`,
+        { headers },
+      );
+      if (!searchResponse.ok) {
+        throw new Error(`Person search failed: ${searchResponse.status}`);
+      }
+
+      const searchData = await searchResponse.json();
+      const searchResults = Array.isArray(searchData?.results)
+        ? searchData.results
+        : Array.isArray(searchData)
+          ? searchData
+          : [];
+      const normalizedEmail = (person.email || "").trim().toLowerCase();
+      const normalizedName = (person.fullName || "").trim().toLowerCase();
+      const matches = searchResults.filter((candidate) => {
+        if (normalizedEmail) {
+          return (candidate.Email || candidate.email || "")
+            .trim()
+            .toLowerCase() === normalizedEmail;
+        }
+
+        const candidateName =
+          candidate.FullName ||
+          candidate.fullName ||
+          `${candidate.Name || ""} ${candidate.Surname || ""}`.trim();
+        return candidateName.trim().toLowerCase() === normalizedName;
+      });
+      if (matches.length !== 1 || !matches[0]._id) {
+        throw new Error(
+          matches.length > 1
+            ? "Person lookup returned multiple exact matches."
+            : "Person was not found in the people search results.",
+        );
+      }
+
+      const personId = matches[0]._id;
+      const personResponse = await authFetch(
+        `${BACKEND_URL}/people/${encodeURIComponent(personId)}`,
+        { headers },
+      );
+      if (!personResponse.ok) {
+        throw new Error(`Person details lookup failed: ${personResponse.status}`);
+      }
+      const personDetails = await personResponse.json();
+      const resolvedPersonId = personDetails?._id || personId;
+
       const personWithLeaders = {
-        id: personId,
-        person_id: personId,
+        id: resolvedPersonId,
+        person_id: resolvedPersonId,
         full_name: person.fullName,
         email: person.email,
         leader12: person.leader12 || "",
@@ -2866,12 +2909,12 @@ const AttendanceModal = ({
       }
 
       setPersistentCommonAttendees((prev) => [...prev, personWithLeaders]);
-      setCheckedIn((prev) => ({ ...prev, [personId]: false }));
+      setCheckedIn((prev) => ({ ...prev, [resolvedPersonId]: false }));
 
       if (isTicketedEvent) {
         setAttendeeTicketInfo((prev) => ({
           ...prev,
-          [personId]: {
+          [resolvedPersonId]: {
             priceName: "",
             price: 0,
             ageGroup: "",
@@ -2895,7 +2938,11 @@ const AttendanceModal = ({
       );
     } catch (error) {
       console.error("Failed to associate person:", error);
-      toast.error(`Could not associate ${person.fullName} with this event.`);
+      const message =
+        error instanceof Error ? error.message : String(error);
+      toast.error(
+        `Could not associate ${person.fullName} with this event: ${message}`,
+      );
     }
   };
 
@@ -4554,7 +4601,7 @@ const AttendanceModal = ({
                   }}
                   onClick={() => setActiveTab(1)}
                 >
-                  Associate people
+                  Associate person
                 </button>
               </>
             )}

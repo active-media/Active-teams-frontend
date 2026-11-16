@@ -6,9 +6,6 @@ import Brightness7Icon from "@mui/icons-material/Brightness7";
 import darkLogo from "../assets/active-teams.png";
 import styles from "../styles/AuthPage.module.css";
 
-const POSTER_TEXT =
-  "a church that is as alive & vibrant as it's name. a church raising a new generation. a generation that will change this nation. to God be the glory. amen.";
-
 // Stays mounted for the whole time the user is on /login or /signup.
 // Only the <Outlet/> content (the actual Login/Signup fields) swaps when
 // the route changes — the shell, logo and media panel never remount,
@@ -67,18 +64,18 @@ const AuthPage = ({ mode, setMode }) => {
             </Box>
           </Box>
 
-          {/* ---- Media side (placeholder styling until real imagery) ---- */}
+          {/* ---- Media side ---- */}
           <Box className={styles.mediaPanel}>
-            <Box className={`${styles.mediaState} ${styles.forLogin}`}>
-              <div className={styles.mediaEyebrow}>The Active Church</div>
-              <p className={styles.mediaTitle}>you belong.</p>
-              <p className={styles.mediaText}>{POSTER_TEXT}</p>
-            </Box>
-            <Box className={`${styles.mediaState} ${styles.forSignup}`}>
-              <div className={styles.mediaEyebrow}>we are</div>
-              <p className={styles.mediaTitle}>The Active Church.</p>
-              <p className={styles.mediaText}>{POSTER_TEXT}</p>
-            </Box>
+            <video
+              className={styles.authVideo}
+              src="/active%20teams.mp4"
+              autoPlay
+              loop
+              muted
+              playsInline
+              aria-hidden="true"
+              tabIndex={-1}
+            />
           </Box>
         </Box>
       </Box>
