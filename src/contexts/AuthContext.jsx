@@ -1,8 +1,6 @@
 import React, { createContext, useState, useEffect, useCallback } from 'react';
-import { normalizeRole } from '../utils/roleNormalizer';
 import supabase from '../../supabaseClient';
 import { API_BASE } from '../api/config';
-import { createClient } from '@supabase/supabase-js';
 
 // ─── Supabase client ──────────────────────────────────────────────────────────
 // Required env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
@@ -19,7 +17,7 @@ const KEY_PERSON_ID   = 'personId';
 
 const STALE_KEYS = [
   KEY_USER, KEY_PROFILE_PIC, KEY_LEADERS, KEY_IS_LEADER, KEY_PERSON_ID,
-  'customEventTypes', 'eventTypeMap',
+  'customEventTypes', 'eventTypeMap', 'selectedOrganization',
 ];
 
 const DEFAULT_AVATARS = {

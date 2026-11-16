@@ -30,9 +30,10 @@ import {
   Description,
   AccessTime
 } from '@mui/icons-material';
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect, useContext, useRef } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
 import { normalizeRole, SYSTEM_ROLES, ROLE_HIERARCHY } from '../utils/roleNormalizer';
+import { API_BASE } from '../api/config';
 import logo from "../assets/active-teams.png"
 
 const BODY = "'Figtree', system-ui, sans-serif";
@@ -143,12 +144,86 @@ export default function Sidebar({ mode, setMode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const isMobile = useMediaQuery('(max-width:900px)');
   const location = useLocation();
-  const { user } = useContext(AuthContext);
+  const { user, authFetch } = useContext(AuthContext);
   const [, setUserHasCell] = useState(true);
   const [menuItems, setMenuItems] = useState([]);
+  const [orgLogo, setOrgLogo] = useState(logo);
+  const [hasCustomLogo, setHasCustomLogo] = useState(false);
+  const [isVerticalLogo, setIsVerticalLogo] = useState(false);
+  const displayedOrgNameRef = useRef('');
 
   const isDark = mode === 'dark';
   const line = isDark ? '#2a2a38' : '#e3e1ec';
+
+  useEffect(() => {
+    let cancelled = false;
+    const orgName = (user?.Organization || user?.organization || '').trim();
+    const orgId = (user?.org_id || '').trim().toLowerCase();
+    const storedSelection = user?.is_supreme_admin
+      ? (localStorage.getItem('selectedOrganization') || '').trim()
+      : '';
+    const targetOrgName = storedSelection || orgName;
+
+    const applyLogo = (name, logoUrl) => {
+      displayedOrgNameRef.current = (name || '').trim().toLowerCase();
+      const customLogo = logoUrl || '';
+      setOrgLogo(customLogo || logo);
+      setHasCustomLogo(Boolean(customLogo));
+    };
+
+    if (!targetOrgName && !orgId) {
+      applyLogo('', '');
+    } else {
+      const loadOrganizationLogo = async () => {
+        try {
+          const res = await authFetch(`${API_BASE}/organizations`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+          const orgs = data.organizations || [];
+          const findByName = (name) => orgs.find(
+            (org) => (org.name || '').trim().toLowerCase() === name.toLowerCase()
+          );
+          let match = targetOrgName ? findByName(targetOrgName) : null;
+          if (!match && storedSelection && orgName) match = findByName(orgName);
+          if (!match && orgId) {
+            match = orgs.find((org) => (org.org_id || '').trim().toLowerCase() === orgId);
+          }
+          if (!cancelled) applyLogo(match?.name || targetOrgName || orgName, match?.logo);
+        } catch {
+          // Keep the default logo when the lookup fails.
+        }
+      };
+
+      loadOrganizationLogo();
+    }
+
+    const handleLogoUpdate = (event) => {
+      const detail = event.detail || {};
+      const name = (detail.name || '').trim().toLowerCase();
+      if (!name || name !== displayedOrgNameRef.current) return;
+      applyLogo(detail.name, detail.logo);
+    };
+
+    const handleOrganizationSelected = (event) => {
+      const detail = event.detail || {};
+      if (user?.is_supreme_admin && detail.name) {
+        localStorage.setItem('selectedOrganization', detail.name);
+      }
+      applyLogo(detail.name, detail.logo);
+    };
+
+    window.addEventListener('organization-logo-updated', handleLogoUpdate);
+    window.addEventListener('organization-selected', handleOrganizationSelected);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('organization-logo-updated', handleLogoUpdate);
+      window.removeEventListener('organization-selected', handleOrganizationSelected);
+    };
+  }, [user, authFetch]);
 
   useEffect(() => {
     const savedMode = localStorage.getItem('themeMode');
@@ -265,14 +340,20 @@ export default function Sidebar({ mode, setMode }) {
     >
       <Box sx={{ padding: 2, display: 'flex', justifyContent: 'center', mt: "15px" }}>
         <img
-          src={logo}
-          alt="Active Church Logo"
+          src={orgLogo}
+          alt={`${user?.Organization || user?.organization || 'Active Church'} Logo`}
+          onLoad={(event) => {
+            const { naturalWidth, naturalHeight } = event.currentTarget;
+            setIsVerticalLogo(naturalHeight > naturalWidth);
+          }}
           style={{
             maxWidth: '100%',
             maxHeight: '100px',
-            height: 'auto',
+            width: isVerticalLogo ? '100%' : 'auto',
+            height: isVerticalLogo ? '100px' : 'auto',
+            objectFit: isVerticalLogo ? 'fill' : 'contain',
             borderRadius: 8,
-            filter: isDark ? 'invert(1) brightness(2)' : 'none',
+            filter: isDark && !hasCustomLogo ? 'invert(1) brightness(2)' : 'none',
           }}
         />
       </Box>
