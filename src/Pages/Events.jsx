@@ -81,7 +81,7 @@ const styles = {
     minHeight: "100vh",
     fontFamily: "system-ui, sans-serif",
     padding: "1rem",
-    paddingTop: "1rem",
+    paddingTop: 0,
     paddingBottom: "1rem",
     boxSizing: "border-box",
     display: "flex",
@@ -246,8 +246,8 @@ const styles = {
   },
   mobileCard: {
     borderRadius: "16px",
-    padding: "1.25rem",
-    marginBottom: "1rem",
+    padding: "0.9rem",
+    marginBottom: "0.75rem",
     boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
     border: "1px solid",
     width: "100%",
@@ -257,13 +257,13 @@ const styles = {
   mobileCardRow: {
     display: "flex",
     justifyContent: "space-between",
-    marginBottom: "0.5rem",
-    fontSize: "0.9rem",
-    gap: "0.5rem",
+    marginBottom: "0.3rem",
+    fontSize: "0.84rem",
+    gap: "0.4rem",
   },
   mobileCardLabel: {
     fontWeight: 600,
-    minWidth: "100px",
+    minWidth: "82px",
   },
   mobileCardValue: {
     textAlign: "right",
@@ -273,7 +273,7 @@ const styles = {
   mobileActions: {
     display: "flex",
     gap: "0.5rem",
-    marginTop: "1rem",
+    marginTop: "0.6rem",
     justifyContent: "flex-end",
   },
   viewFilterContainer: {
@@ -939,7 +939,9 @@ ${xmlCols}
         variant="h6"
         sx={{
           fontWeight: "bold",
-          marginBottom: "0.75rem",
+          fontSize: "1.05rem",
+          lineHeight: 1.3,
+          marginBottom: "0.5rem",
           color: isDark ? "#fff" : "#333",
         }}
       >
@@ -1148,6 +1150,13 @@ const Events = () => {
   // "all" by default: defaulting to "incomplete" hid every completed and
   // did-not-meet event until the user manually changed the filter.
   const [selectedStatus, setSelectedStatus] = useState("all");
+  const selectedStatusLabel =
+    {
+      all: "All Events",
+      incomplete: "Incomplete",
+      complete: "Completed",
+      did_not_meet: "Did Not Meet",
+    }[selectedStatus] || "Events";
   const [searchQuery, setSearchQuery] = useState("");
   const searchDebounceRef = useRef(null);
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
@@ -2606,6 +2615,11 @@ const getFilteredEventTypes = (allEventTypes) => {
       if (shouldRefresh) {
         clearCache();
         setCurrentPage(1);
+        const isCellType = isSmallGatheringEventType(
+          selectedEventTypeFilter,
+          eventTypes,
+        );
+        if (isCellType) setSelectedStatus("incomplete");
 
         setTimeout(() => {
           const refreshParams = {
@@ -2613,7 +2627,11 @@ const getFilteredEventTypes = (allEventTypes) => {
             limit: rowsPerPage,
             start_date: DEFAULT_API_START_DATE,
             _t: Date.now(),
-            status: selectedStatus !== "all" ? selectedStatus : undefined,
+            status: isCellType
+              ? "incomplete"
+              : selectedStatus !== "all"
+                ? selectedStatus
+                : undefined,
             search: searchQuery.trim() || undefined,
           };
 
@@ -3813,7 +3831,19 @@ const getFilteredEventTypes = (allEventTypes) => {
     }, [dropdownOpen]);
 
     return (
-      <div style={styles.statusBadgeContainer}>
+      <div
+        style={{
+          ...styles.statusBadgeContainer,
+          ...(isMobileView
+            ? {
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gap: "0.35rem",
+                width: "100%",
+              }
+            : {}),
+        }}
+      >
         
         {statuses.map((status) => (
           <button
@@ -3821,8 +3851,23 @@ const getFilteredEventTypes = (allEventTypes) => {
             style={{
               ...styles.statusBadge,
               ...status.style,
+              ...(isMobileView
+                ? {
+                    minWidth: 0,
+                    width: "100%",
+                    padding: "0.45rem 0.2rem",
+                    fontSize: "0.64rem",
+                    lineHeight: 1.15,
+                    borderWidth: "1px",
+                    borderRadius: "8px",
+                    whiteSpace: "normal",
+                  }
+                : {}),
               ...(selectedStatus === status.value
-                ? styles.statusBadgeActive
+                ? {
+                    ...styles.statusBadgeActive,
+                    ...(isMobileView ? { transform: "none" } : {}),
+                  }
                 : {}),
             }}
             onMouseDown={(e) => {
@@ -3850,8 +3895,11 @@ const getFilteredEventTypes = (allEventTypes) => {
                   setCurrentPage(1);
                 }}
                 style={{
-                  minWidth: isMobileView ? "100%" : "160px",
-                  padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
+                  minWidth: isMobileView ? 0 : "160px",
+                  width: isMobileView ? "100%" : undefined,
+                  gridColumn: isMobileView ? "1 / -1" : undefined,
+                  boxSizing: "border-box",
+                  padding: isMobileView ? "0.45rem 0.65rem" : "0.75rem 1rem",
                   border: `1px solid ${isDarkMode ? theme.palette.divider : "#ccc"}`,
                   borderRadius: "4px",
                   backgroundColor: isDarkMode
@@ -3875,6 +3923,7 @@ const getFilteredEventTypes = (allEventTypes) => {
             style={{
               marginLeft: 6,
               position: "relative",
+              ...(isMobileView ? { gridColumn: "1 / -1", marginLeft: 0 } : {}),
             }}
           >
             {/* Main download button with integrated dropdown */}
@@ -3894,7 +3943,7 @@ const getFilteredEventTypes = (allEventTypes) => {
                 cursor: "pointer",
                 whiteSpace: "nowrap",
                 padding: "0.4rem 0.8rem",
-                fontSize: "5rem",
+                fontSize: "0.85rem",
                 position: "relative",
               }}
               title={`Download ${selectedStatus === "complete" ? "COMPLETED" : "DID NOT MEET"} attendance`}
@@ -4070,9 +4119,19 @@ const getFilteredEventTypes = (allEventTypes) => {
     };
 
     return (
-      <div style={styles.viewFilterContainer}>
+      <div
+        style={{
+          ...styles.viewFilterContainer,
+          ...(isMobileView ? { gap: "0.65rem", flexWrap: "wrap" } : {}),
+        }}
+      >
         <span style={styles.viewFilterLabel}>View:</span>
-        <label style={styles.viewFilterRadio}>
+        <label
+          style={{
+            ...styles.viewFilterRadio,
+            ...(isMobileView ? { gap: "0.25rem" } : {}),
+          }}
+        >
           <input
             type="radio"
             name="viewFilter"
@@ -4080,9 +4139,16 @@ const getFilteredEventTypes = (allEventTypes) => {
             checked={viewFilter === "all"}
             onChange={(e) => handleViewFilterChange(e.target.value)}
           />
-          <span style={styles.viewFilterText}>{getAllLabel()}</span>
+          <span style={{ ...styles.viewFilterText, ...(isMobileView ? { fontSize: "0.85rem" } : {}) }}>
+            {getAllLabel()}
+          </span>
         </label>
-        <label style={styles.viewFilterRadio}>
+        <label
+          style={{
+            ...styles.viewFilterRadio,
+            ...(isMobileView ? { gap: "0.25rem" } : {}),
+          }}
+        >
           <input
             type="radio"
             name="viewFilter"
@@ -4090,7 +4156,9 @@ const getFilteredEventTypes = (allEventTypes) => {
             checked={viewFilter === "personal"}
             onChange={(e) => handleViewFilterChange(e.target.value)}
           />
-          <span style={styles.viewFilterText}>{getPersonalLabel()}</span>
+          <span style={{ ...styles.viewFilterText, ...(isMobileView ? { fontSize: "0.85rem" } : {}) }}>
+            {getPersonalLabel()}
+          </span>
         </label>
       </div>
     );
@@ -4484,13 +4552,20 @@ const getTypeValue = (type) => {
     );
   };
 
+  const handleBackToEventTypes = () => {
+    setShowingEvents(false);
+    setSelectedStatus("incomplete");
+    setSearchQuery("");
+    eventsCache.current = {};
+  };
+
   return (
     <Box
       sx={{
         height: "100vh",
         fontFamily: "system-ui, sans-serif",
         padding: isMobileView ? "0.5rem" : "1rem",
-        paddingTop: isMobileView ? "4rem" : "5rem",
+        paddingTop: isMobileView ? "1rem" : "5rem",
         paddingBottom: "1rem",
         boxSizing: "border-box",
         display: "flex",
@@ -4507,7 +4582,7 @@ const getTypeValue = (type) => {
       {/* TOP HEADER WITH TOGGLE - ALWAYS SHOWN */}
       <Box
         sx={{
-          padding: isMobileView ? "1rem" : "1.5rem",
+          padding: isMobileView ? "0.75rem" : "1.5rem",
           borderRadius: "16px",
           marginBottom: isMobileView ? "0.5rem" : "1rem",
           boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
@@ -4518,15 +4593,35 @@ const getTypeValue = (type) => {
         <Box
           sx={{
             display: "flex",
-            justifyContent: "space-between",
+            justifyContent: isMobileView && showingEvents ? "flex-start" : "space-between",
             alignItems: "center",
-            mb: 2,
+            gap: isMobileView ? 0.75 : 0,
+            mb: isMobileView ? 0.75 : 2,
           }}
         >
+          {showingEvents && isMobileView && (
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={handleBackToEventTypes}
+              startIcon={<ArrowBackIcon />}
+              sx={{
+                flexShrink: 0,
+                minWidth: 0,
+                px: 1,
+                py: 0.35,
+                borderColor: isDarkMode ? theme.palette.divider : "#ccc",
+                color: isDarkMode ? theme.palette.text.primary : "#333",
+              }}
+            >
+              Back
+            </Button>
+          )}
           <Typography
-            variant="h5"
+            variant={isMobileView ? "h6" : "h5"}
             sx={{
               fontWeight: "bold",
+              flex: isMobileView && showingEvents ? 1 : undefined,
               color: isDarkMode ? theme.palette.text.primary : "#333",
             }}
           >
@@ -4542,7 +4637,7 @@ const getTypeValue = (type) => {
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              mb: 2,
+              mb: showingEvents ? 0 : 2,
             }}
           >
             {/* VIEW TOGGLE - GRID/TABLE - ONLY SHOW WHEN NOT VIEWING EVENTS */}
@@ -4614,7 +4709,7 @@ const getTypeValue = (type) => {
           
         </Box>
         {/* WHEN SHOWING EVENTS - Show back button */}
-        {showingEvents && (
+        {showingEvents && !isMobileView && (
           <Box
             sx={{
               display: "flex",
@@ -4626,12 +4721,7 @@ const getTypeValue = (type) => {
             <Button
               variant="outlined"
               size="small"
-              onClick={() => {
-                setShowingEvents(false);
-                setSelectedStatus("incomplete");
-                setSearchQuery("");
-                eventsCache.current = {}
-              }}
+              onClick={handleBackToEventTypes}
               startIcon={<ArrowBackIcon />}
               sx={{
                 borderColor: isDarkMode ? theme.palette.divider : "#ccc",
@@ -4649,11 +4739,11 @@ const getTypeValue = (type) => {
             <Box
               sx={{
                 display: "flex",
-                gap: 2,
+                gap: isMobileView ? 0.6 : 2,
                 alignItems: "center",
-                marginBottom: isMobileView ? "0.75rem" : "1.5rem",
-                flexWrap: "wrap",
-                px: 1,
+                marginBottom: isMobileView ? "0.5rem" : "1.5rem",
+                flexWrap: isMobileView ? "nowrap" : "wrap",
+                px: isMobileView ? 0 : 1,
               }}
             >
               <TextField
@@ -4684,14 +4774,14 @@ const getTypeValue = (type) => {
                 }}
                 sx={{
                   flex: 1,
-                  minWidth: 200,
+                  minWidth: isMobileView ? 0 : 200,
                   backgroundColor: "transparent !important",
                   "& .MuiInputBase-root": {
                     backgroundColor: "transparent !important",
                   },
                   "& .MuiInputBase-input": {
                     fontSize: isMobileView ? "14px" : "0.95rem",
-                    padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
+                    padding: isMobileView ? "0.45rem 0.55rem" : "0.75rem 1rem",
                     color: isDarkMode ? theme.palette.text.primary : "#000",
                     backgroundColor: "transparent !important",
                   },
@@ -4728,8 +4818,8 @@ const getTypeValue = (type) => {
                 onClick={clearAllFilters}
                 disabled={loading}
                 sx={{
-                  padding: isMobileView ? "0.6rem 1rem" : "0.75rem 1.5rem",
-                  fontSize: isMobileView ? "14px" : "0.95rem",
+                  padding: isMobileView ? "0.45rem 0.65rem" : "0.75rem 1.5rem",
+                  fontSize: isMobileView ? "0.72rem" : "0.95rem",
                   whiteSpace: "nowrap",
                   backgroundColor: "#6c757d",
                   color: "white",
@@ -4738,28 +4828,41 @@ const getTypeValue = (type) => {
                   },
                 }}
               >
-                {loading ? "⏳" : "CLEAR ALL"}
+                {loading ? "⏳" : isMobileView ? "CLEAR" : "CLEAR ALL"}
               </Button>
             </Box>
 
             {/* STATUS BADGES AND VIEW FILTERS */}
             <Box
               sx={{
-                display: "flex",
+                display: isMobileView ? "block" : "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                marginBottom: "1.5rem",
+                marginBottom: isMobileView ? "0.5rem" : "1.5rem",
                 flexWrap: "wrap",
-                gap: "1rem",
-                px: 1,
+                gap: isMobileView ? "0.5rem" : "1rem",
+                px: isMobileView ? 0 : 1,
               }}
             >
+              <Typography
+                component="h2"
+                variant="subtitle1"
+                sx={{
+                  width: "100%",
+                  mb: isMobileView ? 0.25 : 0.5,
+                  fontWeight: 700,
+                  color: theme.palette.text.primary,
+                }}
+              >
+                Showing: {selectedStatusLabel}
+              </Typography>
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 12,
                   flexWrap: "wrap",
+                  width: isMobileView ? "100%" : undefined,
                 }}
               >
                 <div
@@ -4768,6 +4871,7 @@ const getTypeValue = (type) => {
                     alignItems: "center",
                     gap: 12,
                     flexWrap: "wrap",
+                    width: isMobileView ? "100%" : undefined,
                   }}
                 >
                   {/* <Box
@@ -4867,8 +4971,10 @@ const getTypeValue = (type) => {
                 sx={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 1,
+                  gap: isMobileView ? 0.5 : 1,
                   flexWrap: "wrap",
+                  justifyContent: isMobileView ? "flex-start" : undefined,
+                  mt: isMobileView ? 0.35 : 0,
                 }}
               >
                 {/* {(isAdmin || isRegistrant || isLeader || isLeaderAt12) && (

@@ -161,7 +161,7 @@ function App() {
 
       try {
         const backendUrl = import.meta.env.VITE_BACKEND_URL;
-        const response = await authFetch(`${backendUrl}/profile/${userId}`);
+        const response = await authFetch(`${backendUrl}/profile/${userId}`, {}, { retryOnUnauthorized: false });
         if (!response.ok) return;
 
         const profileData = await response.json();

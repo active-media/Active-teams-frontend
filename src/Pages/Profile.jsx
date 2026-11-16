@@ -7,7 +7,7 @@ import {
 import Cropper from "react-easy-crop";
 import getCroppedImg from "../components/cropImageHelper";
 import { UserContext } from "../contexts/UserContext.jsx";
-import { AuthContext } from "../contexts/AuthContext.jsx";
+import { AuthContext, supabase } from "../contexts/AuthContext.jsx";
 import { CameraAlt, ExpandMore } from "@mui/icons-material";
 import { isPasswordValid, PasswordRequirements } from "../components/PasswordField";
 
@@ -95,6 +95,24 @@ const getLeaderName = (leader) => {
     .trim();
 };
 
+const getInvitedByDisplay = async (profile) => {
+  const invitedBy = profile?.invited_by;
+  const invitedById = profile?.invited_by_id || invitedBy?._id || invitedBy?.id ||
+    (typeof invitedBy === "string" ? invitedBy : "");
+  const displayName = profile?.invited_by_name || profile?.invitedByName || getLeaderName(invitedBy);
+  if (!/^(?:\d+|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{24})$/i.test(String(invitedById))) {
+    return { displayName, error: null };
+  }
+
+  const { data, error } = await supabase
+    .from("Users")
+    .select("name, surname")
+    .eq("_id", invitedById)
+    .maybeSingle();
+  const resolvedName = [data?.name, data?.surname].filter(Boolean).join(" ").trim();
+  return { displayName: resolvedName || displayName, error };
+};
+
 const getLeaderEntries = (leaders) => {
   const entries = new Map();
   if (Array.isArray(leaders)) {
@@ -118,6 +136,10 @@ const getLeaderLevelFromRole = (role) => {
   const level = Number(match?.[1]);
   return Number.isSafeInteger(level) && level > 0 ? level : null;
 };
+
+const isAssignedLeader = (name) =>
+  Boolean(String(name || "").trim()) &&
+  !/^(?:not assigned yet|not assigned|unassigned)$/i.test(String(name).trim());
 
 const getHierarchyLevels = (leaders) => {
   const knownLevels = Object.keys(leaders)
@@ -230,7 +252,8 @@ export default function Profile() {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const { userProfile, setUserProfile, setProfilePic, profilePic } = useContext(UserContext);
-  const { authFetch, updateProfilePicture } = useContext(AuthContext);
+  const { user, authFetch, updateProfilePicture } = useContext(AuthContext);
+  const mongoUserId = userProfile?._id || user?._id;
 
   const [loggedInUserRole, setLoggedInUserRole] = useState(() => {
     try {
@@ -241,7 +264,8 @@ export default function Profile() {
   });
 
   const fileInputRef = useRef(null);
-  const hasFetchedProfile = useRef(false);
+  const profileLoadStarted = useRef(false);
+  const profileEffectActive = useRef(false);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppingSrc, setCroppingSrc] = useState(null);
@@ -253,6 +277,7 @@ export default function Profile() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [leaders, setLeaders] = useState({ leaderAt1: "", leaderAt12: "", leaderAt144: "" });
   const [form, setForm] = useState(emptyForm);
+  const [invitedByDisplay, setInvitedByDisplay] = useState("");
   const [originalForm, setOriginalForm] = useState(emptyForm);
   const [hasUserEditedForm, setHasUserEditedForm] = useState(false);
   const [showPassword, setShowPassword] = useState({ current: false, new: false, confirm: false });
@@ -315,10 +340,22 @@ export default function Profile() {
     nextLeaders.leaderAt1 = nextLeaders.leaderAt1 || profile?.invited_by || "";
     if (profile?.leaders) nextLeaders.leaderAt12 = nextLeaders.leaderAt12 || profile.invited_by || "";
     const selfName = `${data.name} ${data.surname}`.trim();
-    const selfLevel = getLeaderLevelFromRole(profile?.role || loggedInUserRole) || 144;
-    const selfKey = `leaderAt${selfLevel}`;
-    if (!nextLeaders[selfKey] || nextLeaders[selfKey].endsWith("(You)")) {
-      nextLeaders[selfKey] = selfName ? `${selfName} (You)` : "You";
+    const selfValue = selfName ? `${selfName} (You)` : "You";
+    const existingSelfKey = Object.entries(nextLeaders)
+      .find(([, name]) => String(name || "").trim().endsWith("(You)"))?.[0];
+    if (existingSelfKey) {
+      nextLeaders[existingSelfKey] = selfValue;
+    } else {
+      const roleLevel = getLeaderLevelFromRole(profile?.role || loggedInUserRole);
+      const assignedLevels = Object.entries(nextLeaders)
+        .filter(([, name]) => isAssignedLeader(name))
+        .map(([key]) => Number(key.match(/^leaderAt(\d+)$/)?.[1]))
+        .filter((level) => Number.isSafeInteger(level) && level > 0);
+      let selfLevel = roleLevel && !isAssignedLeader(nextLeaders[`leaderAt${roleLevel}`])
+        ? roleLevel
+        : (Math.max(0, ...assignedLevels) * 12 || 1);
+      while (isAssignedLeader(nextLeaders[`leaderAt${selfLevel}`])) selfLevel *= 12;
+      nextLeaders[`leaderAt${selfLevel}`] = selfValue;
     }
     getHierarchyLevels(nextLeaders).forEach((level) => {
       const key = `leaderAt${level}`;
@@ -333,14 +370,22 @@ export default function Profile() {
   }, [loggedInUserRole]);
 
   useEffect(() => {
-    if (hasFetchedProfile.current) return;
-    let isMounted = true;
+    if (!mongoUserId) return;
+    profileEffectActive.current = true;
+    if (profileLoadStarted.current) {
+      return () => { profileEffectActive.current = false; };
+    }
+    profileLoadStarted.current = true;
 
     const loadProfile = async () => {
       try {
         setLoadingProfile(true);
 
-        const response = await authFetch(`${BACKEND_URL}/profile/me/details`);
+        const response = await authFetch(
+          `${BACKEND_URL}/profile/${encodeURIComponent(String(mongoUserId))}`,
+          {},
+          { retryOnUnauthorized: false },
+        );
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(errorData.detail || errorData.message || `HTTP ${response.status}`);
@@ -349,7 +394,18 @@ export default function Profile() {
         const userId = profileData?._id || profileData?.id;
         if (userId) localStorage.setItem("userId", String(userId));
 
-        if (profileData && isMounted) {
+        if (profileData && profileEffectActive.current) {
+          const { displayName, error: inviterLookupError } = await getInvitedByDisplay(profileData);
+          if (inviterLookupError) {
+            console.error("Inviter name lookup error:", inviterLookupError);
+            setSnackbar({
+              open: true,
+              message: `Could not load inviter name: ${inviterLookupError.message}`,
+              severity: "warning",
+            });
+          }
+          if (!profileEffectActive.current) return;
+          setInvitedByDisplay(displayName);
           const pic = profileData.profile_picture || profileData.avatarUrl || profileData.profilePicUrl || getDefaultAvatar(profileData.gender);
           const finalProfileData = { ...profileData, profile_picture: pic, avatarUrl: pic, profilePicUrl: pic };
           updateFormWithProfile(finalProfileData);
@@ -359,11 +415,10 @@ export default function Profile() {
             setLoggedInUserRole(finalProfileData.role);
             localStorage.setItem("userRole", finalProfileData.role);
           }
-          hasFetchedProfile.current = true;
         }
       } catch (error) {
         console.error("Profile loading error:", error);
-        if (isMounted) {
+        if (profileEffectActive.current) {
           setSnackbar({
             open: true,
             message: `Failed to load profile: ${error.message}`,
@@ -371,13 +426,13 @@ export default function Profile() {
           });
         }
       } finally {
-        if (isMounted) setLoadingProfile(false);
+        if (profileEffectActive.current) setLoadingProfile(false);
       }
     };
 
     loadProfile();
-    return () => { isMounted = false; };
-  }, [authFetch, setUserProfile, setProfilePic, updateFormWithProfile]);
+    return () => { profileEffectActive.current = false; };
+  }, [authFetch, mongoUserId, setUserProfile, setProfilePic, updateFormWithProfile]);
 
   const profileChanged = useMemo(
     () => Object.keys(form).some((k) => !PASSWORD_KEYS.includes(k) && form[k] !== originalForm[k]),
@@ -550,7 +605,7 @@ export default function Profile() {
   const labelSx = { mb: 0.75, fontWeight: 600, fontSize: "0.8125rem", color: ink, fontFamily: BODY };
 
   // Plain render function (not a component) so inputs keep focus while typing
-  const field = (label, key, { locked = false, size = { xs: 12, sm: 6 }, ...props } = {}) => (
+  const field = (label, key, { locked = false, size = { xs: 12, sm: 6 }, displayValue, ...props } = {}) => (
     <Grid size={size} key={key}>
       <Typography component="label" htmlFor={`f-${key}`} sx={{ ...labelSx, display: "block" }}>
         {label}
@@ -560,7 +615,7 @@ export default function Profile() {
       </Typography>
       <TextField
         id={`f-${key}`}
-        value={form[key] || ""}
+        value={displayValue ?? form[key] ?? ""}
         onChange={handleChange(key)}
         fullWidth
         disabled={locked && !canEditProfile}
@@ -719,7 +774,7 @@ export default function Profile() {
                 {i < leaderSteps.length - 1 && <Box sx={{ position: "absolute", left: 7, top: 20, bottom: -2, width: 2, bgcolor: line }} />}
                 <Typography sx={{ fontSize: "0.75rem", color: mute }}>{s.label}</Typography>
                 <Typography sx={{ fontWeight: s.value ? 600 : 400, color: s.value ? ink : mute }}>
-                  {s.value || "Not assigned yet"}
+                  {s.value || "Not Assigned"}
                 </Typography>
               </Box>
             ))}
@@ -765,7 +820,7 @@ export default function Profile() {
           {section("Church", "Where you belong and who invited you.",
             <Grid container spacing={2}>
               {field("Organization / church", "organization", { locked: true, placeholder: "Your church or organization" })}
-              {field("Invited by", "invitedBy", { locked: true })}
+              {field("Invited by", "invitedBy", { locked: true, displayValue: invitedByDisplay })}
             </Grid>
           )}
 
