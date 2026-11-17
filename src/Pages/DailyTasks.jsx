@@ -237,7 +237,7 @@ const DT_CSS = `
 .dt-btn--small{padding:10px 16px;font-size:13px}
 .dt-btn--solid{background:var(--dt-fg);color:var(--dt-bg);border:none;font-weight:600;padding:10px 16px;font-size:13px}
 .dt-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:16px;margin-top:32px}
-.dt-stat{border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:24px 32px;min-width:160px}
+.dt-stat{border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:10px 10px;min-width:160px}
 .dt-stat-num{font-size:48px;font-weight:700;line-height:1;color:var(--dt-fg)}
 .dt-stat-label{margin-top:8px;font-size:11px;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--dt-muted)}
 .dt-pills{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
@@ -249,7 +249,7 @@ const DT_CSS = `
 .dt-select-wrap svg{position:absolute;right:12px;pointer-events:none;color:var(--dt-fg)}
 .dt-custom-range{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
 .dt-custom-range input{border-radius:10px;border:1px solid var(--dt-border);background:var(--dt-card);color:var(--dt-fg);padding:8px 12px;font-size:13px;font-family:inherit}
-.dt-list{display:flex;flex-direction:column;gap:16px;margin-top:40px}
+.dt-list{display:flex;flex-direction:column;gap:16px;margin-top:40px;min-height:55vh}
 .dt-row{display:flex;align-items:center;gap:20px;border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:24px;cursor:pointer;transition:background .15s}
 .dt-row:hover{background:var(--dt-card-hover)}
 .dt-avatar{width:48px;height:48px;flex-shrink:0;border-radius:50%;background:var(--dt-border);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;color:var(--dt-fg);text-transform:uppercase}
@@ -500,11 +500,12 @@ function CallTaskModal({
       onClose={onClose}
       fullWidth
       maxWidth="sm"
-      fullScreen={isSmall}
+      // fullScreen={!isSmall}/
       PaperProps={{
         sx: {
-          borderRadius: isSmall ? 0 : "18px",
+          borderRadius: isSmall ? "6px" : "18px",
           background: "background.paper",
+
         },
       }}
     >
@@ -2033,8 +2034,8 @@ export default function DailyTasks() {
           <h2 className="dt-title">Daily Tasks</h2>
           <div className="dt-actions">
             <button className="dt-btn dt-btn--primary" onClick={() => handleOpen("call")}>
-              <Phone size={16} />
-              Call Task
+              <Phone sizes={16} />
+              Call Tasks
             </button>
             <button className="dt-btn" onClick={() => handleOpen("visit")}>
               <MapPin size={16} />
