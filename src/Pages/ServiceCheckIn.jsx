@@ -275,6 +275,8 @@ function ServiceCheckIn() {
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [isClosingEvent, setIsClosingEvent] = useState(false);
+  const [saveSummaryOpen, setSaveSummaryOpen] = useState(false);
+  const [headcountValue, setHeadcountValue] = useState("0");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [modalSearch, setModalSearch] = useState("");
   const [modalPage, setModalPage] = useState(0);
@@ -636,6 +638,7 @@ function ServiceCheckIn() {
             attendance: event.attendance,
             newPeople: event.new_people,
             consolidated: event.total_consolidation,
+            headcount: event.headcount ?? event.total_headcounts ?? null,
             attendanceData, newPeopleData, consolidatedData,
             location: event.location || event.Location || "",
             description: event.description || "",
@@ -971,6 +974,15 @@ function ServiceCheckIn() {
   const [newPeopleCount, setNewPeopleCount] = useState(realTimeData?.new_people_count || 0);  
   console.log('real',realTimeData)
   const consolidationCount = realTimeData?.consolidation_count ?? realTimeData?.consolidations?.length ?? 0;
+  const attendanceCount =
+    realTimeData?.present_count ??
+    realTimeData?.present_attendees?.length ??
+    presentCount ??
+    0;
+  const newPeopleTotal =
+    realTimeData?.new_people_count ??
+    realTimeData?.new_people?.length ??
+    newPeopleCount;
 
   const modalFilteredAttendees = useMemo(() => {
     const full = (realTimeData?.present_attendees || []).map((a) => {
@@ -1641,15 +1653,33 @@ function ServiceCheckIn() {
     window.dispatchEvent(new CustomEvent("taskUpdated", { detail: { action: "consolidationCreated", task } }));
   }, [currentSessionId, fetchRealTimeEventData, notifyTaskUpdate, commitRealTimeData]);
 
-  const handleSaveAndCloseEvent = useCallback(async () => {
+  const handleSaveAndCloseEvent = useCallback(() => {
     if (!currentSessionId) { toast.error("Please select an event first"); return; }
     const currentEvent = events.find(e => e.session_id === currentSessionId);
     if (!currentEvent) { toast.error("Selected event not found"); return; }
-    if (!window.confirm(`Are you sure you want to close "${currentEvent.eventName}"? This action cannot be undone.`)) return;
+    setHeadcountValue(String(attendanceCount));
+    setSaveSummaryOpen(true);
+  }, [currentSessionId, events, attendanceCount]);
+
+  const handleConfirmSaveAndCloseEvent = useCallback(async () => {
+    if (!currentSessionId) { toast.error("Please select an event first"); return; }
+    const currentEvent = events.find(e => e.session_id === currentSessionId);
+    if (!currentEvent) { toast.error("Selected event not found"); return; }
+    if (!/^\d+$/.test(headcountValue) || !Number.isSafeInteger(Number(headcountValue))) {
+      toast.error("Enter a valid whole-number headcount");
+      return;
+    }
 
     setIsClosingEvent(true);
     try {
-      const response = await authFetch(`${BASE_URL}/events/${currentSessionId}/${currentEvent.event_id}/toggle-status`, { method: "PATCH" });
+      const response = await authFetch(
+        `${BASE_URL}/events/${currentSessionId}/${currentEvent.event_id}/toggle-status`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ headcount: Number(headcountValue) }),
+        },
+      );
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
       if (result.already_closed)
@@ -1685,6 +1715,7 @@ function ServiceCheckIn() {
       });
 
       setRealTimeData(null);
+      setSaveSummaryOpen(false);
       try {
         const payload = {
           eventId: getEventId(currentSessionId),
@@ -1708,11 +1739,8 @@ function ServiceCheckIn() {
             realTimeData?.new_people || realTimeData?.newPeople || [],
           consolidations: realTimeData?.consolidations || [],
           consolidatedData: realTimeData?.consolidations || [],
-          total_attendance:
-            realTimeData?.present_count ??
-            realTimeData?.present_attendees?.length ??
-            attendees?.length ??
-            0,
+          total_attendance: attendanceCount,
+          headcount: Number(headcountValue),
           new_people_count:
             realTimeData?.new_people_count ??
             realTimeData?.new_people?.length ??
@@ -1740,26 +1768,38 @@ function ServiceCheckIn() {
     } finally {
       setIsClosingEvent(false);
     }
-  }, [currentSessionId, events, authFetch, fetchEvents, attendees, realTimeData?.attendanceData, realTimeData?.consolidation_count, realTimeData?.consolidations, realTimeData?.newPeople, realTimeData?.new_people, realTimeData?.new_people_count, realTimeData?.present_attendees, realTimeData?.present_count, user?.email]);
+  }, [currentSessionId, events, headcountValue, authFetch, fetchEvents, attendees, realTimeData?.attendanceData, realTimeData?.consolidation_count, realTimeData?.consolidations, realTimeData?.newPeople, realTimeData?.new_people, realTimeData?.new_people_count, realTimeData?.present_attendees, realTimeData?.present_count, attendanceCount, user?.email]);
 
+  // session_id of the event currently being reopened. Drives the per-row
+  // Reopen loader in EventHistory; null when no reopen is in flight.
+  const [unsaveLoadingId, setUnsaveLoadingId] = useState(null);
   const handleUnsaveEvent = useCallback(async (event) => {
+    const targetSessionId = event?.session_id;
+    if (!targetSessionId) { toast.error("Please select an event first"); return; }
+    if (unsaveLoadingId) return; // one reopen at a time
+    const currentEvent = events.find(e => e.session_id === targetSessionId);
+    if (!currentEvent) { toast.error("Selected event not found"); return; }
+
+    setUnsaveLoadingId(targetSessionId);
     try {
-      const fullId = event.session_id
-      const baseId = cleanEventId(fullId);
-      const response = await authFetch(`${BASE_URL}/events/${fullId}/toggle-status`, { method: "PATCH" });
+      const response = await authFetch(`${BASE_URL}/events/${targetSessionId}/${currentEvent.event_id}/toggle-status`, { method: "PATCH" });
       if (!response.ok) { const e = await response.json(); throw new Error(e.detail || "HTTP error"); }
       const result = await response.json();
       if (result.action !== "reopened") { toast.error("Server did not reopen the event. Please try again."); return; }
       toast.success(`Event "${event.eventName}" has been reopened!`);
       setEvents(prev => prev.map(e =>
-        cleanEventId(e.id) === baseId
+        e.session_id === targetSessionId
           ? { ...e, status: "incomplete", closed_by: undefined, closed_at: undefined }
           : e
       ));
-      setCurrentSessionId(fullId);
+      setCurrentSessionId(targetSessionId);
       setTimeout(() => fetchEvents(), 1500);
-    } catch (error) { toast.error(error.message || "Failed to reopen event"); }
-  }, [authFetch, fetchEvents]);
+    } catch (error) {
+      toast.error(error.message || "Failed to reopen event");
+    } finally {
+      setUnsaveLoadingId(null);
+    }
+  }, [authFetch, fetchEvents, events, unsaveLoadingId]);
 
   const handleConsolidationClick = useCallback(() => {
     if (!currentSessionId) { toast.error("Please select an event first"); return; }
@@ -1915,7 +1955,12 @@ function ServiceCheckIn() {
       const eventData = payload && typeof payload === 'object' ? payload : {};
       setEventHistoryModal({
         open: true,
-        event: { ...row, eventName: row?.eventName || eventData?.event_name || "Event" },
+        event: {
+          ...row,
+          eventName: row?.eventName || eventData?.event_name || "Event",
+          // Prefer the headcount from the fresh session fetch; fall back to the row value.
+          headcount: eventData?.headcount ?? row?.headcount ?? null,
+        },
         type: type,
         data: eventData,
         // isLoading: false,
@@ -2087,6 +2132,71 @@ const mainColumns = useMemo(() => {
         personName={deleteConfirmation.personName}
         isLoading={isDeleting}
       />
+
+      <Dialog
+        open={saveSummaryOpen}
+        onClose={() => {
+          if (!isClosingEvent) setSaveSummaryOpen(false);
+        }}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle sx={{ fontWeight: 700 }}>
+          Review service totals
+        </DialogTitle>
+        <DialogContent dividers>
+          <Typography color="text.secondary" sx={{ mb: 2 }}>
+            Confirm the service statistics before saving and closing.
+          </Typography>
+          <Grid container spacing={1.5} sx={{ mb: 2 }}>
+            {[
+              { label: "Attendance", value: attendanceCount },
+              { label: "Consolidation", value: consolidationCount },
+              { label: "New people", value: newPeopleTotal },
+            ].map((stat) => (
+              <Grid item xs={12} sm={4} key={stat.label}>
+                <Paper variant="outlined" sx={{ p: 2, textAlign: "center" }}>
+                  <Typography variant="h5" fontWeight={700}>
+                    {stat.value}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {stat.label}
+                  </Typography>
+                </Paper>
+              </Grid>
+            ))}
+          </Grid>
+          <TextField
+            label="Headcount"
+            type="number"
+            value={headcountValue}
+            onChange={(event) => setHeadcountValue(event.target.value)}
+            inputProps={{ min: 0, step: 1 }}
+            helperText="Defaults to attendance. Adjust if the actual headcount differs."
+            fullWidth
+            autoFocus
+          />
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setSaveSummaryOpen(false)}
+            disabled={isClosingEvent}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleConfirmSaveAndCloseEvent}
+            disabled={
+              isClosingEvent ||
+              !/^\d+$/.test(headcountValue) ||
+              !Number.isSafeInteger(Number(headcountValue))
+            }
+          >
+            {isClosingEvent ? "Saving…" : "Save and close"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Header */}
       <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 1, mb: 2 }}>
@@ -2335,6 +2445,7 @@ const mainColumns = useMemo(() => {
               onViewEventStats={handleViewEventStats}
               events={getFilteredClosedEvents()} searchTerm={eventSearch}
               isLoading={isLoadingEvents && events.length === 0 && isLoadingHistory}
+              unsaveLoadingId={unsaveLoadingId}
             />
           </Box>
         )}

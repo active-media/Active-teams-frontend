@@ -261,8 +261,9 @@ export const AuthProvider = ({ children }) => {
       token = refreshed?.session?.access_token ?? null;
     }
 
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
     const buildHeaders = (t) => ({
-      'Content-Type': 'application/json',
+      ...(!isFormData ? { 'Content-Type': 'application/json' } : {}),
       ...(options.headers || {}),
       ...(t ? { Authorization: `Bearer ${t}` } : {}),
     });

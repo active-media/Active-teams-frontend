@@ -118,7 +118,7 @@ const styles = {
     paddingBottom: "70px",
   },
   statusBadge: {
-    padding: "0.6rem 1.2rem",
+    // padding: "0.6rem 1.2rem",
     borderRadius: "12px",
     fontSize: "0.9rem",
     fontWeight: "600",
@@ -134,8 +134,8 @@ const styles = {
     borderColor: "#333",
   },
   statusBadgeIncomplete: {
-    backgroundColor: "#FFA500",
-    color: "#fff",
+    backgroundColor: "#fff",
+    color: "#FFA500",
     borderColor: "#FFA500",
   },
   statusBadgeComplete: {
@@ -491,7 +491,7 @@ const formatDate = (date) => {
 
 // Resolve the date-range dropdown into a concrete window. Kept in one place so
 // the backend request and the local filter always describe the same range.
-const resolveDateRangeWindow = (range) => {
+const resolveDateRangeWindow = (range, customStartDate, customEndDate) => {
   if (!range || range === "all") return null;
 
   const now = new Date();
@@ -505,7 +505,25 @@ const resolveDateRangeWindow = (range) => {
   let start;
   let endExclusive;
 
-  if (range === "this-week" || range === "last-week") {
+  if (range === "custom") {
+    if (
+      !customStartDate ||
+      !customEndDate ||
+      customStartDate > customEndDate
+    ) {
+      return null;
+    }
+
+    start = new Date(`${customStartDate}T00:00:00`);
+    const end = new Date(`${customEndDate}T00:00:00`);
+    if (
+      Number.isNaN(start.getTime()) ||
+      Number.isNaN(end.getTime())
+    ) {
+      return null;
+    }
+    endExclusive = addDays(end, 1);
+  } else if (range === "this-week" || range === "last-week") {
     const mondayOffset = (today.getDay() + 6) % 7; // days since Monday
     start = addDays(today, -mondayOffset);
     if (range === "last-week") start = addDays(start, -7);
@@ -525,10 +543,12 @@ const resolveDateRangeWindow = (range) => {
     return null;
   }
 
-  // Never ask for dates after today: end_date is inclusive, so the exclusive
-  // bound is capped at tomorrow.
-  const tomorrow = addDays(today, 1);
-  if (endExclusive > tomorrow) endExclusive = tomorrow;
+  if (range !== "custom") {
+    // Never ask for dates after today: end_date is inclusive, so the exclusive
+    // bound is capped at tomorrow.
+    const tomorrow = addDays(today, 1);
+    if (endExclusive > tomorrow) endExclusive = tomorrow;
+  }
 
   return { start, endExclusive };
 };
@@ -541,8 +561,12 @@ const toDateParam = (date) => {
 
 // The API takes inclusive start_date/end_date, so the exclusive local bound is
 // stepped back by one day.
-const getApiDateRange = (range) => {
-  const bounds = resolveDateRangeWindow(range);
+const getApiDateRange = (range, customStartDate, customEndDate) => {
+  const bounds = resolveDateRangeWindow(
+    range,
+    customStartDate,
+    customEndDate,
+  );
   if (!bounds) return {};
   const lastDay = new Date(bounds.endExclusive);
   lastDay.setDate(lastDay.getDate() - 1);
@@ -876,10 +900,7 @@ ${xmlCols}
       let eventId = event.event_id || event.id;
       if (!eventId) return event;
       if (eventId.includes("_")) eventId = eventId.split("_")[0];
-      const token = localStorage.getItem("access_token");
-      const res = await authFetch(`${BACKEND_URL}/events/${eventId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await authFetch(`${BACKEND_URL}/events/${eventId}`);
       if (res && res.ok) {
         const data = await res.json();
         return data || event;
@@ -1066,14 +1087,9 @@ const isValidObjectId = (id) => {
   return /^[0-9a-fA-F]{24}$/.test(id);
 };
 const Events = () => {
-  const { authFetch } = React.useContext(AuthContext);
+  const { authFetch, user: authUser } = React.useContext(AuthContext);
   const { orgConfig, configLoaded } = useOrgConfig();
-  // Auth now lives in Supabase; there is no "access_token" key in localStorage any more.
-  const getSessionToken = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    return session?.access_token ?? null;
-  };
-  
+
   // Get user from localStorage immediately (available on login)
   const currentUser = JSON.parse(localStorage.getItem("userProfile")) || {};
   const userOrganization = currentUser?.Organization || currentUser?.organization || "";
@@ -1094,7 +1110,6 @@ const Events = () => {
   const theme = useTheme();
   const isMobileView = useMediaQuery(theme.breakpoints.down("lg"));
   const isDarkMode = theme.palette.mode === "dark";
-  const token = localStorage.getItem("access_token");
   const eventTypeStyles = useMemo(() => {
     return getEventTypeStyles(isDarkMode, theme);
   }, [isDarkMode, theme]);
@@ -1152,6 +1167,21 @@ const Events = () => {
   const searchDebounceRef = useRef(null);
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [selectedDateRange, setSelectedDateRange] = useState("this-week");
+  const [customDateRange, setCustomDateRange] = useState(() => {
+    const now = Date.now();
+    const formatSouthAfricanDate = (timestamp) =>
+      new Date(timestamp).toLocaleDateString("en-CA", {
+        timeZone: "Africa/Johannesburg",
+      });
+    return {
+      start: formatSouthAfricanDate(now - 30 * 86400000),
+      end: formatSouthAfricanDate(now),
+    };
+  });
+  const dateRangeCacheKey =
+    selectedDateRange === "custom"
+      ? `${selectedDateRange}_${customDateRange.start}_${customDateRange.end}`
+      : selectedDateRange;
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
@@ -1392,10 +1422,7 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
       let eventId = event.event_id || event.id;
       if (!eventId) return event;
       if (eventId.includes("_")) eventId = eventId.split("_")[0];
-      const token = localStorage.getItem("access_token");
-      const res = await authFetch(`${BACKEND_URL}/events/${eventId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await authFetch(`${BACKEND_URL}/events/${eventId}`);
       if (res && res.ok) {
         const data = await res.json();
         return data || event;
@@ -1447,7 +1474,7 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
 
       toast.info("Preparing export — fetching events...", { toastId: TOAST_ID, autoClose: false });
 
-      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
+      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${selectedDayFilter}`;
       let sourceEvents =
         (eventsCache.current && eventsCache.current[cacheKey]) ||
         (allCurrentEvents && allCurrentEvents.length ? allCurrentEvents : null) ||
@@ -1577,12 +1604,16 @@ const fetchEventsFilters = (filters) => {
   // The date picker drives the backend window. "All dates" keeps the page's
   // default earliest date; any other option sends an explicit start_date and
   // end_date to whichever endpoint the event type resolves to.
-  const dateRange = getApiDateRange(selectedDateRange);
+  const dateRange = getApiDateRange(
+    selectedDateRange,
+    customDateRange.start,
+    customDateRange.end,
+  );
   const params = {
     page: filters.page || currentPage,
     limit: filters.limit || rowsPerPage,
-    start_date: dateRange.start_date || filters.start_date || "2026-10-24",
-    // filters.start_date || DEFAULT_API_START_DATE,
+    start_date:
+      dateRange.start_date || filters.start_date || DEFAULT_API_START_DATE,
   };
   if (dateRange.end_date) params.end_date = dateRange.end_date;
 
@@ -1668,10 +1699,6 @@ const fetchEventsFilters = (filters) => {
 
           const response = await authFetch(`${endpoint}?${queryString}`, {
             method: "GET",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
           });
 
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1684,7 +1711,7 @@ const fetchEventsFilters = (filters) => {
 
           console.log("Final events to display:", filtered.length);
           const effectiveDay = filters.day || selectedDayFilter;
-          const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${effectiveDay}`;
+          const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${effectiveDay}`;
           eventsCache.current[cacheKey] = filtered;
           const pageSize = filters.limit || rowsPerPage;
           const eventCount = data.total_events ?? filtered.length;
@@ -1720,6 +1747,8 @@ const fetchEventsFilters = (filters) => {
         selectedEventTypeFilter,
         selectedStatus,
         selectedDateRange,
+        customDateRange,
+        dateRangeCacheKey,
         selectedDayFilter,
         eventTypes,
       ],
@@ -1728,7 +1757,6 @@ const fetchEventsFilters = (filters) => {
 const [fetchedEventTypes, setFetchedEventTypes] = useState([]);
 const fetchEventTypes = useCallback(async () => {
   try {
-    const token = localStorage.getItem("access_token");
     const org_id = userOrgId || currentUser?.org_id || "";
     console.log("Fetching event types for org_id:", org_id);
     const {data:eventTypesData, error} = await supabase.from('event_types').select('*').eq("org_id",org_id)
@@ -2353,10 +2381,6 @@ const getFilteredEventTypes = (allEventTypes) => {
 
       const response = await authFetch(`${endpoint}?${queryString}`, {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
       });
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -2384,7 +2408,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   // the rows could change under the user, the request could land after the
   // first keystroke and wipe the matches, and the loaded page was ignored.
   const loadedEvents = useMemo(() => {
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${selectedDayFilter}`;
     const cached = eventsCache.current?.[cacheKey];
     const cachedList = Array.isArray(cached) ? cached : [];
     // The cache holds everything fetched for the filter, while `events` holds
@@ -2393,7 +2417,14 @@ const getFilteredEventTypes = (allEventTypes) => {
     const source =
       cachedList.length > (events?.length || 0) ? cachedList : events;
     return Array.isArray(source) ? source : [];
-  }, [events, selectedEventTypeFilter, selectedStatus, viewFilter, selectedDateRange, selectedDayFilter]);
+  }, [
+    events,
+    selectedEventTypeFilter,
+    selectedStatus,
+    viewFilter,
+    dateRangeCacheKey,
+    selectedDayFilter,
+  ]);
 
   // Pure filter over the events already loaded in the browser. It must stay
   // free of state writes because it runs inside a useMemo — setting state
@@ -2488,7 +2519,11 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const dateFilteredEvents = useMemo(() => {
     const sourceEvents = hasActiveSearch ? filteredEvents : loadedEvents;
-    const bounds = resolveDateRangeWindow(selectedDateRange);
+    const bounds = resolveDateRangeWindow(
+      selectedDateRange,
+      customDateRange.start,
+      customDateRange.end,
+    );
     if (!bounds) return sourceEvents;
 
     return sourceEvents.filter((event) => {
@@ -2508,6 +2543,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     filteredEvents,
     hasActiveSearch,
     selectedDateRange,
+    customDateRange,
   ]);
   const paginatedEvents = useMemo(() => {
     if (!hasActiveSearch && selectedDateRange === "all") return events;
@@ -2545,7 +2581,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     const newRowsPerPage = Number(e.target.value);
     if (!Number.isInteger(newRowsPerPage) || newRowsPerPage < 1) return;
 
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${selectedDayFilter}`;
     const cached = eventsCache.current[cacheKey];
 
     setRowsPerPage(newRowsPerPage);
@@ -2569,6 +2605,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     dateFilteredEvents.length,
     hasActiveSearch,
     selectedDateRange,
+    dateRangeCacheKey,
     selectedDayFilter,
     selectedEventTypeFilter,
     selectedStatus,
@@ -2578,7 +2615,6 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handleCaptureClick = useCallback(async (event) => {
     try {
-      const token = localStorage.getItem("access_token");
       console.log("CAPTURE",event)
       let eventId = event._id || event.id;
       const originalId = eventId;
@@ -2901,6 +2937,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   useEffect(() => {
     eventsCache.current = {};
   }, []);
+  
   const handleEditEvent = useCallback((event) => {
     console.log("THE EVENT",event)
     
@@ -2923,6 +2960,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       setCreateEventModalOpen(true);
       return
     }
+   
 
     const eventToEdit = {
       ...event,
@@ -2948,8 +2986,6 @@ const getFilteredEventTypes = (allEventTypes) => {
         window.confirm(`Are you sure you want to delete "${event.eventName}"?`)
       ) {
         try {
-          const token = localStorage.getItem("access_token");
-
           let eventId = event._id;
           if (eventId && eventId.includes("_")) {
             const parts = eventId.split("_");
@@ -2960,10 +2996,6 @@ const getFilteredEventTypes = (allEventTypes) => {
 
           const response = await authFetch(`${BACKEND_URL}/events/${event?.event_id}/${event?.eventName}/${event?.eventType}`, {
             method: "DELETE",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
           });
 
           if (response.ok || response.status === 200) {
@@ -3155,14 +3187,6 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handleDeleteType = useCallback(async () => {
     try {
-      const token = await getSessionToken();
-
-      if (!token) {
-        toast.error("Please log in again");
-        setTimeout(() => (window.location.href = "/login"), 2000);
-        return;
-      }
-
       const typeName =
         typeof toDeleteType === "string"
           ? toDeleteType
@@ -3181,7 +3205,6 @@ const getFilteredEventTypes = (allEventTypes) => {
         const response = await authFetch(url, {
           method: "DELETE",
           headers: {
-            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
         });
@@ -3225,7 +3248,6 @@ const getFilteredEventTypes = (allEventTypes) => {
               const forceResponse = await authFetch(forceUrl, {
                 method: "DELETE",
                 headers: {
-                  Authorization: `Bearer ${token}`,
                   "Content-Type": "application/json",
                 },
               });
@@ -3356,7 +3378,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       setCurrentPage(page);
       if (hasActiveSearch || selectedDateRange !== "all") return;
 
-      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
+      const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${selectedDayFilter}`;
       const cached = eventsCache.current[cacheKey];
 
       if (cached) {
@@ -3372,6 +3394,7 @@ const getFilteredEventTypes = (allEventTypes) => {
       isLoading,
       rowsPerPage,
       selectedDateRange,
+      dateRangeCacheKey,
       selectedDayFilter,
       selectedEventTypeFilter,
       selectedStatus,
@@ -3395,10 +3418,9 @@ const getFilteredEventTypes = (allEventTypes) => {
     const checkAccess = async () => {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      const token = await getSessionToken();
       const userProfile = localStorage.getItem("userProfile");
 
-      if (!token || !userProfile) {
+      if (!authUser || !userProfile) {
         toast.error("Please log in to access events");
         setTimeout(() => (window.location.href = "/login"), 2000);
         return;
@@ -3432,9 +3454,6 @@ const getFilteredEventTypes = (allEventTypes) => {
           try {
             const response = await authFetch(
               `${BACKEND_URL}/check-leader-status`,
-              {
-                headers: { Authorization: `Bearer ${token}` },
-              },
             );
 
             if (!response.ok) {
@@ -3475,7 +3494,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     };
 
     checkAccess();
-  }, [BACKEND_URL]);
+  }, [BACKEND_URL, authFetch, authUser]);
 
   useEffect(() => {
     if (eventTypes.length > 0 && !selectedEventTypeFilter) {
@@ -3514,11 +3533,6 @@ const getFilteredEventTypes = (allEventTypes) => {
       try {
         // console.log('DATA',eventTypeData, eventTypeId)
       
-        const token = localStorage.getItem("access_token");
-        if (!token) {
-          throw new Error("No authentication token found");
-        }
-
         const oldName = editingEventType?.name;
         let url, method;
 
@@ -3544,7 +3558,6 @@ const getFilteredEventTypes = (allEventTypes) => {
           method: method,
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(eventTypeData),
         });
@@ -3595,7 +3608,7 @@ const getFilteredEventTypes = (allEventTypes) => {
   );
   useEffect(() => {
     if (!selectedEventTypeFilter || !showingEvents) return;
-    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${selectedDateRange}_${selectedDayFilter}`;
+    const cacheKey = `${selectedEventTypeFilter}_${selectedStatus}_${viewFilter}_${dateRangeCacheKey}_${selectedDayFilter}`;
     const cached = eventsCache.current[cacheKey];
 
     if (cached) {
@@ -3644,15 +3657,10 @@ const getFilteredEventTypes = (allEventTypes) => {
       setLoading(true);
       setIsLoading(true);
       try {
-        const token = localStorage.getItem("access_token");
         const [params, endpoint] = fetchEventsFilters(fetchParams);
         const queryString = new URLSearchParams(params).toString();
         const response = await authFetch(`${endpoint}?${queryString}`, {
           method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
@@ -3685,6 +3693,8 @@ const getFilteredEventTypes = (allEventTypes) => {
     selectedStatus,
     viewFilter,
     selectedDateRange,
+    customDateRange,
+    dateRangeCacheKey,
     selectedDayFilter,
     isAdmin,
     isRegistrant,
@@ -3822,7 +3832,11 @@ const getFilteredEventTypes = (allEventTypes) => {
               ...styles.statusBadge,
               ...status.style,
               ...(selectedStatus === status.value
-                ? styles.statusBadgeActive
+                ? {
+                    ...styles.statusBadgeActive,
+                    backgroundColor: status.style.borderColor,
+                    color: "#fff",
+                  }
                 : {}),
             }}
             onMouseDown={(e) => {
@@ -3839,21 +3853,20 @@ const getFilteredEventTypes = (allEventTypes) => {
             {status.label}
           </button>
         ))}
+        
         <select
                 aria-label="Filter events by date range"
                 value={selectedDateRange}
                 onChange={(event) => {
-                  // The fetch effect keys on selectedDateRange, so changing the
-                  // range immediately reloads from /events/cells or
-                  // /events/eventsdata with start_date + end_date.
                   setSelectedDateRange(event.target.value);
                   setCurrentPage(1);
                 }}
                 style={{
                   minWidth: isMobileView ? "100%" : "160px",
-                  padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
+                  height: "38px",
+                  // padding: isMobileView ? "0.6rem 0.8rem" : "0.75rem 1rem",
                   border: `1px solid ${isDarkMode ? theme.palette.divider : "#ccc"}`,
-                  borderRadius: "4px",
+                  borderRadius: "10px",
                   backgroundColor: isDarkMode
                     ? theme.palette.background.paper
                     : "#fff",
@@ -3867,7 +3880,49 @@ const getFilteredEventTypes = (allEventTypes) => {
                 <option value="this-month">This month</option>
                 <option value="last-month">Last month</option>
                 <option value="last-3-months">Last 3 months</option>
+                <option value="custom">Custom range</option>
               </select>
+        
+        {selectedDateRange === "custom" && (
+          <>
+            <TextField
+              type="date"
+              size="small"
+              label="Start"
+              value={customDateRange.start}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (!value) return;
+                setCustomDateRange((previous) => ({
+                  start: value,
+                  end: value > previous.end ? value : previous.end,
+                }));
+                setCurrentPage(1);
+              }}
+              InputLabelProps={{ shrink: true }}
+              inputProps={{ max: customDateRange.end }}
+              sx={{ width: 158, "& .MuiInputBase-root": { height: 38 } }}
+            />
+            <TextField
+              type="date"
+              size="small"
+              label="End"
+              value={customDateRange.end}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (!value) return;
+                setCustomDateRange((previous) => ({
+                  start: value < previous.start ? value : previous.start,
+                  end: value,
+                }));
+                setCurrentPage(1);
+              }}
+              InputLabelProps={{ shrink: true }}
+              inputProps={{ min: customDateRange.start }}
+              sx={{ width: 158, "& .MuiInputBase-root": { height: 38 } }}
+            />
+          </>
+        )}
         {/* Integrated dropdown in download button - only shown when COMPLETE or DID NOT MEET selected */}
         {canDownload && (
           <div
@@ -4490,7 +4545,7 @@ const getTypeValue = (type) => {
         height: "100vh",
         fontFamily: "system-ui, sans-serif",
         padding: isMobileView ? "0.5rem" : "1rem",
-        paddingTop: isMobileView ? "4rem" : "5rem",
+        // paddingTop: isMobileView ? "4rem" : "5rem",
         paddingBottom: "1rem",
         boxSizing: "border-box",
         display: "flex",
@@ -4770,7 +4825,7 @@ const getTypeValue = (type) => {
                     flexWrap: "wrap",
                   }}
                 >
-                  {/* <Box
+                  <Box
                     role="group"
                     aria-label="Filter events by weekday"
                     sx={{
@@ -4824,17 +4879,17 @@ const getTypeValue = (type) => {
                             borderColor: isDarkMode ? "#4b5563" : "#d1d5db",
                             color: isDarkMode ? "#e5e7eb" : "#374151",
                             "&:hover": {
-                              borderColor: "#12a5b5",
-                              backgroundColor: "rgba(18,165,181,0.08)",
+                              borderColor: "#1565c0",
+                              // backgroundColor: "#42a5f5",
                             },
                             ...(active
                               ? {
-                                  backgroundColor: "#12a5b5",
+                                  backgroundColor: "#1976d2",
                                   color: "#fff",
-                                  borderColor: "#12a5b5",
+                                  borderColor: "#1976d2",
                                   "&:hover": {
-                                    backgroundColor: "#0d8b99",
-                                    borderColor: "#0d8b99",
+                                    backgroundColor: "#42a5f5",
+                                    borderColor: "#42a5f5",
                                   },
                                 }
                               : {}),
@@ -4844,7 +4899,7 @@ const getTypeValue = (type) => {
                         </Button>
                       );
                     })}
-                  </Box> */}
+                  </Box>
                   <StatusBadges
                     selectedStatus={selectedStatus}
                     setSelectedStatus={setSelectedStatus}
@@ -6264,7 +6319,7 @@ const getTypeValue = (type) => {
           handleCloseEditModal(shouldRefresh, updatedEventData);
         }}
         event={selectedEvent}
-        token={token}
+        authFetch={authFetch}
       />
 
       <ConvertsReportDialog

@@ -23,6 +23,9 @@ const EventHistory = React.memo(function EventHistory({
   onViewEventStats,
   events = [],
   isLoading = false,
+  // session_id of the event currently being reopened — drives the per-row
+  // Reopen loader so only the targeted row spins while others just disable.
+  unsaveLoadingId = null,
   onRefresh,
   searchTerm = "",
 }) {
@@ -273,15 +276,19 @@ const EventHistory = React.memo(function EventHistory({
         headerAlign: "center",
         renderCell: (params) => {
           const canUnsave = canUnsaveEvent(params.row);
+          const rowSessionId = params.row.session_id ?? params.row.id;
+          const isRowLoading = unsaveLoadingId != null && rowSessionId === unsaveLoadingId;
+          const isReopening = unsaveLoadingId != null;
           return (
             <Tooltip title={canUnsave ? "Reopen event" : "Events can only be reopened within 48 hours"}>
               <span>
                 <Button
                   variant="outlined"
                   size="small"
-                  disabled={!canUnsave}
+                  disabled={!canUnsave || isReopening}
                   onClick={() => handleUnsave(params.row)}
                   aria-label="Reopen event"
+                  loading={isRowLoading}
                   sx={{
                     ...countButtonSx(!canUnsave),
                     minWidth: isSm ? 44 : 58,
@@ -302,6 +309,7 @@ const EventHistory = React.memo(function EventHistory({
     isXs, isSm,
     getAttendanceCount, getNewPeopleCount, getConsolidatedCount,
     handleView, handleStatsView, handleUnsave, canUnsaveEvent, onUnsaveEvent,
+    unsaveLoadingId,
   ]);
 
   const gridHeight = isSm ? "calc(100vh - 240px)" : isMd ? "calc(100vh - 220px)" : 620;

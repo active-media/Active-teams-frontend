@@ -116,6 +116,16 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
     );
   }, [normalizedData.consolidations]);
 
+  // Confirmed service headcount saved when the service was closed
+  // (event_sessions.total_headcounts). Falls back to legacy field names and
+  // renders as "not recorded" when no headcount was ever saved.
+  const headcount = useMemo(() => {
+    const raw = event?.headcount ?? event?.total_headcounts ?? event?.last_headcount;
+    if (raw == null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }, [event]);
+
   const tabData = useMemo(() => {
     switch (activeTab) {
       case 1:
@@ -325,13 +335,28 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
         },
       }}
     >
-      <DialogTitle sx={{ pb: 1, fontWeight: 600 }}>
+      <DialogTitle sx={{ pb: 1, fontWeight: 600,display: 'flex', flexDirection: 'row', gap: 0.5,justifyContent: 'space-between',  }}>
+        <Box>
+
         <Typography variant="h6" component="span">
           {eventName} Event Stats
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
           {TAB_LABELS[activeTab]} · {filteredData.length} shown
         </Typography>
+        </Box>
+           <Box sx={{ mb: 2, display: 'flex' }}>
+            <Card variant="outlined" sx={{ boxShadow: 0, minWidth: 160 }}>
+              <CardContent sx={{ p: 1.4, '&:last-child': { pb:0.4 } }}>
+                <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.main', lineHeight: 0.3 }}>
+                  {headcount ?? '—'}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {headcount == null ? 'Headcount · not recorded' : 'Headcount'}
+                </Typography>
+              </CardContent>
+            </Card>
+          </Box>
       </DialogTitle>
 
       <DialogContent dividers sx={{ maxHeight: isSmDown ? 420 : 540, overflowY: 'auto', p: isSmDown ? 1 : 2 }}>
@@ -396,6 +421,11 @@ const EventHistoryModal = React.memo(({ open, onClose, event, type, data = [], i
           fullWidth
           sx={{ mb: 2, boxShadow: 1 }}
         />
+
+        {/* Attendees tab: the confirmed headcount recorded when the service was saved */}
+        {activeTab === 0 && (
+       <></>
+        )}
 
         {isLoading ===true ? (
           <Box display="flex" justifyContent="center" py={6}>

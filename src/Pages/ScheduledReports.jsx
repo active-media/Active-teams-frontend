@@ -123,7 +123,7 @@ export default function ScheduledReports() {
         <Box><Typography variant="h4" component="h1" fontWeight={800}>Scheduled Reports</Typography><Typography color="text.secondary" sx={{ mt: 0.5 }}>Manage recurring report delivery.</Typography></Box>
         <Button variant="contained" startIcon={<AddIcon />} onClick={createNew}>New schedule</Button>
       </Stack>
-      {error && <ReportErrorState error={error} onRetry={load} />}
+      {error && <ReportErrorState error={error} onRetry={load} />} 
       <Paper variant="outlined" sx={{ borderRadius: 1, overflow: "hidden" }}>
         {loading ? <Box sx={{ py: 5, display: "grid", placeItems: "center" }}><CircularProgress size={28} /></Box> : schedules.length === 0 ? <Typography color="text.secondary" sx={{ p: 3 }}>No scheduled reports yet.</Typography> : (
           <Table size="small"><TableHead><TableRow>{["Report", "Schedule", "Format", "Recipients", "Status", "Actions"].map((label) => <TableCell key={label}>{label}</TableCell>)}</TableRow></TableHead>

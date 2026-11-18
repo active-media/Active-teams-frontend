@@ -1,10 +1,12 @@
 import React from "react";
-import { useMemo, useState, useEffect, useContext, useRef } from "react";
+import { useMemo, useState, useEffect, useContext, useRef, useCallback } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { createTheme, ThemeProvider, CssBaseline } from "@mui/material";
 
 import { AuthContext } from "./contexts/AuthContext";
 import { UserContext } from "./contexts/UserContext";
+import { PushNotificationContext } from "./contexts/PushNotificationContext";
+import { API_BASE } from "./api/config";
 
 import Sidebar from "./components/Sidebar";
 import TopbarProfile from "./components/TopbarProfile";
@@ -58,6 +60,13 @@ const ProtectedCreateEvents = withAuthCheck(CreateEvents, ['admin', 'leader', 'l
 const ProtectedAttendance = withAuthCheck(AttendanceModal, ['admin', 'leader', 'leaderat12']);
 const ProtectedEventDetails = withAuthCheck(EventDetails, ['admin', 'leader', 'leaderat12', 'user', 'registrant']);
 
+const decodeVapidPublicKey = (key) => {
+  const padding = "=".repeat((4 - (key.length % 4)) % 4);
+  const base64 = `${key}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  return Uint8Array.from(rawData, (character) => character.charCodeAt(0));
+};
+
 function App() {
   const { user, loading, authFetch } = useContext(AuthContext);
   const { loadUserProfile, setUserProfile, setProfilePic } = useContext(UserContext);
@@ -101,6 +110,88 @@ function App() {
 
   const [showSplash, setShowSplash] = useState(true);
   const [splashFinished, setSplashFinished] = useState(false);
+
+  const enablePushNotifications = useCallback(async () => {
+    if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+      throw new Error("Push notifications are not supported by this browser.");
+    }
+
+    const permission =
+      Notification.permission === "granted"
+        ? "granted"
+        : await Notification.requestPermission();
+    if (permission !== "granted") {
+      throw new Error("Notification permission was not granted.");
+    }
+
+    const response = await authFetch(`${API_BASE}/push/public-key`);
+    if (!response.ok) {
+      throw new Error("Could not load the push notification configuration.");
+    }
+    const { publicKey } = await response.json();
+    if (!publicKey) {
+      throw new Error("Push notifications are not configured on the server.");
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    const subscription =
+      (await registration.pushManager.getSubscription()) ||
+      (await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: decodeVapidPublicKey(publicKey),
+      }));
+
+    const saveResponse = await authFetch(`${API_BASE}/push/subscribe`, {
+      method: "POST",
+      body: JSON.stringify(subscription.toJSON()),
+    });
+    if (!saveResponse.ok) {
+      throw new Error("Could not save this device's push subscription.");
+    }
+
+    return subscription;
+  }, [authFetch]);
+
+  const disablePushNotifications = useCallback(async () => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      throw new Error("Push notifications are not supported by this browser.");
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) return false;
+
+    const response = await authFetch(`${API_BASE}/push/subscribe`, {
+      method: "DELETE",
+      body: JSON.stringify({ endpoint: subscription.endpoint }),
+    });
+    if (!response.ok) {
+      throw new Error("Could not remove this device's push subscription from the server.");
+    }
+
+    return subscription.unsubscribe();
+  }, [authFetch]);
+
+  const sendPushNotification = useCallback(async ({ recipientEmails, title, body, url = "/" }) => {
+    const response = await authFetch(`${API_BASE}/push/send`, {
+      method: "POST",
+      body: JSON.stringify({ recipient_emails: recipientEmails, title, body, url }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      throw new Error(error?.detail || "Could not send the push notification.");
+    }
+    return response.json();
+  }, [authFetch]);
+
+  const pushNotificationActions = useMemo(
+    () => ({
+      enablePushNotifications,
+      disablePushNotifications,
+      sendPushNotification,
+    }),
+    [enablePushNotifications, disablePushNotifications, sendPushNotification],
+  );
 
   const noLayoutRoutes = ["/login", "/signup", "/forgot-password", "/reset-password"];
   const hideLayout = noLayoutRoutes.includes(location.pathname);
@@ -215,10 +306,11 @@ function App() {
   }
 
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
+    <PushNotificationContext.Provider value={pushNotificationActions}>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
 
-      {user && !hideLayout && <TopbarProfile />}
+        {user && !hideLayout && <TopbarProfile />}
       
       <div style={{ display: "flex" }}>
         {user && !hideLayout && <Sidebar mode={mode} setMode={setMode} />}
@@ -270,8 +362,9 @@ function App() {
 
           
         </div>
-      </div>
-    </ThemeProvider>
+        </div>
+      </ThemeProvider>
+    </PushNotificationContext.Provider>
   );
 }
 

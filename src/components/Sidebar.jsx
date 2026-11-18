@@ -143,7 +143,7 @@ export default function Sidebar({ mode, setMode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const isMobile = useMediaQuery('(max-width:900px)');
   const location = useLocation();
-  const { user } = useContext(AuthContext);
+  const { user, authFetch } = useContext(AuthContext);
   const [, setUserHasCell] = useState(true);
   const [menuItems, setMenuItems] = useState([]);
 
@@ -174,10 +174,7 @@ export default function Sidebar({ mode, setMode }) {
       let hasCell = true;
       if (userRole === 'user') {
         try {
-          const token = localStorage.getItem('token');
-          const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/check-leader-status`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
+          const response = await authFetch(`${import.meta.env.VITE_BACKEND_URL}/check-leader-status`);
           const data = await response.json();
           hasCell = data.hasCell || false;
           setUserHasCell(hasCell);
@@ -226,7 +223,7 @@ export default function Sidebar({ mode, setMode }) {
     };
 
     checkUserAccess();
-  }, [user]);
+  }, [authFetch, user]);
 
   const handleToggleMode = () => {
     setMode((prev) => {

@@ -1,8 +1,11 @@
 import React, { useContext, useState, useEffect } from "react";
 import {
   Avatar,
+  Alert,
   Box,
+  Button,
   IconButton,
+  Snackbar,
   Tooltip,
   Menu,
   MenuItem,
@@ -12,8 +15,12 @@ import {
 import { useNavigate, useLocation } from "react-router-dom";
 import { AuthContext } from "../contexts/AuthContext";
 import { UserContext } from "../contexts/UserContext";
+import { usePushNotifications } from "../contexts/PushNotificationContext";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import LogoutIcon from "@mui/icons-material/Logout";
+import NotificationsActiveIcon from "@mui/icons-material/NotificationsActive";
+import NotificationsOffIcon from "@mui/icons-material/NotificationsOff";
+
 
 export default function TopbarProfile() {
   const navigate = useNavigate();
@@ -21,9 +28,47 @@ export default function TopbarProfile() {
   const theme = useTheme();
   const { user, logout, isAuthenticated } = useContext(AuthContext);
   const { profilePic, loadUserProfile } = useContext(UserContext);
+  const { enablePushNotifications, disablePushNotifications,sendPushNotification } = usePushNotifications();
   const [anchorEl, setAnchorEl] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushFeedback, setPushFeedback] = useState(null);
   const open = Boolean(anchorEl);
+
+const handleTestNotification = async () => {
+  try {
+    const result = await sendPushNotification({
+      recipientEmails: ["divinentambwe28@gmail.com"],
+      title: "Test",
+      body: "It works!",
+    });
+    console.log("Push result:", result);
+  } catch (error) {
+    console.error("Could not send test notification:", error);
+  }
+};
+
+  useEffect(() => {
+    let cancelled = false;
+   let enabled;
+
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return undefined;
+
+    navigator.serviceWorker.ready
+      .then((registration) => registration.pushManager.getSubscription())
+      .then((subscription) => {
+        if (!cancelled) setPushEnabled(Boolean(subscription));
+        enabled = Boolean(subscription);
+      })
+      .catch((error) => {
+        console.error("Could not check push notification status:", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const initializeProfile = async () => {
@@ -90,6 +135,29 @@ export default function TopbarProfile() {
     navigate("/profile");
   };
 
+  const handlePushToggle = async () => {
+    setPushBusy(true);
+    try {
+      if (pushEnabled) {
+        await disablePushNotifications();
+        setPushEnabled(false);
+        setPushFeedback({ severity: "success", message: "Notifications disabled on this device." });
+      } else {
+        await enablePushNotifications();
+        setPushEnabled(true);
+        setPushFeedback({ severity: "success", message: "Notifications enabled on this device." });
+      }
+    } catch (error) {
+      setPushFeedback({
+        severity: "error",
+        message: error.message || "Could not update notification settings.",
+      });
+    } finally {
+      setPushBusy(false);
+    }
+  };
+  
+
   const displayName = getDisplayName();
   const initials = getInitials();
   const showInitials = isDefaultAvatar();
@@ -109,6 +177,21 @@ export default function TopbarProfile() {
         backgroundColor: "background.paper",
       }}
     >
+      <Button
+        size="small"
+        variant={pushEnabled ? "outlined" : "contained"}
+        color={pushEnabled ? "inherit" : "primary"}
+        startIcon={pushEnabled ? <NotificationsOffIcon /> : <NotificationsActiveIcon />}
+        onClick={handlePushToggle}
+        disabled={pushBusy}
+        aria-label={pushEnabled ? "Disable push notifications" : "Enable push notifications"}
+      >
+       {pushBusy ? "Please wait..." : pushEnabled ? "Notifications on" : "Enable notifications"} 
+      </Button>
+      {/* <Button onClick={handleTestNotification}>
+  Send test notification
+</Button> */}
+
       <Tooltip title={`Go to Profile (${displayName})`}>
         <IconButton
           sx={{
@@ -202,6 +285,24 @@ export default function TopbarProfile() {
           Logout
         </MenuItem>
       </Menu>
+
+      <Snackbar
+        open={Boolean(pushFeedback)}
+        autoHideDuration={6000}
+        onClose={() => setPushFeedback(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        {pushFeedback ? (
+          <Alert
+            onClose={() => setPushFeedback(null)}
+            severity={pushFeedback.severity}
+            variant="filled"
+            sx={{ width: "100%" }}
+          >
+            {pushFeedback.message}
+          </Alert>
+        ) : undefined}
+      </Snackbar>
     </Box>
   );
 }
