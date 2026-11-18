@@ -51,6 +51,7 @@ const handleTestNotification = async () => {
 
   useEffect(() => {
     let cancelled = false;
+   let enabled;
 
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return undefined;
 
@@ -58,6 +59,7 @@ const handleTestNotification = async () => {
       .then((registration) => registration.pushManager.getSubscription())
       .then((subscription) => {
         if (!cancelled) setPushEnabled(Boolean(subscription));
+        enabled = Boolean(subscription);
       })
       .catch((error) => {
         console.error("Could not check push notification status:", error);
@@ -154,6 +156,7 @@ const handleTestNotification = async () => {
       setPushBusy(false);
     }
   };
+  
 
   const displayName = getDisplayName();
   const initials = getInitials();
@@ -183,11 +186,11 @@ const handleTestNotification = async () => {
         disabled={pushBusy}
         aria-label={pushEnabled ? "Disable push notifications" : "Enable push notifications"}
       >
-      {/* {pushBusy ? "Please wait..." : pushEnabled ? "Notifications on" : "Enable notifications"} */}
+       {pushBusy ? "Please wait..." : pushEnabled ? "Notifications on" : "Enable notifications"} 
       </Button>
-      <Button onClick={handleTestNotification}>
+      {/* <Button onClick={handleTestNotification}>
   Send test notification
-</Button>
+</Button> */}
 
       <Tooltip title={`Go to Profile (${displayName})`}>
         <IconButton

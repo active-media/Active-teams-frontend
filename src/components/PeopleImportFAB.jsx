@@ -20,22 +20,11 @@ function fmtBytes(b) {
   return `${(b / 1048576).toFixed(1)} MB`;
 }
 
-function getStoredToken() {
-  try {
-    return (
-      localStorage.getItem("access_token") ||
-      localStorage.getItem("token") ||
-      sessionStorage.getItem("access_token") ||
-      ""
-    );
-  } catch { return ""; }
-}
-
 const STEPS = ["Upload", "Preview", "Confirm", "Done"];
 
 export default function PeopleImportFAB({
   onImportComplete,
-  token: propToken,
+  authFetch,
   apiBase = DEFAULT_API,
   disabled = false,
   themeMode = "dark",         
@@ -63,9 +52,6 @@ export default function PeopleImportFAB({
 
   const inputRef   = useRef(null);
   const overlayRef = useRef(null);
-
-  const token = propToken || getStoredToken();
-  const authH = token ? { Authorization: `Bearer ${token}` } : {};
 
   useEffect(() => {
     const handler = (e) => { if (e.key === "Escape") handleClose(); };
@@ -113,8 +99,9 @@ export default function PeopleImportFAB({
     try {
       const form = new FormData();
       form.append("file", file);
-      const res  = await fetch(`${apiBase}/people/import/preview-columns`, {
-        method: "POST", headers: authH, body: form,
+      const res  = await authFetch(`${apiBase}/people/import/preview-columns`, {
+        method: "POST",
+        body: form,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Preview failed");
@@ -135,8 +122,9 @@ export default function PeopleImportFAB({
       if (dryRun) params.set("dry_run", "true");
 
       setProgress(40);
-      const res  = await fetch(`${apiBase}/people/import/spreadsheet?${params}`, {
-        method: "POST", headers: authH, body: form,
+      const res  = await authFetch(`${apiBase}/people/import/spreadsheet?${params}`, {
+        method: "POST",
+        body: form,
       });
       setProgress(85);
       const data = await res.json();

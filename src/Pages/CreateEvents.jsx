@@ -369,6 +369,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
 
     const { eventType, isGlobal, isTicketed, hasPersonSteps } =
       determineEventType();
+    console.log("HAS",isTicketed)
 
     setEventTypeFlags({
       isGlobal,
@@ -400,6 +401,7 @@ const CreateEvents = ({ user, isModal, onClose, eventTypes, selectedEventType, s
       ]);
     }
   }, [isTicketedEvent]);
+
 const peopleSearchRequestRef = useRef(0);
 const fetchPeople = async (q) => {
   if (!q?.trim() || q.trim().length < 2) {

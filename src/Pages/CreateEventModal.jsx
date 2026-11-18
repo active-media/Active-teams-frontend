@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useContext, useCallback } from 'react';
 import { 
   Dialog, 
   DialogContent, 
@@ -13,9 +13,11 @@ import CloseIcon from '@mui/icons-material/Close';
 import AddIcon from '@mui/icons-material/Add';
 import CreateEvents from './CreateEvents';
 import EventTypesModal from './EventTypesModal';
+import { AuthContext } from '../contexts/AuthContext';
 
 const CreateEventModal = ({ open, onClose, user }) => {
   const theme = useTheme();
+  const { authFetch } = useContext(AuthContext);
   const isDarkMode = theme.palette.mode === 'dark';
   
   // State for event type selection
@@ -32,16 +34,11 @@ const CreateEventModal = ({ open, onClose, user }) => {
     if (open) {
       fetchEventTypes();
     }
-  }, [open]);
+  }, [open, fetchEventTypes]);
 
-  const fetchEventTypes = async () => {
+  const fetchEventTypes = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${BACKEND_URL}/event-types`, {
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-        },
-      });
+      const response = await authFetch(`${BACKEND_URL}/event-types`);
       
       if (response.ok) {
         const data = await response.json();
@@ -51,7 +48,7 @@ const CreateEventModal = ({ open, onClose, user }) => {
     } catch (error) {
       console.error('Error fetching event types:', error);
     }
-  };
+  }, [authFetch, BACKEND_URL]);
 
   const handleEventTypeSelect = (eventType) => {
     console.log('Event type selected:', eventType);
@@ -70,11 +67,9 @@ const CreateEventModal = ({ open, onClose, user }) => {
 
   const handleEventTypeSubmit = async (eventTypeData) => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${BACKEND_URL}/event-types`, {
+      const response = await authFetch(`${BACKEND_URL}/event-types`, {
         method: 'POST',
         headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(eventTypeData),

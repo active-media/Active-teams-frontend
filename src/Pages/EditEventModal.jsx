@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Box, Typography,
+  Autocomplete, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Box, Typography,
   Select, MenuItem, FormControl, InputLabel, Switch, FormControlLabel, Grid, Alert,
   Divider, Chip, CircularProgress, Tooltip, Checkbox, FormGroup, Collapse,
 } from '@mui/material';
@@ -20,7 +20,21 @@ const USER_ROLES = {
   LEADER_144: 'leader144', REGISTRANT: 'registrant', USER: 'user'
 };
 
-const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
+const normalizeReminderEmails = (value) => {
+  const emails = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[,\n;]/) : [];
+  const seen = new Set();
+  return emails
+    .map(email => typeof email === 'string' ? email.trim() : '')
+    .filter(email => {
+      if (!email || seen.has(email.toLowerCase())) return false;
+      seen.add(email.toLowerCase());
+      return true;
+    });
+};
+
+const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+const EditEventModal = ({ isOpen, onClose, event, refreshEvents, authFetch }) => {
   const [formData, setFormData] = useState({});
   const [loading, setLoading] = useState(false);
   const [editScope, setEditScope] = useState('single');
@@ -29,6 +43,8 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
   const [, setPersonIdentifier] = useState('');
   const [originalPersonIdentifier, setOriginalPersonIdentifier] = useState('');
   const [originalContext, setOriginalContext] = useState({ day: null, location: null, eventName: null });
+  const [reminderEmailOptions, setReminderEmailOptions] = useState([]);
+  const [loadingReminderEmails, setLoadingReminderEmails] = useState(false);
   const [availableFields, setAvailableFields] = useState([]);
   const [changedFields, setChangedFields] = useState([]);
   const [advancedMode, setAdvancedMode] = useState(false);
@@ -70,12 +86,12 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
   const getFieldPermissions = useCallback((field) => {
     const fl = field.toLowerCase();
     const isWeekId = fl.includes('week') && (fl.includes('identifier') || fl.includes('id'));
-    const isOriginalEventId = (fl.includes('original') && fl.includes('event') && fl.includes('id'));
+    // const isOriginalEventId = (fl.includes('original') && fl.includes('event') && fl.includes('id'));
     const isComposedEventId = (fl.includes('composite') || fl.includes('composed')) && fl.includes('id');
     const isEventType = fl.includes('event') && (fl.includes('type') || fl === 'eventtype');
     const isRestrictedLeader = fl === 'leader1' || fl === 'leader12' || fl.includes('leader at 12');
 
-    if (isWeekId || isOriginalEventId || isComposedEventId)
+    if (isWeekId || isComposedEventId)
       return { disabled: true, reason: 'This field cannot be edited' };
     if (isEventType) return { disabled: true, reason: 'Event type cannot be edited' };
     if (isRestrictedLeader) {
@@ -157,6 +173,7 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
           initialData[key] = value;
         }
       });
+      initialData.reminder_emails = normalizeReminderEmails(cleanEvent.reminder_emails);
       setFormData(initialData);
 
       setIsActiveToggle(initialData.is_active === true || initialData.is_active === false ? initialData.is_active : true);
@@ -170,11 +187,93 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
   }, [event]);
 
   useEffect(() => {
+    if (!isOpen || !event) {
+      setReminderEmailOptions([]);
+      setLoadingReminderEmails(false);
+      return undefined;
+    }
+
+    let isCurrentRequest = true;
+    const leaderEmailValue = (
+      event.eventLeaderEmail ||
+      event.event_leader_email ||
+      event.leaderEmail ||
+      event.leader_email ||
+      event.Email ||
+      ''
+    );
+    const leaderEmail = typeof leaderEmailValue === 'string' ? leaderEmailValue.trim() : '';
+    const leaderOption = leaderEmail
+      ? { email: leaderEmail, name: String(event.eventLeaderName || event.eventLeader || 'Event leader') }
+      : null;
+
+    setReminderEmailOptions(leaderOption ? [leaderOption] : []);
+    setLoadingReminderEmails(true);
+
+    const loadReminderEmailOptions = async () => {
+      try {
+        const eventId = event.event_id || event.eventId || event.UUID || event._id || event.id;
+        if (!eventId) throw new Error('Event ID not found');
+        if (!authFetch) throw new Error('Authenticated request helper is unavailable');
+
+        const params = new URLSearchParams({
+          event_name: event.eventName || event['Event Name'] || event.event_name || '',
+          session_id: event.session_id || '',
+          event_leader: event.eventLeaderName || event.eventLeader || event.Leader || '',
+          leader_at_12: event.leader12 || event['Leader @12'] || '',
+          event_type: event.eventType || event['Event Type'] || event.event_type_name || event.event_type || '',
+        });
+        const response = await authFetch(
+          `${BACKEND_URL}/events/${encodeURIComponent(eventId)}/persistent-attendees?${params.toString()}`,
+        );
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || `Failed to load persistent attendees (${response.status})`);
+        }
+
+        const attendees = Array.isArray(data.persistent_attendees) ? data.persistent_attendees : [];
+        const options = [
+          ...(leaderOption ? [leaderOption] : []),
+          ...attendees
+            .filter(attendee => typeof attendee.email === 'string' && attendee.email.trim())
+            .map(attendee => ({
+              email: attendee.email.trim(),
+              name: attendee.fullName || attendee.name || attendee.email.trim(),
+            })),
+          ...normalizeReminderEmails(event.reminder_emails).map(email => ({ email, name: email })),
+        ];
+        const uniqueOptions = Array.from(
+          new Map(options.map(option => [option.email.toLowerCase(), option])).values(),
+        );
+        if (isCurrentRequest) setReminderEmailOptions(uniqueOptions);
+      } catch (error) {
+        if (isCurrentRequest) {
+          console.error('Failed to load reminder email options:', error);
+          toast.error(`Could not load reminder recipients: ${error.message}`);
+        }
+      } finally {
+        if (isCurrentRequest) setLoadingReminderEmails(false);
+      }
+    };
+
+    loadReminderEmailOptions();
+    return () => {
+      isCurrentRequest = false;
+    };
+  }, [BACKEND_URL, authFetch, event, isOpen]);
+
+  useEffect(() => {
     if (event) {
       const changed = [];
       Object.keys(formData).forEach(key => {
         const originalValue = event[key];
         const newValue = formData[key];
+        if (key === 'reminder_emails') {
+          if (JSON.stringify(normalizeReminderEmails(originalValue)) !== JSON.stringify(normalizeReminderEmails(newValue))) {
+            changed.push(key);
+          }
+          return;
+        }
         const isEmptyToRemove = (newValue === '' && originalValue !== undefined && originalValue !== null && originalValue !== '');
         const isValueChanged = newValue !== originalValue;
         if (isEmptyToRemove || isValueChanged) changed.push(key);
@@ -197,7 +296,6 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
   const handleDeactivateCell = async () => {
     try {
       setIsToggling(true);
-      const userToken = localStorage.getItem("access_token") || token;
 
       const params = new URLSearchParams({
         weeks: deactivationWeeks.toString(),
@@ -214,11 +312,8 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
 
       console.log("Calling endpoint with:", params.toString());
 
-      const response = await fetch(`${BACKEND_URL}/events/deactivate?${params.toString()}`, {
+      const response = await authFetch(`${BACKEND_URL}/events/deactivate?${params.toString()}`, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${userToken}`
-        }
       });
 
       if (!response.ok) {
@@ -269,12 +364,6 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
   const handleReactivateCell = async () => {
     try {
       setIsToggling(true);
-      const userToken = localStorage.getItem("access_token") || token;
-      if (!userToken) {
-        toast.error("No authentication token found. Please log in again.");
-        setIsToggling(false);
-        return;
-      }
 
       const params = new URLSearchParams();
       params.append('event_id', event.event_id);
@@ -302,11 +391,8 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
         }
       }
 
-      const response = await fetch(`${BACKEND_URL}${endpoint}?${params.toString()}`, {
+      const response = await authFetch(`${BACKEND_URL}${endpoint}?${params.toString()}`, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${userToken}`
-        }
       });
 
       if (!response.ok) {
@@ -358,7 +444,9 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
 
       const value = formData[field];
 
-      if (value === '' || value === null || value === undefined) {
+      if (field === 'reminder_emails') {
+        cleanData[field] = normalizeReminderEmails(value);
+      } else if (value === '' || value === null || value === undefined) {
         cleanData[field] = null;
       } else {
         const fl = field.toLowerCase();
@@ -448,6 +536,15 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
 const handleSubmit = async (e, isDeactivating = false) => {
   try {
     setLoading(true);
+
+    if (changedFields.includes('reminder_emails')) {
+      const invalidEmails = normalizeReminderEmails(formData.reminder_emails).filter(email => !isValidEmail(email));
+      if (invalidEmails.length > 0) {
+        toast.error(`Enter valid email addresses: ${invalidEmails.join(', ')}`);
+        setLoading(false);
+        return;
+      }
+    }
 
     if (changedFields.length === 0 && !isDeactivating) {
       toast.info("No changes made");
@@ -571,18 +668,10 @@ const handleSubmit = async (e, isDeactivating = false) => {
       }
     }
 
-    const userToken = localStorage.getItem("access_token") || token;
-    if (!userToken) {
-      toast.error("No authentication token found. Please log in again.");
-      setLoading(false);
-      return;
-    }
-
-    const response = await fetch(`${BACKEND_URL}${endpoint}`, {
+    const response = await authFetch(`${BACKEND_URL}${endpoint}`, {
       method,
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${userToken}`
+        'Content-Type': 'application/json'
       },
       body
     });
@@ -658,6 +747,7 @@ const handleSubmit = async (e, isDeactivating = false) => {
       Leader: formData.eventLeader || formData.Leader,
       eventLeaderEmail: formData.eventLeaderEmail || formData.Email,
       Email: formData.eventLeaderEmail || formData.Email,
+      reminder_emails: normalizeReminderEmails(formData.reminder_emails),
       location: formData.location || formData.Address,
       Address: formData.location || formData.Address,
     });
@@ -680,6 +770,54 @@ const handleSubmit = async (e, isDeactivating = false) => {
     const displayName = field.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/^./, str => str.toUpperCase()).trim();
     const fieldType = typeof value === 'object' && value !== null ? 'object' : typeof value;
     const fl = field.toLowerCase();
+
+    if (field === 'reminder_emails') {
+      const emails = normalizeReminderEmails(value);
+      const hasInvalidEmail = emails.some(email => !isValidEmail(email));
+      const selectedOptions = emails.map(email =>
+        reminderEmailOptions.find(option => option.email.toLowerCase() === email.toLowerCase()) ||
+        { email, name: email },
+      );
+      const options = [
+        ...reminderEmailOptions,
+        ...selectedOptions.filter(selected =>
+          !reminderEmailOptions.some(option => option.email.toLowerCase() === selected.email.toLowerCase()),
+        ),
+      ];
+      const content = (
+        <Autocomplete
+          multiple
+          disableCloseOnSelect
+          options={options}
+          value={selectedOptions}
+          loading={loadingReminderEmails}
+          loadingText="Loading persistent attendees..."
+          noOptionsText="No persistent attendees with email addresses"
+          getOptionLabel={(option) => option.name && option.name !== option.email
+            ? `${option.name} (${option.email})`
+            : option.email}
+          isOptionEqualToValue={(option, selected) =>
+            option.email.toLowerCase() === selected.email.toLowerCase()}
+          onChange={(_, selected) => handleChange(field, selected.map(option => option.email))}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              fullWidth
+              margin="normal"
+              label="Reminder emails"
+              error={hasInvalidEmail}
+              helperText={hasInvalidEmail
+                ? 'A selected address is invalid.'
+                : 'Select persistent attendees and the event leader.'}
+            />
+          )}
+          disabled={isDisabled}
+        />
+      );
+      return isDisabled && disabledReason ? (
+        <Tooltip key={field} title={disabledReason} arrow><Box>{content}</Box></Tooltip>
+      ) : <Box key={field}>{content}</Box>;
+    }
 
     if (!isCellEvent) {
       if (fl === 'leader1' || fl === 'leader12' || fl.includes('leader at 12') ||
@@ -1000,7 +1138,7 @@ const handleSubmit = async (e, isDeactivating = false) => {
     }
 
     const allowed = ['eventname', 'event name', 'event type', 'eventtypename', 'description',
-      'status', 'isticketed', 'isglobal'];
+      'status', 'isticketed', 'isglobal', 'reminder_emails'];
 
     // For cell events, include haspersonsteps
     if (isCellEvent) {
@@ -1352,7 +1490,7 @@ const handleSubmit = async (e, isDeactivating = false) => {
             ) : (
               <Grid container spacing={2}>            
                 {/* Event Name, Leader, Email, Status, Day, Description fields */}
-                {['eventName', 'Event Name', 'eventLeader', 'Leader', 'eventLeaderEmail', 'Email',
+                {['eventName', 'Event Name', 'eventLeader', 'Leader', 'eventLeaderEmail', 'Email', 'reminder_emails',
                   'status', 'recurring_day', 'Day', 'description']
                   .filter(field => availableFields.includes(field))
                   .map(field => (
@@ -1413,7 +1551,7 @@ const handleSubmit = async (e, isDeactivating = false) => {
                 startIcon={loading ? <CircularProgress size={20} /> : null}
               >
                 {loading ? 'Saving...' : (
-                  isCellEvent ? 'Update All Cell Events' : 'Update This Event'
+                  isCellEvent ? 'Update All Events' : 'Update This Event'
                 )}
               </Button>
             </Box>

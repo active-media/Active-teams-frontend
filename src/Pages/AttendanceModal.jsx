@@ -28,7 +28,6 @@ import { CircularProgress, Box, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { AuthContext } from "../contexts/AuthContext";
 import { useOrgConfig } from "../contexts/OrgConfigContext";
-import {supabase} from '../services/supabase-client'
 
 const GEOAPIFY_API_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
 const GEOAPIFY_COUNTRY_CODE = (
@@ -1063,17 +1062,11 @@ const LeaderSelectionModal = ({
           [leaderField]: filteredFromCache.slice(0, 15),
         }));
       } else {
-        const token = localStorage.getItem("access_token");
-        const headers = { Authorization: `Bearer ${token}` };
-
         const params = new URLSearchParams();
         params.append("name", searchTerm);
         params.append("perPage", "15");
 
-        const res = await authFetch(
-          `${BACKEND_URL}/people?${params.toString()}`,
-          { headers },
-        );
+        const res = await authFetch(`${BACKEND_URL}/people?${params.toString()}`);
         const data = await res.json();
         const peopleArray = Array.isArray(data)
           ? data
@@ -1504,7 +1497,6 @@ const AttendanceModal = ({
         clearTimeout(headcountSaveTimerRef.current);
       headcountSaveTimerRef.current = setTimeout(async () => {
         headcountSaveTimerRef.current = null;
-        const token = localStorage.getItem("token");
         const eventId = getAttendanceEventId(event);
         if (!eventId || eventId === "undefined") return;
         try {
@@ -1514,7 +1506,6 @@ const AttendanceModal = ({
               method: "PUT",
               headers: {
                 "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
               },
               body: JSON.stringify({ headcount }),
             },
@@ -1904,12 +1895,10 @@ const AttendanceModal = ({
       clearTimeout(ticketSaveTimers.current[person.id]);
     ticketSaveTimers.current[person.id] = setTimeout(() => {
       ticketSaveTimers.current[person.id] = null;
-      const token = localStorage.getItem("token");
       authFetch(`${BACKEND_URL}/update_attendee_price_tier_info`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           person_id: person.id,
@@ -1946,10 +1935,8 @@ const AttendanceModal = ({
 
   const refreshGlobalPeopleCache = async () => {
     try {
-      const token = localStorage.getItem("access_token");
       await authFetch(`${BACKEND_URL}/cache/people/refresh`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
       });
       delete window.globalPeopleCache;
       console.log("People cache refreshed successfully");
@@ -2163,8 +2150,6 @@ const AttendanceModal = ({
     }
 
     try {
-      const token = localStorage.getItem("token");
-
       // 1. Build the query string dynamically
       const queryParams = new URLSearchParams({
         event_name: event.eventName,
@@ -2178,14 +2163,7 @@ const AttendanceModal = ({
       console.log("PAYLOAD?",event)
 
       // 2. Append it to your endpoint URL
-      const response = await authFetch(
-        `${BACKEND_URL}/events/${event_id}/persistent-attendees?${queryParams}`,
-        { 
-          headers: { 
-            Authorization: `Bearer ${token}`,
-          }
-        }
-      );
+      const response = await authFetch(`${BACKEND_URL}/events/${event_id}/persistent-attendees?${queryParams}`);
 
       if (!response.ok) {
         console.error("Failed to load persistent attendees:", response.status);
@@ -2215,10 +2193,7 @@ const AttendanceModal = ({
       let liveCheckedInList = [];
       let liveResponseOk = false;
       if (syncsServiceCheckIn) {
-        const liveResponse = await authFetch(
-          `${BACKEND_URL}/service-checkin/real-time-data?event_id=${event.event_id}`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
+        const liveResponse = await authFetch(`${BACKEND_URL}/service-checkin/real-time-data?event_id=${event.event_id}`);
         if (liveResponse.ok) {
           liveResponseOk = true;
           const liveData = await liveResponse.json();
@@ -2397,11 +2372,7 @@ const AttendanceModal = ({
     setIsLoadingPeople(true);
 
     try {
-      const token = localStorage.getItem("access_token");
-      const headers = { Authorization: `Bearer ${token}` };
-      const res = await authFetch(`${BACKEND_URL}/people/paginated?page=1&perPage=100`, {
-        headers,
-      });
+      const res = await authFetch(`${BACKEND_URL}/people/paginated?page=1&perPage=100`);
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const data = await res.json();
 
@@ -2516,11 +2487,7 @@ const AttendanceModal = ({
       });
       if (query) params.set("name", query);
 
-      authFetch(`${BACKEND_URL}/people/paginated?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-        },
-      })
+      authFetch(`${BACKEND_URL}/people/paginated?${params.toString()}`)
         .then((res) => res.json())
         .then((data) => {
           const arr = data.results || [];
@@ -2605,13 +2572,7 @@ const AttendanceModal = ({
 
   const fetchCommonAttendees = async (cellId) => {
     try {
-      const token = localStorage.getItem("access_token");
-      const headers = { Authorization: `Bearer ${token}` };
-
-      const res = await authFetch(
-        `${BACKEND_URL}/events/cell/${cellId}/common-attendees`,
-        { headers },
-      );
+      const res = await authFetch(`${BACKEND_URL}/events/cell/${cellId}/common-attendees`);
       await res.json();
     } catch (err) {
       console.error("Failed to fetch common attendees:", err);
@@ -2662,14 +2623,8 @@ const AttendanceModal = ({
           console.log("Cache empty or expired, loading fresh data");
           setIsLoadingPeople(true);
           try {
-            const token = localStorage.getItem("access_token");
-            const headers = { Authorization: `Bearer ${token}` };
-
             const res = await authFetch(
               `${BACKEND_URL}/people/paginated?page=1&perPage=200`,
-              {
-                headers,
-              },
             );
 
             if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -2766,19 +2721,11 @@ const AttendanceModal = ({
     };
 
     try {
-      const token = localStorage.getItem("access_token");
-     
-      const headers = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      };
-
       // Use the /events/check_in endpoint to add/remove the individual person
       const response = await authFetch(
         `${BACKEND_URL}/update_check_in_status`,
         {
           method: "PUT",
-          headers,
           body: JSON.stringify({
             event_id: event?.event_id || event?.id || "",
             session_id: event?.session_id,
@@ -2858,14 +2805,12 @@ const AttendanceModal = ({
       : attendees;
 
     try {
-      const token = localStorage.getItem("token");
       const response = await authFetch(
         `${BACKEND_URL}/events/${eventId}/persistent-attendees`,
         {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
             persistent_attendees: enriched,
@@ -2914,15 +2859,7 @@ const AttendanceModal = ({
         full_name: person.fullName
       }).toString();
 
-     const token = localStorage.getItem("token"); 
-     const response = await authFetch(
-        `${BACKEND_URL}/get_person_uuid?${queryParams}`,
-        { 
-          headers: { 
-            Authorization: `Bearer ${token}`,
-          }
-        }
-      );
+     const response = await authFetch(`${BACKEND_URL}/get_person_uuid?${queryParams}`);
 
       const data = await response.json();
    
@@ -2981,10 +2918,6 @@ const AttendanceModal = ({
       const response = await authFetch(
           `${BACKEND_URL}/events/${event?.event_id}/persistent-attendees`,
           { method: "PUT",
-            headers: { 
-              Authorization: `Bearer ${token}`,
-              // "Content-Type": "application/json"
-            },
             body: JSON.stringify(payload)
           }
         );
@@ -3043,14 +2976,9 @@ const AttendanceModal = ({
         "event_name": event?.event_name
       }
       
-      const token = localStorage.getItem("token"); 
       const response = await authFetch(
           `${BACKEND_URL}/events/${event?.event_id}/persistent-attendees`,
           { method: "PUT",
-            headers: { 
-              Authorization: `Bearer ${token}`,
-              // "Content-Type": "application/json"
-            },
             body: JSON.stringify(payload)
           }
         );
@@ -3315,14 +3243,12 @@ const AttendanceModal = ({
       if (typeof onSubmit === "function") {
         result = await onSubmit(payload);
       } else {
-        const token = localStorage.getItem("token");
         const response = await authFetch(
           `${BACKEND_URL}/submit-attendance/${eventId}`,
           {
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
-              // Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(payload),
           },
@@ -3712,14 +3638,12 @@ const AttendanceModal = ({
       if (typeof onSubmit === "function") {
         result = await onSubmit(payload);
       } else {
-        const token = localStorage.getItem("token");
         const response = await authFetch(
           `${BACKEND_URL}/submit-attendance/${eventId}`,
           {
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
-              // Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify(payload),
           },

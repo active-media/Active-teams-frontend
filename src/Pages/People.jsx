@@ -1724,6 +1724,7 @@ export const PeopleSection = () => {
 
       <PeopleImportFAB
         onImportComplete={refetchPeople}
+        authFetch={authFetch}
         themeMode={theme.palette.mode}
       />
     </Box>

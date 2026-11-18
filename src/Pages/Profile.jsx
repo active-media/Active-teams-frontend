@@ -43,18 +43,13 @@ function getUserId() {
   return userId;
 }
 
-// One request helper for all three API calls (uses authFetch when available, plain fetch otherwise)
+// One request helper for all three authenticated API calls.
 async function apiRequest(path, { method, body, isForm }, authFetch) {
+  if (!authFetch) throw new Error("Authenticated request helper is unavailable");
+
   const headers = isForm ? {} : { "Content-Type": "application/json" };
   const init = { method, body: isForm ? body : JSON.stringify(body), headers };
-  let response;
-  if (authFetch) {
-    response = await authFetch(`${BACKEND_URL}${path}`, init);
-  } else {
-    const token = getToken();
-    if (!token) throw new Error("Authentication required");
-    response = await fetch(`${BACKEND_URL}${path}`, { ...init, headers: { ...headers, Authorization: `Bearer ${token}` } });
-  }
+  const response = await authFetch(`${BACKEND_URL}${path}`, init);
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.detail || err.message || `HTTP ${response.status}`);

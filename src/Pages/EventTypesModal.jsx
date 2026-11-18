@@ -158,14 +158,20 @@ const handleSubmit = async () => {
     <Modal open={open} onClose={handleClose}>
       <Box
         sx={{
-          width: "600px",
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: "min(600px, calc(100vw - 32px))",
+          maxHeight: "calc(100dvh - 32px)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
           bgcolor: "background.paper",
           borderRadius: 2,
-          mx: "auto",
-          my: "10vh",
         }}
       >
-        <Box sx={{ p: 2, display: "flex", alignItems: "center", gap: 2 }}>
+        <Box sx={{ p: 2, display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
           <CategoryIcon color="primary" />
           <Typography variant="h6" sx={{ flex: 1 }}>
             {selectedEventType ? "Edit Event Type" : "Create Event Type"}
@@ -175,7 +181,7 @@ const handleSubmit = async () => {
           </IconButton>
         </Box>
 
-        <Box sx={{ p: 3 }}>
+        <Box sx={{ p: 3, minHeight: 0, overflowY: "auto" }}>
           <TextField
             inputRef={nameInputRef}
             label="Event Type Name"

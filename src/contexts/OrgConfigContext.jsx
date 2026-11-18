@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { AuthContext } from "./AuthContext";
 const OrgConfigContext = createContext(null);
 
 const DEFAULT_CONFIG = {
@@ -19,20 +20,20 @@ export const OrgConfigProvider = ({ children }) => {
   const [orgConfig, setOrgConfig] = useState(DEFAULT_CONFIG);  
   const [configLoaded, setConfigLoaded] = useState(false);
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-  const token = localStorage.getItem("access_token");
+  const { authFetch, loading, user } = useContext(AuthContext);
 
   useEffect(() => {
+    if (loading) return;
+
     const load = async () => {
       setConfigLoaded(false);
       setOrgConfig(DEFAULT_CONFIG);
       try {
-        if (!token) {
+        if (!user) {
           setConfigLoaded(true);
           return;
         }
-        const res = await fetch(`${BACKEND_URL}/org-config`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const res = await authFetch(`${BACKEND_URL}/org-config`);
         if (res.ok) {
           const data = await res.json();
           setOrgConfig(data);
@@ -46,7 +47,7 @@ export const OrgConfigProvider = ({ children }) => {
       }
     };
     load();
-  }, [token]);
+  }, [authFetch, BACKEND_URL, loading, user]);
 
   const getHierarchyLabel = (level) => {
     const found = orgConfig?.hierarchy?.find(h => h.level === level);
