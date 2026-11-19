@@ -43,8 +43,10 @@ import EditEventModal from "./EditEventModal";
 import ConvertsReportDialog from "../components/ConvertsReportDialog";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+// AuthContext owns the Supabase client and exposes authFetch/getAccessToken.
+// Supabase v2 stores the session under `sb-<project-ref>-auth-token` (a JSON
+// session object), NOT under a plain `access_token` localStorage key.
 import { AuthContext } from "../contexts/AuthContext";
-import {supabase} from '../services/supabase-client'
 import { normalizeEventAttendance, resolveHeadcount } from "../utils/attendanceLogic";
 
 const formatRecurringDays = (recurringDays) => {
@@ -639,24 +641,30 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter, even
 
   //CELLS columns
   const sampleEvent = events[0];
-  // console.log("THE VALUES STORED INSIDE OF THE SAMPLE EVENT: ",events);
-  // console.log("THE FIRST VALUE INSIDE OF SA MPLE EVENT: ",events[0]);
+
+  console.log("THE FIRST VALUE INSIDE OF SAMPLE EVENT: ",events[0]);
+  console.log( "SEEING THE FIELDS THAT SHOULD BE DISPLAYED",columnsToDisplay)
+
   const filteredFields = Object.keys(sampleEvent).filter((key) => {
     const keyLower = key.toLowerCase();
-    const excludedFields = [
-      "event_id","session_id",
-      "persistent_attendees", "uuid", "did_not_meet", "status", "week_identifier",
-      "attendees", "_id", "id", "isoverdue", "attendance", "location", "eventtype",
-      "event_type", "eventtypes", "displaydate", "originatedid", "leader12",
-      "leader@12", "leader at 12", "original_event_id", "_is_overdue", "haspersonsteps",
-      "has_person_steps", "is_recurring", "isrecurring", "recurring", "recurring_days",
-      "is_active", "Is_active", "Is active", "time", "Time", "isGlobal", "isTicketed",
-      "description", "new_people", "consolidations", "total_attendance", "closed_by",
-      "closed_at", "created_at", "updated_at", "new_people_count", "consolidation_count","priceTiers"
-    ];
+    // const excludedFields = [
+    //   "event_id","session_id",
+    //   "persistent_attendees", "uuid", "did_not_meet", "week_identifier",
+    //   "attendees", "_id", "id", "isoverdue", "attendance", "location", "eventtype",
+    //   "event_type", "eventtypes", "displaydate", "originatedid", "leader12",
+    //   "leader@12", "leader at 12", "original_event_id", "_is_overdue", "haspersonsteps",
+    //   "has_person_steps", "is_recurring", "isrecurring", "recurring", "recurring_days",
+    //   "is_active", "Is_active", "Is active", "time", "Time", "isGlobal", "isTicketed",
+    //   "description", "new_people", "consolidations", "total_attendance", "closed_by",
+    //   "closed_at", "created_at", "updated_at", "new_people_count", "consolidation_count","priceTiers"
+    // ];
 
     // DO NOT DISPLAY IT IF IT IS NOT PART OF THE REQUIRED FIELDS TO DISPLAY
-    const dontDisplayColumnIfNotRequired = !columnsToDisplay.includes(key.toLowerCase());
+    const dontDisplayColumnIfNotRequired = !columnsToDisplay.includes(key.replaceAll("_","").toLowerCase());
+    return !( dontDisplayColumnIfNotRequired );
+
+    // DO NOT DISPLAY IT IF IT IS NOT PART OF THE REQUIRED FIELDS TO DISPLAY
+    // const dontDisplayColumnIfNotRequired = !columnsToDisplay.includes(key.replaceAll("_","").toLowerCase());
 
     const exactMatch = excludedFields.includes(key);
     const caseInsensitiveMatch = excludedFields.some((excluded) => excluded.toLowerCase() === keyLower);
@@ -868,10 +876,8 @@ ${xmlCols}
       let eventId = event.event_id || event.id;
       if (!eventId) return event;
       if (eventId.includes("_")) eventId = eventId.split("_")[0];
-      const token = localStorage.getItem("access_token");
-      const res = await authFetch(`${BACKEND_URL}/events/${eventId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // authFetch reads the live Supabase session and injects the bearer token.
+      const res = await authFetch(`${BACKEND_URL}/events/${eventId}`);
       if (res && res.ok) {
         const data = await res.json();
         return data || event;
@@ -1067,14 +1073,8 @@ const isValidObjectId = (id) => {
   return /^[0-9a-fA-F]{24}$/.test(id);
 };
 const Events = () => {
-  const { authFetch } = React.useContext(AuthContext);
+  const { authFetch, supabase, getAccessToken } = React.useContext(AuthContext);
   const { orgConfig, configLoaded } = useOrgConfig();
-  // Auth now lives in Supabase; there is no "access_token" key in localStorage any more.
-  const getSessionToken = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    return session?.access_token ?? null;
-  };
-  
   // Get user from localStorage immediately (available on login)
   const currentUser = JSON.parse(localStorage.getItem("userProfile")) || {};
   const userOrganization = currentUser?.Organization || currentUser?.organization || "";
@@ -1095,7 +1095,6 @@ const Events = () => {
   const theme = useTheme();
   const isMobileView = useMediaQuery(theme.breakpoints.down("lg"));
   const isDarkMode = theme.palette.mode === "dark";
-  const token = localStorage.getItem("access_token");
   const eventTypeStyles = useMemo(() => {
     return getEventTypeStyles(isDarkMode, theme);
   }, [isDarkMode, theme]);
@@ -1393,10 +1392,8 @@ const findEventTypeByName = (typeName, eventTypes = []) => {
       let eventId = event.event_id || event.id;
       if (!eventId) return event;
       if (eventId.includes("_")) eventId = eventId.split("_")[0];
-      const token = localStorage.getItem("access_token");
-      const res = await authFetch(`${BACKEND_URL}/events/${eventId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // authFetch reads the live Supabase session and injects the bearer token.
+      const res = await authFetch(`${BACKEND_URL}/events/${eventId}`);
       if (res && res.ok) {
         const data = await res.json();
         return data || event;
@@ -1669,10 +1666,6 @@ const fetchEventsFilters = (filters) => {
 
           const response = await authFetch(`${endpoint}?${queryString}`, {
             method: "GET",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
           });
 
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1729,7 +1722,6 @@ const fetchEventsFilters = (filters) => {
 const [fetchedEventTypes, setFetchedEventTypes] = useState([]);
 const fetchEventTypes = useCallback(async () => {
   try {
-    const token = localStorage.getItem("access_token");
     const org_id = userOrgId || currentUser?.org_id || "";
     console.log("Fetching event types for org_id:", org_id);
     const {data:eventTypesData, error} = await supabase.from('event_types').select('*').eq("org_id",org_id)
@@ -2355,10 +2347,6 @@ const getFilteredEventTypes = (allEventTypes) => {
 
       const response = await authFetch(`${endpoint}?${queryString}`, {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
       });
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -2580,7 +2568,6 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handleCaptureClick = useCallback(async (event) => {
     try {
-      const token = localStorage.getItem("access_token");
       console.log("CAPTURE",event)
       let eventId = event._id || event.id;
       const originalId = eventId;
@@ -2950,8 +2937,6 @@ const getFilteredEventTypes = (allEventTypes) => {
         window.confirm(`Are you sure you want to delete "${event.eventName}"?`)
       ) {
         try {
-          const token = localStorage.getItem("access_token");
-
           let eventId = event._id;
           if (eventId && eventId.includes("_")) {
             const parts = eventId.split("_");
@@ -2962,10 +2947,6 @@ const getFilteredEventTypes = (allEventTypes) => {
 
           const response = await authFetch(`${BACKEND_URL}/events/${event?.event_id}/${event?.eventName}/${event?.eventType}`, {
             method: "DELETE",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
           });
 
           if (response.ok || response.status === 200) {
@@ -3157,7 +3138,7 @@ const getFilteredEventTypes = (allEventTypes) => {
 
   const handleDeleteType = useCallback(async () => {
     try {
-      const token = await getSessionToken();
+      const token = await getAccessToken();
 
       if (!token) {
         toast.error("Please log in again");
@@ -3182,10 +3163,6 @@ const getFilteredEventTypes = (allEventTypes) => {
       try {
         const response = await authFetch(url, {
           method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
         });
 
         if (!response.ok) {
@@ -3226,10 +3203,6 @@ const getFilteredEventTypes = (allEventTypes) => {
               const forceUrl = `${url}?force=true`;
               const forceResponse = await authFetch(forceUrl, {
                 method: "DELETE",
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  "Content-Type": "application/json",
-                },
               });
 
               const forceResult = await forceResponse.json();
@@ -3344,6 +3317,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     rowsPerPage,
     DEFAULT_API_START_DATE,
     authFetch,
+    getAccessToken,
     setConfirmDeleteOpen,
     setToDeleteType,
     setSelectedEventTypeFilter,
@@ -3397,7 +3371,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     const checkAccess = async () => {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      const token = await getSessionToken();
+      const token = await getAccessToken();
       const userProfile = localStorage.getItem("userProfile");
 
       if (!token || !userProfile) {
@@ -3434,9 +3408,6 @@ const getFilteredEventTypes = (allEventTypes) => {
           try {
             const response = await authFetch(
               `${BACKEND_URL}/check-leader-status`,
-              {
-                headers: { Authorization: `Bearer ${token}` },
-              },
             );
 
             if (!response.ok) {
@@ -3477,7 +3448,7 @@ const getFilteredEventTypes = (allEventTypes) => {
     };
 
     checkAccess();
-  }, [BACKEND_URL]);
+  }, [BACKEND_URL, getAccessToken]);
 
   useEffect(() => {
     if (eventTypes.length > 0 && !selectedEventTypeFilter) {
@@ -3514,11 +3485,13 @@ const getFilteredEventTypes = (allEventTypes) => {
   const handleSaveEventType = useCallback(
     async (eventTypeData, eventTypeId = null) => {
       try {
-        // console.log('DATA',eventTypeData, eventTypeId)
-      
-        const token = localStorage.getItem("access_token");
+        console.log('DATA',eventTypeData, eventTypeId)
+
+        // Get the CURRENT Supabase JWT. Supabase v2 does not store a plain
+        // `access_token` in localStorage, so reading that key always failed.
+        const token = await getAccessToken();
         if (!token) {
-          throw new Error("No authentication token found");
+          throw new Error("You are not signed in. Please log in again.");
         }
 
         const oldName = editingEventType?.name;
@@ -3542,12 +3515,10 @@ const getFilteredEventTypes = (allEventTypes) => {
           method = "POST";
         }
 
+        // authFetch obtains its own fresh session token (and refreshes on 401),
+        // so we do NOT pass an Authorization header built from `token` here.
         const response = await authFetch(url, {
           method: method,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
           body: JSON.stringify(eventTypeData),
         });
 
@@ -3593,7 +3564,7 @@ const getFilteredEventTypes = (allEventTypes) => {
         throw error;
       }
     },
-    [BACKEND_URL, editingEventType, fetchEventTypes, selectedEventTypeFilter],
+    [BACKEND_URL, editingEventType, fetchEventTypes, selectedEventTypeFilter, getAccessToken],
   );
   useEffect(() => {
     if (!selectedEventTypeFilter || !showingEvents) return;
@@ -3646,15 +3617,10 @@ const getFilteredEventTypes = (allEventTypes) => {
       setLoading(true);
       setIsLoading(true);
       try {
-        const token = localStorage.getItem("access_token");
         const [params, endpoint] = fetchEventsFilters(fetchParams);
         const queryString = new URLSearchParams(params).toString();
         const response = await authFetch(`${endpoint}?${queryString}`, {
           method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
@@ -6268,7 +6234,6 @@ const getTypeValue = (type) => {
           handleCloseEditModal(shouldRefresh, updatedEventData);
         }}
         event={selectedEvent}
-        token={token}
       />
 
       <ConvertsReportDialog

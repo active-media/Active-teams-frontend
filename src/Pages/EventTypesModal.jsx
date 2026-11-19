@@ -29,8 +29,9 @@ const EventTypesModal = ({
     name: "",
     description: "",
     isTicketed: false,
-    isTraining: false,  
+    isTraining: false,
     isGlobal: false,
+    display_fields: ["Event Name"],
   });
 
   const [errors, setErrors] = useState({});
@@ -45,10 +46,11 @@ const EventTypesModal = ({
         name: selectedEventType.name || "",
         description: selectedEventType.description || "",
         isTicketed: !!selectedEventType.isTicketed,
-        isTraining: !!selectedEventType.isTraining, 
-        isGlobal: typeof selectedEventType.isGlobal === "boolean"
-          ? selectedEventType.isGlobal
-          : false,
+        isTraining: !!selectedEventType.isTraining,
+        isGlobal:
+          typeof selectedEventType.isGlobal === "boolean"
+            ? selectedEventType.isGlobal
+            : false,
         event_category: selectedEventType.event_type_category || "",
       });
     } else if (open && !selectedEventType) {
@@ -67,86 +69,122 @@ const EventTypesModal = ({
       name: "",
       description: "",
       isTicketed: false,
-      isTraining: false,  
+      isTraining: false,
       isGlobal: false,
+      display_fields: ["Event Name"],
     });
     setErrors({});
   };
+
   const handleCheckboxChange = (name) => (event) => {
-    setFormData((prev) => ({ ...prev, "event_category": name }));
+    setFormData((prev) => ({ ...prev, event_category: name }));
   };
-const handleInputChange = (e) => {
-  const { name, value } = e.target;
-  if (name === "name") {
-    // Convert to title case as user types (first letter of each word uppercase)
-    const titleCaseValue = value.replace(/\w\S*/g, (txt) => {
-      return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
-    });
-    setFormData((prev) => ({ ...prev, [name]: titleCaseValue }));
-  } else {
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  }
-};
-const validateForm = () => {
-  const newErrors = {};
 
-  if (!formData.name.trim()) {
-    newErrors.name = "Event Type Name is required";
-  } else if (!/^[A-Z][a-z]*(\s[A-Z][a-z]*)*$/.test(formData.name)) {
-    newErrors.name = "Event Type Name must have first letter of each word capitalized";
-  }
+  // FUNCTION USED TO SEWLECT THE FIELDS THATMUST BE VISIBLE FOR AN EVENT
 
-  if (!formData.description.trim()) {
-    newErrors.description = "Event description is required";
-  }
-
-  setErrors(newErrors);
-  return Object.keys(newErrors).length === 0;
-};
-const handleSubmit = async () => {
-  if (!validateForm() || loading) return;
-
-  setLoading(true);
-  try {
-    // Convert name to title case
-    const titleCaseName = formData.name.trim().replace(/\w\S*/g, (txt) => {
-      return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
-    });
-    
-    const eventTypeData = {
-      name: titleCaseName,
-      eventTypeName: titleCaseName,
-      description: formData.description.trim(),
-      isTicketed: formData.isTicketed,
-      isTraining: formData.isTraining,
-      isGlobal: formData.isGlobal,
-      event_category: formData.event_category,
-    };
-
-    let result;
-    if (selectedEventType?.event_type_id) {
-      result = await onSubmit(eventTypeData, selectedEventType.event_type_id);
+  const handleEventFieldSelection = (selectedField) => {
+    if (formData.display_fields.includes(selectedField)) {
+      let fieldsArray = [...formData["display_fields"]];
+      // console.log("CURRENT FIELDS ARRAY",fieldsArray)
+      const pos = fieldsArray.indexOf(selectedField);
+  let newFieldsArray = fieldsArray.splice(pos, 1);
+      // console.log(
+      //   "ARRAY OF SELECTED FIELDS AFTER REMOVING A FIELD",
+      //   fieldsArray,
+      // );
+      return setFormData((prev) => ({
+        ...prev,
+        "display_fields": fieldsArray,
+      }));
     } else {
-      result = await onSubmit(eventTypeData);
+      let fieldsArray = [...formData["display_fields"]];
+      // console.log("CURRENT FIELDS ARRAY",fieldsArray)
+      let newFieldsArray = fieldsArray.push(selectedField);
+      // console.log(
+      //   "ARRAY OF SELECTED FIELDS AFTER ADDING A FIELD",
+      //   fieldsArray,
+      // );
+      return setFormData((prev) => ({
+        ...prev,
+        "display_fields": fieldsArray,
+      }));
     }
+  };
 
-    if (setSelectedEventTypeObj) {
-      setSelectedEventTypeObj({
-        ...eventTypeData,
-        _id: result?._id,
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    if (name === "name") {
+      // Convert to title case as user types (first letter of each word uppercase)
+      const titleCaseValue = value.replace(/\w\S*/g, (txt) => {
+        return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
       });
+      setFormData((prev) => ({ ...prev, [name]: titleCaseValue }));
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }));
+    }
+  };
+  const validateForm = () => {
+    const newErrors = {};
+
+    if (!formData.name.trim()) {
+      newErrors.name = "Event Type Name is required";
+    } else if (!/^[A-Z][a-z]*(\s[A-Z][a-z]*)*$/.test(formData.name)) {
+      newErrors.name =
+        "Event Type Name must have first letter of each word capitalized";
     }
 
-    resetForm();
-    onClose();
-  } catch (error) {
-    setErrors({
-      submit: error.response?.data?.detail || "Failed to save event type.",
-    });
-  } finally {
-    setLoading(false);
-  }
-};
+    if (!formData.description.trim()) {
+      newErrors.description = "Event description is required";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+  const handleSubmit = async () => {
+    if (!validateForm() || loading) return;
+
+    setLoading(true);
+    try {
+      // Convert name to title case
+      const titleCaseName = formData.name.trim().replace(/\w\S*/g, (txt) => {
+        return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
+      });
+
+      const eventTypeData = {
+        name: titleCaseName,
+        eventTypeName: titleCaseName,
+        description: formData.description.trim(),
+        isTicketed: formData.isTicketed,
+        isTraining: formData.isTraining,
+        isGlobal: formData.isGlobal,
+        event_category: formData.event_category,
+        display_fields: formData.display_fields,
+      };
+
+      let result;
+      if (selectedEventType?.event_type_id) {
+        result = await onSubmit(eventTypeData, selectedEventType.event_type_id);
+      } else {
+        result = await onSubmit(eventTypeData);
+      }
+
+      if (setSelectedEventTypeObj) {
+        setSelectedEventTypeObj({
+          ...eventTypeData,
+          _id: result?._id,
+        });
+      }
+
+      resetForm();
+      onClose();
+    } catch (error) {
+      setErrors({
+        submit: error.response?.data?.detail || "Failed to save event type.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleClose = () => {
     if (loading) return;
@@ -154,8 +192,24 @@ const handleSubmit = async () => {
     onClose?.();
   };
 
+  // AN ARRAY OF FIELDS THAT THE SPECIFIC EVENT WILL DISPLAY BY DEFAULT
+  const fieldsToDisplay = [
+    "Location",
+    "Event Description",
+    "Event Leader",
+    "Event Leader Email",
+    "Organization",
+    "Date",
+    "Attendance",
+    "Leader @ 1",
+    "Leader @ 12",
+    "Event Time"
+    // "Total Sessions",
+    // "Session Date",
+  ];
+
   return (
-    <Modal open={open} onClose={handleClose}>
+     <Modal open={open} onClose={handleClose} sx={{ scroll:'auto'}}>
       <Box
         sx={{
           width: "600px",
@@ -202,11 +256,12 @@ const handleSubmit = async () => {
           />
 
           {/* Visibility Settings */}
-          <Box sx={{ mb: 3, p: 2, bgcolor: "rgba(0,0,0,0.02)", borderRadius: 1 }}>
-
+          <Box
+            sx={{ mb: 3, p: 2, bgcolor: "rgba(0,0,0,0.02)", borderRadius: 1 }}
+          >
             <Typography fontWeight={600} sx={{ mb: 2 }}>
-
-              isGlobal Event            </Typography>
+              isGlobal Event{" "}
+            </Typography>
             <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
               <Tooltip title="Make this event type available globally across teams.">
                 <FormControlLabel
@@ -245,8 +300,18 @@ const handleSubmit = async () => {
           </Box>
 
           {/* Form Type Settings */}
-          <Box sx={{ mb: 3, p: 2, bgcolor: "rgba(0,123,255,0.05)", borderRadius: 1,display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-            <Typography fontWeight={600} sx={{ mb: 2, gridColumn: '1 / -1' }}>
+          <Box
+            sx={{
+              mb: 3,
+              p: 2,
+              bgcolor: "rgba(0,123,255,0.05)",
+              borderRadius: 1,
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 2,
+            }}
+          >
+            <Typography fontWeight={600} sx={{ mb: 2, gridColumn: "1 / -1" }}>
               Type Settings:
             </Typography>
 
@@ -254,12 +319,12 @@ const handleSubmit = async () => {
               <FormControlLabel
                 control={
                   <Checkbox
-                    checked={formData.event_category === "ticketed"   }
+                    checked={formData.event_category === "ticketed"}
                     onChange={handleCheckboxChange("ticketed")}
                   />
                 }
                 label="Ticketed Event"
-                sx={{ mb: 2, display: 'block' }}
+                sx={{ mb: 2, display: "block" }}
               />
             </Tooltip>
             <Tooltip title="Mark this event type for training sessions.">
@@ -271,7 +336,7 @@ const handleSubmit = async () => {
                   />
                 }
                 label="Training Event"
-                sx={{ display: 'block' }}
+                sx={{ display: "block" }}
               />
             </Tooltip>
 
@@ -284,7 +349,7 @@ const handleSubmit = async () => {
                   />
                 }
                 label="Small Gathering"
-                sx={{ mb: 2, display: 'block' }}
+                sx={{ mb: 2, display: "block" }}
               />
             </Tooltip>
 
@@ -297,12 +362,74 @@ const handleSubmit = async () => {
                   />
                 }
                 label="Service"
-                sx={{ mb: 2, display: 'block' }}
+                sx={{ mb: 2, display: "block" }}
               />
             </Tooltip>
 
             {/* ADDED TRAINING CHECKBOX */}
+          </Box>
 
+          {/* USED TO SELECT ALL OF THE FIELDS THAT WILL BE DISPLAYED FOR THE TYPE OF EVENT BEING CREATED */}
+
+          <Box
+            sx={{
+              // mb: 3,
+              // p: 2,
+              bgcolor: "rgba(0,123,255,0.05)",
+              borderRadius: 1,
+              //  display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, overflow:'auto', height:'100px',
+            }}
+          >
+            <Typography fontWeight={600} sx={{ mb: 2, gridColumn: "1 / -1" }}>
+              Event Columns:
+            </Typography>
+
+            <section
+              style={{
+                mb: 3,
+                p: 2,
+                //  bgcolor: "rgba(0,123,255,0.05)", borderRadius: 1,
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 2,
+                overflow: "auto",
+                height: "180px",
+              }}
+            >
+              <Tooltip title="EventName is displayed by default">
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked
+                      disabled
+                      />
+                  }
+                  label="Event Name"
+                  sx={{ mb: 2, display: "block" }}
+                />
+              </Tooltip>
+              {fieldsToDisplay.map((fieldName, index) => {
+                return (
+                  <Tooltip
+                    title={`Do you want people to see the ${fieldName} in your event details.`}
+                    key={index}
+                  >
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          // checked={formData.event_category === "ticketed"   }
+                          onClick={() => {
+                            return handleEventFieldSelection(fieldName);
+                          }}
+                        />
+                      }
+                      label={fieldName}
+                      sx={{ mb: 2, display: "block" }}
+                    />
+                  </Tooltip>
+                );
+              })}
+            </section>
           </Box>
 
           {errors.submit && (

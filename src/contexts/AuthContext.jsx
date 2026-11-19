@@ -297,6 +297,25 @@ export const AuthProvider = ({ children }) => {
     return res;
   }, []);
 
+  // ── getAccessToken — current Supabase JWT for direct calls ─────────────────
+  /**
+   * Supabase v2 stores the session in localStorage under
+   * `sb-<project-ref>-auth-token` (as a JSON session object) — NOT under a
+   * plain `access_token` key. Never read that key directly. Use this helper
+   * whenever a raw JWT is needed; authFetch already does this internally.
+   */
+  const getAccessToken = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    let token = session?.access_token ?? null;
+
+    if (token && isTokenExpired(token)) {
+      const { data: refreshed } = await supabase.auth.refreshSession();
+      token = refreshed?.session?.access_token ?? null;
+    }
+
+    return token;
+  }, []);
+
   // ── Profile picture ────────────────────────────────────────────────────────
   const updateProfilePicture = useCallback(async (newPictureUrl) => {
     if (!user) return;
@@ -466,6 +485,7 @@ export const AuthProvider = ({ children }) => {
       login,
       logout,
       authFetch,
+      getAccessToken,
       updateProfilePicture,
       getDefaultAvatar,
       setUser,

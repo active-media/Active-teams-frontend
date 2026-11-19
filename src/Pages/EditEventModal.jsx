@@ -14,13 +14,16 @@ import {
   Pause,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
+import { AuthContext } from "../contexts/AuthContext";
 
 const USER_ROLES = {
   ADMIN: 'admin', LEADER_1: 'leader1', LEADER_12: 'leader12',
   LEADER_144: 'leader144', REGISTRANT: 'registrant', USER: 'user'
 };
 
-const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
+const EditEventModal = ({ isOpen, onClose, event, refreshEvents }) => {
+  // authFetch reads the live Supabase session; no legacy token prop needed.
+  const { authFetch } = React.useContext(AuthContext);
   const [formData, setFormData] = useState({});
   const [loading, setLoading] = useState(false);
   const [editScope, setEditScope] = useState('single');
@@ -197,7 +200,6 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
   const handleDeactivateCell = async () => {
     try {
       setIsToggling(true);
-      const userToken = localStorage.getItem("access_token") || token;
 
       const params = new URLSearchParams({
         weeks: deactivationWeeks.toString(),
@@ -214,11 +216,8 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
 
       console.log("Calling endpoint with:", params.toString());
 
-      const response = await fetch(`${BACKEND_URL}/events/deactivate?${params.toString()}`, {
+      const response = await authFetch(`${BACKEND_URL}/events/deactivate?${params.toString()}`, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${userToken}`
-        }
       });
 
       if (!response.ok) {
@@ -269,12 +268,6 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
   const handleReactivateCell = async () => {
     try {
       setIsToggling(true);
-      const userToken = localStorage.getItem("access_token") || token;
-      if (!userToken) {
-        toast.error("No authentication token found. Please log in again.");
-        setIsToggling(false);
-        return;
-      }
 
       const params = new URLSearchParams();
       params.append('event_id', event.event_id);
@@ -302,11 +295,8 @@ const EditEventModal = ({ isOpen, onClose, event, token, refreshEvents }) => {
         }
       }
 
-      const response = await fetch(`${BACKEND_URL}${endpoint}?${params.toString()}`, {
+      const response = await authFetch(`${BACKEND_URL}${endpoint}?${params.toString()}`, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${userToken}`
-        }
       });
 
       if (!response.ok) {
@@ -571,20 +561,9 @@ const handleSubmit = async (e, isDeactivating = false) => {
       }
     }
 
-    const userToken = localStorage.getItem("access_token") || token;
-    if (!userToken) {
-      toast.error("No authentication token found. Please log in again.");
-      setLoading(false);
-      return;
-    }
-
-    const response = await fetch(`${BACKEND_URL}${endpoint}`, {
+    const response = await authFetch(`${BACKEND_URL}${endpoint}`, {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${userToken}`
-      },
-      body
+      body,
     });
 
     if (!response.ok) {
@@ -596,7 +575,6 @@ const handleSubmit = async (e, isDeactivating = false) => {
         toast.error(`Not found: ${errorData.detail || 'The event or events could not be found'}`);
       } else if (response.status === 401) {
         toast.error("Your session has expired. Please log in again.");
-        localStorage.removeItem("access_token");
       } else if (response.status === 409) {
         toast.error(`Conflict: ${errorData.detail || 'Duplicate event detected'}`);
       } else {
