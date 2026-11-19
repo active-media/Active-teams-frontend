@@ -76,7 +76,7 @@ export default function AdminDashboard() {
   const [selectedRole, setSelectedRole] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState(0);
-  const [loading, setLoading] = useState(!globalDataLoaded);
+  const [, setLoading] = useState(!globalDataLoaded);
 
   const [, setRolesLoading] = useState(false);
   const [users, setUsers] = useState(globalUsersData || []);
@@ -96,7 +96,8 @@ export default function AdminDashboard() {
     if (!isSupremeAdmin && currentUser) {
       return currentUser.Organization || currentUser.organization || "Active Church";
     }
-    return globalOrgFilter || "Active Church";
+    const storedOrg = isSupremeAdmin ? localStorage.getItem('selectedOrganization') : null;
+    return globalOrgFilter || storedOrg || "Active Church";
   });
   const [orgAnchorEl, setOrgAnchorEl] = useState(null);
   const [, setLoadingOrgs] = useState(false);
@@ -268,25 +269,33 @@ export default function AdminDashboard() {
   }, [API_BASE_URL, authFetch]);
 
   const fetchOrgs = useCallback(async () => {
-    if (!isSupremeAdmin) return;
+    if (!isSupremeAdmin && !isAdmin) return;
     setLoadingOrgs(true);
     try {
       const res = await authFetch(`${API_BASE_URL}/organizations`, { method: 'GET', headers: { 'Content-Type': 'application/json' }, cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
-      const orgs = (data.organizations || []).map(o => ({
-        id: o._id || o.id, _id: o._id || o.id,
+      let orgs = (data.organizations || []).map(o => ({
+        id: o._id || o.id, _id: o._id || o.id, org_id: o.org_id || '',
         name: o.name, address: o.address, phone: o.phone,
         email: o.email, logo: o.logo || '', description: o.description || '',
         user_count: o.user_count || 0, created_at: o.created_at
       }));
+      if (!isSupremeAdmin) {
+        const userOrg = (currentUser?.Organization || currentUser?.organization || '').trim().toLowerCase();
+        const userOrgId = (currentUser?.org_id || '').trim().toLowerCase();
+        orgs = orgs.filter(o =>
+          (userOrg && (o.name || '').trim().toLowerCase() === userOrg) ||
+          (userOrgId && (o.org_id || '').trim().toLowerCase() === userOrgId)
+        );
+      }
       if (mountedRef.current) setOrganizations(orgs);
     } catch (e) {
       console.error('fetchOrgs error', e);
     } finally {
       if (mountedRef.current) setLoadingOrgs(false);
     }
-  }, [API_BASE_URL, authFetch, isSupremeAdmin]);
+  }, [API_BASE_URL, authFetch, isSupremeAdmin, isAdmin, currentUser]);
 
   // ─── MAIN LOAD ────────────────
   useEffect(() => {
@@ -303,7 +312,7 @@ export default function AdminDashboard() {
       setTotalUsers(globalUsersData.length);
       setLoading(false);
       fetchRoles(org, false);
-      if (isSupremeAdmin) fetchOrgs();
+      if (isSupremeAdmin || isAdmin) fetchOrgs();
       return;
     }
 
@@ -325,7 +334,7 @@ export default function AdminDashboard() {
         if (mountedRef.current) setLoading(false);
         fetchingRef.current = false;
         fetchRoles(org, true);
-        if (isSupremeAdmin) fetchOrgs();
+        if (isSupremeAdmin || isAdmin) fetchOrgs();
       });
   }, [selectedOrg]);
 
@@ -333,10 +342,10 @@ export default function AdminDashboard() {
     if (activeTab === 2) {
       fetchActivityLog();
     }
-    if (activeTab === 3 && isSupremeAdmin) {
+    if (activeTab === 3 && (isSupremeAdmin || isAdmin)) {
       fetchOrgs();
     }
-  }, [activeTab, fetchActivityLog, fetchOrgs, isSupremeAdmin]);
+  }, [activeTab, fetchActivityLog, fetchOrgs, isSupremeAdmin, isAdmin]);
 
   // ─── org switch ─────────────────────────────────────────────────────────────
   const handleOrgChange = useCallback((orgName) => {
@@ -352,8 +361,13 @@ export default function AdminDashboard() {
     setSearchTerm('');
     setPage(0);
     setOrgAnchorEl(null);
+    if (isSupremeAdmin) localStorage.setItem('selectedOrganization', orgName);
+    const nextOrg = organizations.find(o => o.name === orgName);
+    window.dispatchEvent(new CustomEvent('organization-selected', {
+      detail: { name: orgName, logo: nextOrg?.logo || '' },
+    }));
     setSelectedOrg(orgName); 
-  }, [selectedOrg]);
+  }, [selectedOrg, organizations, isSupremeAdmin]);
 
   // ─── manual refresh ────────────────
   const handleManualRefresh = useCallback(async () => {
@@ -363,14 +377,14 @@ export default function AdminDashboard() {
     try {
       const { users: u, total } = await fetchUsers(selectedOrg);
       if (mountedRef.current) { setUsers(u); setTotalUsers(total); }
-      if (isSupremeAdmin) fetchOrgs();
+      if (isSupremeAdmin || isAdmin) fetchOrgs();
       if (activeTab === 2) await fetchActivityLog();
     } catch (e) {
       console.error(e);
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, [fetchUsers, fetchOrgs, fetchActivityLog, selectedOrg, isSupremeAdmin, activeTab]);
+  }, [fetchUsers, fetchOrgs, fetchActivityLog, selectedOrg, isSupremeAdmin, isAdmin, activeTab]);
 
   // ─── CRUD handlers ────────────────
   const handleCreateUser = async (userData) => {
@@ -679,7 +693,8 @@ export default function AdminDashboard() {
     setSavingOrg(true);
     try {
       const id = editingOrg ? (editingOrg.id || editingOrg._id) : null;
-      const payload = { name };
+      const payload = {};
+      if (isSupremeAdmin) payload.name = name;
       if (orgLogoDataUrl) payload.logo = orgLogoDataUrl;
       else if (orgLogoRemoved) payload.logo = '';
       const res = await authFetch(
@@ -689,6 +704,11 @@ export default function AdminDashboard() {
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed to save organization'); }
       const body = await res.json().catch(() => ({}));
       const saved = body.organization;
+      if (saved) {
+        window.dispatchEvent(new CustomEvent('organization-logo-updated', {
+          detail: { name: saved.name || name, logo: saved.logo || '' },
+        }));
+      }
       if (saved?._id) {
         setOrganizations(prev => prev.map(o => {
           if ((o.id || o._id) !== saved._id) return o;
@@ -914,7 +934,7 @@ export default function AdminDashboard() {
             <Tab value={0} label="USERS" sx={{ fontWeight: 600 }} />
             <Tab value={1} label="ROLES & PERMISSIONS" sx={{ fontWeight: 600 }} />
             <Tab value={2} label="ACTIVITY LOG" sx={{ fontWeight: 600 }} />
-            {isSupremeAdmin && <Tab value={3} label="ORGANIZATIONS" sx={{ fontWeight: 600 }} />}
+            {(isSupremeAdmin || isAdmin) && <Tab value={3} label={isSupremeAdmin ? "ORGANIZATIONS" : "ORGANIZATION"} sx={{ fontWeight: 600 }} />}
             <Tab value={4} label="TARGETS" sx={{ fontWeight: 600 }} />
           </Tabs>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -1082,11 +1102,11 @@ export default function AdminDashboard() {
           </Box>
         )}
 
-        {/* Organizations tab (super admin only) */}
-        {activeTab === 3 && isSupremeAdmin && (() => {
+        {/* Organizations tab (admins manage their own org logo, supreme admins manage all) */}
+        {activeTab === 3 && (isSupremeAdmin || isAdmin) && (() => {
           const orgTabContent = () => (
             <Box padding={getResponsiveValue(1,2,3,3,3)}>
-              <Typography variant="h6" fontWeight="bold" sx={{ mb: 2 }}>Organizations</Typography>
+              <Typography variant="h6" fontWeight="bold" sx={{ mb: 2 }}>{isSupremeAdmin ? 'Organizations' : 'Organization'}</Typography>
               <Grid container spacing={cardSpacing}>
                 {organizations.map(org => (
                   <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={org.id || org._id}>
@@ -1104,10 +1124,12 @@ export default function AdminDashboard() {
                             )}
                           </Box>
                         </Stack>
-                        {isSupremeAdmin && (
+                        {(isSupremeAdmin || isAdmin) && (
                           <Box sx={{ display: "flex", justifyContent: 'flex-end', my: 1, gap: 1, flexWrap: 'wrap' }}>
-                            <Button variant="outlined" size="small" startIcon={<EditIcon />} sx={{ borderRadius: 1 }} onClick={() => handleOpenEditOrg(org)}>Edit</Button>
-                            <Button variant="outlined" size="small" startIcon={<Delete />} sx={{ borderRadius: 1, color: "error.main" }} onClick={() => { if (window.confirm("Delete " + org.name + "? This cannot be undone.")) { handleDeleteOrganization(org.id || org._id, org.name); }}}>Delete</Button>
+                            <Button variant="outlined" size="small" startIcon={<EditIcon />} sx={{ borderRadius: 1 }} onClick={() => handleOpenEditOrg(org)}>{isSupremeAdmin ? 'Edit' : 'Edit Logo'}</Button>
+                            {isSupremeAdmin && (
+                              <Button variant="outlined" size="small" startIcon={<Delete />} sx={{ borderRadius: 1, color: "error.main" }} onClick={() => { if (window.confirm("Delete " + org.name + "? This cannot be undone.")) { handleDeleteOrganization(org.id || org._id, org.name); }}}>Delete</Button>
+                            )}
                           </Box>
                         )}
                       </CardContent>
@@ -1283,14 +1305,14 @@ export default function AdminDashboard() {
         {/* Org modal */}
         <Dialog open={showOrgModal} onClose={() => !savingOrg && setShowOrgModal(false)} maxWidth="sm" fullWidth fullScreen={isXsDown} PaperProps={{ sx: { borderRadius: { xs: 0, sm: 2 } } }}>
           <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
-            <Typography variant="h6" fontWeight="bold" sx={{ overflowWrap: 'anywhere' }}>{editingOrg ? 'Edit Organization' : 'New Organization'}</Typography>
+            <Typography variant="h6" fontWeight="bold" sx={{ overflowWrap: 'anywhere' }}>{editingOrg ? (isSupremeAdmin ? 'Edit Organization' : 'Edit Organization Logo') : 'New Organization'}</Typography>
             <IconButton onClick={() => setShowOrgModal(false)} size="small" disabled={savingOrg}><CloseIcon /></IconButton>
           </DialogTitle>
           <Divider />
           <DialogContent>
             <Stack spacing={3} sx={{ mt: 1 }}>
               {orgFormErrors.form && <Alert severity="error">{orgFormErrors.form}</Alert>}
-              <TextField label="Organization Name *" value={orgFormData.name} onChange={e => setOrgFormData({ ...orgFormData, name: e.target.value })} error={!!orgFormErrors.name} helperText={orgFormErrors.name} fullWidth required disabled={savingOrg} />
+              <TextField label="Organization Name *" value={orgFormData.name} onChange={e => setOrgFormData({ ...orgFormData, name: e.target.value })} error={!!orgFormErrors.name} helperText={isSupremeAdmin ? orgFormErrors.name : 'Only supreme admins can rename an organization'} fullWidth required disabled={savingOrg || !isSupremeAdmin} />
               <Stack spacing={1}>
                 <Typography variant="subtitle2" fontWeight="bold">Logo</Typography>
                 <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
@@ -1330,7 +1352,7 @@ export default function AdminDashboard() {
             </Stack>
           </DialogContent>
           <DialogActions sx={{ p: { xs: 2, sm: 3 }, gap: 1, flexWrap: 'wrap', '& > :not(style) ~ :not(style)': { marginLeft: 0 } }}>
-            {editingOrg && (
+            {editingOrg && isSupremeAdmin && (
               <Button variant="outlined" color="error" onClick={() => { const id = editingOrg.id || editingOrg._id; handleDeleteOrganization(id, editingOrg.name); }} disabled={savingOrg || deletingOrg} startIcon={deletingOrg ? <CircularProgress size={20} /> : <Delete />} sx={{ mr: { xs: 0, sm: 'auto' }, flex: { xs: '1 1 100%', sm: 'none' } }}>
                 Deleting...
               </Button>
