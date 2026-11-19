@@ -177,7 +177,7 @@ const handleTestNotification = async () => {
         backgroundColor: "background.paper",
       }}
     >
-      <Button
+     {!pushEnabled && <Button
         size="small"
         variant={pushEnabled ? "outlined" : "contained"}
         color={pushEnabled ? "inherit" : "primary"}
@@ -188,6 +188,7 @@ const handleTestNotification = async () => {
       >
        {pushBusy ? "Please wait..." : pushEnabled ? "Notifications on" : "Enable notifications"} 
       </Button>
+      }
       {/* <Button onClick={handleTestNotification}>
   Send test notification
 </Button> */}

@@ -110,6 +110,23 @@ function App() {
 
   const [showSplash, setShowSplash] = useState(true);
   const [splashFinished, setSplashFinished] = useState(false);
+  const [installPromptEvent, setInstallPromptEvent] = useState(null);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (event) => {
+      event.preventDefault();
+      setInstallPromptEvent(event);
+    };
+    const handleAppInstalled = () => setInstallPromptEvent(null);
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
+  }, []);
 
   const enablePushNotifications = useCallback(async () => {
     if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
@@ -313,7 +330,14 @@ function App() {
         {user && !hideLayout && <TopbarProfile />}
       
       <div style={{ display: "flex" }}>
-        {user && !hideLayout && <Sidebar mode={mode} setMode={setMode} />}
+        {user && !hideLayout && (
+          <Sidebar
+            mode={mode}
+            setMode={setMode}
+            installPromptEvent={installPromptEvent}
+            onInstallPromptConsumed={() => setInstallPromptEvent(null)}
+          />
+        )}
         
         <div style={{ flexGrow: 1, minWidth: 0 }}>
           <Routes>

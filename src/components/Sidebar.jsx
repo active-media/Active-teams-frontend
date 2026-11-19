@@ -6,6 +6,12 @@ import {
   ListItemIcon,
   IconButton,
   Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Switch,
   useMediaQuery,
   useTheme,
@@ -138,9 +144,11 @@ const allMenuItems = [
   },
 ];
 
-export default function Sidebar({ mode, setMode }) {
+export default function Sidebar({ mode, setMode, installPromptEvent, onInstallPromptConsumed }) {
   const theme = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [installDialogOpen, setInstallDialogOpen] = useState(false);
+  const [installError, setInstallError] = useState('');
   const isMobile = useMediaQuery('(max-width:900px)');
   const location = useLocation();
   const { user, authFetch } = useContext(AuthContext);
@@ -149,6 +157,43 @@ export default function Sidebar({ mode, setMode }) {
 
   const isDark = mode === 'dark';
   const line = isDark ? '#2a2a38' : '#e3e1ec';
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  useEffect(() => {
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+      || navigator.standalone === true;
+    if (
+      isMobile
+      && !isStandalone
+      && sessionStorage.getItem('activeTeamsInstallPromptDismissed') !== 'true'
+    ) {
+      setInstallDialogOpen(true);
+    }
+  }, [isMobile]);
+
+  const closeInstallDialog = () => {
+    sessionStorage.setItem('activeTeamsInstallPromptDismissed', 'true');
+    setInstallDialogOpen(false);
+    setInstallError('');
+  };
+
+  const handleInstallApp = async () => {
+    if (!installPromptEvent) return;
+
+    try {
+      await installPromptEvent.prompt();
+      const choice = await installPromptEvent.userChoice;
+      onInstallPromptConsumed?.();
+      if (choice?.outcome === 'accepted') {
+        closeInstallDialog();
+      }
+    } catch (error) {
+      console.error('Could not open the app install prompt:', error);
+      setInstallError('The install prompt could not be opened. Use your browser menu to install the app.');
+      onInstallPromptConsumed?.();
+    }
+  };
 
   useEffect(() => {
     const savedMode = localStorage.getItem('themeMode');
@@ -414,6 +459,37 @@ export default function Sidebar({ mode, setMode }) {
       >
         {drawerContent}
       </Drawer>
+
+      <Dialog
+        open={isMobile && installDialogOpen}
+        onClose={closeInstallDialog}
+        aria-labelledby="install-app-title"
+        aria-describedby="install-app-description"
+      >
+        <DialogTitle id="install-app-title">Get the Active Teams app</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="install-app-description">
+            {installPromptEvent
+              ? 'Install Active Teams on your device for quick access.'
+              : isIOS
+                ? 'To add Active Teams to your home screen, tap Share, then choose “Add to Home Screen”.'
+                : 'To add Active Teams to your home screen, open your browser menu and choose “Install app” or “Add to Home screen”.'}
+          </DialogContentText>
+          {installError && (
+            <DialogContentText role="alert" sx={{ mt: 2, color: 'error.main' }}>
+              {installError}
+            </DialogContentText>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={closeInstallDialog}>Not now</Button>
+          {installPromptEvent && (
+            <Button onClick={handleInstallApp} variant="contained">
+              Install app
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
     </>
   );
 }
