@@ -1,9 +1,7 @@
 import React, { createContext, useState, useEffect, useCallback } from 'react';
-import { normalizeRole } from '../utils/roleNormalizer';
 import supabase from '../../supabaseClient';
 import { API_BASE } from '../api/config';
 import { migrateLegacyAccount, prepareLegacyAccountForReset } from '../services/legacyMigration';
-import { createClient } from '@supabase/supabase-js';
 
 // ─── Supabase client ──────────────────────────────────────────────────────────
 // Required env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
@@ -168,6 +166,8 @@ export const AuthProvider = ({ children }) => {
     let { data: authData, error: authError } =
       await supabase.auth.signInWithPassword({ email, password });
 
+    let migratedProfile = null;
+
     // ── Silent migration from legacy backend ──────────────────────────────
     if (authError) {
       let migratedOk = false;
@@ -177,6 +177,7 @@ export const AuthProvider = ({ children }) => {
       // Mongo credentials, creates the missing Supabase account and returns a
       // session we can adopt.
       const migration = await migrateLegacyAccount(email, password);
+      migratedProfile = migration.profile ?? null;
 
       if (migration.ok) {
         const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
@@ -240,7 +241,32 @@ export const AuthProvider = ({ children }) => {
     }
 
     // ── Load profile from DB ──────────────────────────────────────────────
-    const profile = await fetchProfileByEmail(email);
+    let profile = null;
+    try {
+      profile = await fetchProfileByEmail(email);
+    } catch (error) {
+      if (!migratedProfile) throw error;
+      profile = migratedProfile;
+    }
+    if (!profile && migratedProfile) profile = migratedProfile;
+
+    if (!profile) {
+      const migration = await migrateLegacyAccount(email, password);
+      if (!migration.ok) {
+        throw new Error(migration.message || 'User profile not found');
+      }
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+        access_token: migration.session.access_token,
+        refresh_token: migration.session.refresh_token,
+      });
+      if (sessionError) throw sessionError;
+
+      authData        = { user: sessionData.user, session: sessionData.session };
+      migratedProfile = migration.profile ?? null;
+      profile = migratedProfile ?? await fetchProfileByEmail(email);
+    }
+
     if (!profile) throw new Error('User profile not found');
 
     const mergedUser = ensureUserWithAvatar({

@@ -50,6 +50,7 @@ export async function migrateLegacyAccount(email, password) {
       access_token: body.access_token,
       refresh_token: body.refresh_token,
     },
+    profile: body.profile ?? null,
   };
 }
 
