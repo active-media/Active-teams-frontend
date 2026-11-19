@@ -261,25 +261,17 @@ const DT_CSS = `
 .dt-empty{border-radius:14px;border:1px solid var(--dt-border);background:var(--dt-card);padding:40px;text-align:center;font-size:14px;color:var(--dt-muted)}
 .dt-loading{padding:40px;color:var(--dt-muted);display:flex;flex-direction:column;align-items:center;gap:16px}
 .dt-more{align-self:center;margin-top:8px}
-@media (max-width:1366px){
-  .dt-main{padding:0 28px 48px}
-  .dt-heading-row{gap:12px;margin-top:20px}
-  .dt-title{font-size:32px}
-  .dt-actions{gap:8px}
-  .dt-btn{padding:10px 16px;font-size:13px}
-  .dt-toolbar{gap:12px;margin-top:24px}
-  .dt-stat{min-width:140px;padding:18px 24px}
-  .dt-stat-num{font-size:40px}
-  .dt-pills{gap:6px}
-  .dt-pill{padding:8px 12px}
-  .dt-controls{gap:8px}
-  .dt-select{padding:9px 30px 9px 12px}
-  .dt-list{gap:12px;margin-top:28px}
-  .dt-row{gap:16px;padding:18px}
-  .dt-avatar{width:44px;height:44px}
-  .dt-row-name{font-size:16px}
-  .dt-row-sub,.dt-row-date{font-size:13px}
-}
+.dt-skel{background:linear-gradient(90deg,var(--dt-border) 25%,var(--dt-card-hover) 50%,var(--dt-border) 75%);background-size:200% 100%;animation:dt-shimmer 1.4s ease-in-out infinite;border-radius:6px}
+.dt-skel--avatar{width:48px;height:48px;border-radius:50%;flex-shrink:0}
+.dt-skel--name{height:18px;width:min(220px,60%)}
+.dt-skel--sub{height:14px;width:min(300px,80%);margin-top:10px}
+.dt-skel--status{height:16px;width:80px}
+.dt-skel--date{height:14px;width:90px}
+.dt-skel--num{display:inline-block;height:44px;width:64px;border-radius:8px}
+.dt-row--skeleton{cursor:default}
+.dt-row--skeleton:hover{background:var(--dt-card)}
+@keyframes dt-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.dt-skel{animation:none}}
 @media (max-width:1100px){
   .dt-controls{margin-left:0;width:100%}
 }
@@ -311,6 +303,7 @@ const DT_CSS = `
   .dt-select{width:100%}
   .dt-btn--solid{flex:1 1 100%}
   .dt-avatar{width:40px;height:40px;font-size:16px}
+  .dt-skel--avatar{width:40px;height:40px}
   .dt-row-name{font-size:16px}
   .dt-row-sub{font-size:13px}
 }
@@ -334,11 +327,27 @@ function Spinner({ size = 16, color = "#6b7280" }) {
   );
 }
 
+function TaskRowSkeleton() {
+  return (
+    <div className="dt-row dt-row--skeleton" aria-hidden="true">
+      <div className="dt-skel dt-skel--avatar" />
+      <div className="dt-row-body">
+        <div className="dt-skel dt-skel--name" />
+        <div className="dt-skel dt-skel--sub" />
+      </div>
+      <div className="dt-row-meta">
+        <div className="dt-skel dt-skel--status" />
+        <div className="dt-skel dt-skel--date" />
+      </div>
+    </div>
+  );
+}
+
 function StatusBadge({ status, colors }) {
   const normalized = String(status || "open").toLowerCase();
   const map = {
     completed: [colors.completed, "Completed"],
-    overdue: [colors.awaiting, "Overdue"],
+    overdue: ["#f50b0b", "Overdue"],
     "in-progress": [colors.inProgress, "In Progress"],
     "in progress": [colors.inProgress, "In Progress"],
     "awaiting task": [colors.gold, "Awaiting Task"],
@@ -1260,6 +1269,7 @@ export default function DailyTasks() {
   const [allPeople, setAllPeople] = useState(loadInitialPeople);
   const [isLoadingPeople, setIsLoadingPeople] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState("call");
   const [editingTask, setEditingTask] = useState(null);
@@ -1897,6 +1907,7 @@ export default function DailyTasks() {
   const fetchUserTasks = useCallback(async (pageNum = 1, append = false) => {
     if (!user?.email) return;
     setLoading(true);
+    setLoadingMore(append);
     try {
       const dateParams = getFilterDateRangeParams(pendingDateRange, customDateRange);
       const params = new URLSearchParams({
@@ -1956,6 +1967,7 @@ export default function DailyTasks() {
       console.error("Error fetching tasks:", err.message);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, [user, authFetch, API_URL, pendingDateRange, customDateRange, pendingStageFilter, pendingFilterType, pendingViewFilter, selectedPeople, batchSize, getFilterDateRangeParams]);
 
@@ -1977,6 +1989,7 @@ export default function DailyTasks() {
   const visibleTasks = tasks.filter((t) => filter === "all" || getPillKey(t) === filter);
   const totalCount = tasks.length;
   const completedTaskCount = filterCounts.completed;
+  const isInitialLoading = loading && !loadingMore;
 
   const downloadFilteredTasks = () => {
     const header = ["Recipient", "Assigned To", "Task Type", "Stage", "Date"];
@@ -2043,7 +2056,9 @@ export default function DailyTasks() {
 
         <div className="dt-toolbar">
           <div className="dt-stat">
-            <div className="dt-stat-num">{completedTaskCount}</div>
+            <div className="dt-stat-num">
+              {isInitialLoading ? <span className="dt-skel dt-skel--num" /> : completedTaskCount}
+            </div>
             <div className="dt-stat-label">Tasks Complete</div>
           </div>
 
@@ -2104,37 +2119,38 @@ export default function DailyTasks() {
           </div>
         )}
 
-        <div className="dt-list">
-          {loading ? (
-            <div className="dt-loading">
-              <Spinner size={32} color={colors.primary} />
-              <div>Loading tasks...</div>
-            </div>
+        <div className="dt-list" aria-busy={loading}>
+          {isInitialLoading ? (
+            Array.from({ length: 6 }).map((_, i) => <TaskRowSkeleton key={i} />)
           ) : visibleTasks.length === 0 ? (
             <div className="dt-empty">No tasks in this view.</div>
           ) : (
-            visibleTasks.map((task) => (
-              <div
-                key={task._id || task.id || `${task.name}-${task.date}`}
-                className="dt-row"
-                role="button"
-                tabIndex={0}
-                onClick={() => handleEdit(task)}
-                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleEdit(task)}
-              >
-                <div className="dt-avatar">{(task.person || task.name || "?").charAt(0)}</div>
-                <div className="dt-row-body">
-                  <div className="dt-row-name">{task.person || "No recipient"}</div>
-                  <div className="dt-row-sub">
-                    {task.name} <span style={{ margin: "0 6px" }}>•</span> {task.type}
+            <>
+              {visibleTasks.map((task) => (
+                <div
+                  key={task._id || task.id || `${task.name}-${task.date}`}
+                  className="dt-row"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleEdit(task)}
+                  onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && handleEdit(task)}
+                >
+                  <div className="dt-avatar">{(task.person || task.name || "?").charAt(0)}</div>
+                  <div className="dt-row-body">
+                    <div className="dt-row-name">{task.person || "No recipient"}</div>
+                    <div className="dt-row-sub">
+                      {task.name} <span style={{ margin: "0 6px" }}>•</span> {task.type}
+                    </div>
+                  </div>
+                  <div className="dt-row-meta">
+                    <StatusBadge status={getTaskStageKey(task)} colors={colors} />
+                    <span className="dt-row-date">{formatTaskDate(task.date)}</span>
                   </div>
                 </div>
-                <div className="dt-row-meta">
-                  <StatusBadge status={getTaskStageKey(task)} colors={colors} />
-                  <span className="dt-row-date">{formatTaskDate(task.date)}</span>
-                </div>
-              </div>
-            ))
+              ))}
+              {loadingMore &&
+                Array.from({ length: 2 }).map((_, i) => <TaskRowSkeleton key={`more-${i}`} />)}
+            </>
           )}
 
           {hasMore && !loading && (
