@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useContext, useRef } from 'react';
 import { AuthContext } from "../contexts/AuthContext";
+import { getOrgRoles } from '../services/orgRoles';
 import {
   Box, Paper, Typography, TextField, Button, Select, MenuItem,
   FormControl, InputLabel, Table, TableBody, TableCell, TableContainer,
@@ -45,7 +46,6 @@ let globalUsersData = null;
 let globalDataLoaded = false;
 let globalDataTimestamp = null;
 let globalOrgFilter = null;
-const globalRolesCache = {};
 
 export default function AdminDashboard() {
   const theme = useTheme();
@@ -76,7 +76,7 @@ export default function AdminDashboard() {
   const [selectedRole, setSelectedRole] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState(0);
-  const [loading, setLoading] = useState(!globalDataLoaded);
+  const [, setLoading] = useState(!globalDataLoaded);
 
   const [, setRolesLoading] = useState(false);
   const [users, setUsers] = useState(globalUsersData || []);
@@ -215,28 +215,30 @@ export default function AdminDashboard() {
     return { users: transformed, total: data.total ?? transformed.length };
   }, [API_BASE_URL, authFetch]);
 
+  // Roles now come from the Organizations table (roles column), not from the users' roles
   const fetchRoles = useCallback(async (org, force = false) => {
-    if (!force) {
-      const c = globalRolesCache[org];
-      if (c && Date.now() - c.timestamp < 300000) { setOrganizationRoles(c.roles); return; }
-    }
     setRolesLoading(true);
     try {
-      const res = await authFetch(
-        `${API_BASE_URL}/admin/roles/distinct?organization=${encodeURIComponent(org)}`,
-        { method: 'GET', headers: { 'Content-Type': 'application/json' } }
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-      const roles = data.roles || [];
-      globalRolesCache[org] = { roles, timestamp: Date.now() };
-      if (mountedRef.current) setOrganizationRoles(roles);
+      // Supreme admins can view any org (looked up by name); admins use their own org_id
+      const orgId = isSupremeAdmin ? organizations.find(o => o.name === org)?.id : currentUser?.org_id;
+      if (!orgId) return; // organizations list not loaded yet
+      const roles = await getOrgRoles(orgId, { force });
+      if (mountedRef.current) {
+        setOrganizationRoles(
+          roles.map(r => ({ ...r, count: 0, is_system: false, color: getRoleColor(r.name) }))
+        );
+      }
     } catch (e) {
       console.error('fetchRoles error', e);
     } finally {
       if (mountedRef.current) setRolesLoading(false);
     }
-  }, [API_BASE_URL, authFetch]);
+  }, [isSupremeAdmin, organizations, currentUser?.org_id]); // eslint-disable-line
+
+  // Reload the roles when the org changes or the org list arrives
+  useEffect(() => {
+    if (selectedOrg && (!isSupremeAdmin || organizations.length)) fetchRoles(selectedOrg, true);
+  }, [selectedOrg, organizations, isSupremeAdmin, currentUser?.org_id]); // eslint-disable-line
 
   const fetchActivityLog = useCallback(async () => {
     setActivityLoading(true);
@@ -302,7 +304,6 @@ export default function AdminDashboard() {
       setUsers(globalUsersData);
       setTotalUsers(globalUsersData.length);
       setLoading(false);
-      fetchRoles(org, false);
       if (isSupremeAdmin) fetchOrgs();
       return;
     }
@@ -324,7 +325,6 @@ export default function AdminDashboard() {
       .finally(() => {
         if (mountedRef.current) setLoading(false);
         fetchingRef.current = false;
-        fetchRoles(org, true);
         if (isSupremeAdmin) fetchOrgs();
       });
   }, [selectedOrg]);
@@ -997,31 +997,29 @@ export default function AdminDashboard() {
           )}
         </Box>)}
 
-        {/* Roles tab */}
+        {/* Roles tab: roles come from the Organizations table (roles column) */}
         {activeTab === 1 && (<Box padding={getResponsiveValue(1,2,3,3,3)}>
           <Alert severity="info" sx={{ mb: 3, boxShadow: 1, borderRadius: 2 }}>
-            <AlertTitle>{uniqueRoles.length} unique roles in this organization</AlertTitle>
+            <AlertTitle>{organizationRoles.length} roles in this organization</AlertTitle>
           </Alert>
           <Grid container spacing={cardSpacing}>
-            {uniqueRoles.map((role, i) => (
-              <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={role}>
+            {organizationRoles.map((role, i) => (
+              <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={role.name}>
                 <Card sx={cardStyles}>
                   <CardContent>
                     <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2, minWidth: 0 }}>
-                      <Avatar sx={{ bgcolor: roleCardColors[i % roleCardColors.length], width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 }, boxShadow: 2, flexShrink: 0 }}>{getRoleIcon(role)}</Avatar>
+                      <Avatar sx={{ bgcolor: roleCardColors[i % roleCardColors.length], width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 }, boxShadow: 2, flexShrink: 0 }}>{getRoleIcon(role.name)}</Avatar>
                       <Box sx={{ minWidth: 0 }}>
-                        <Typography variant="h6" fontWeight="bold" noWrap sx={{ overflowWrap: 'anywhere' }}>{getRoleDisplay(role)}</Typography>
-                        <Typography variant="body2" color="text.secondary">{roleStats[role]} {roleStats[role] === 1 ? 'person' : 'people'}</Typography>
+                        <Typography variant="h6" fontWeight="bold" noWrap sx={{ overflowWrap: 'anywhere' }}>{getRoleDisplay(role.name)}</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {roleStats[role.name] || 0} {(roleStats[role.name] || 0) === 1 ? 'person' : 'people'}
+                        </Typography>
                       </Box>
                     </Stack>
                     <Typography variant="body2" color="text.secondary">
-                      {role === 'admin' && 'Full system access'}
-                      {role === 'leader' && 'Group leaders managing cells'}
-                      {role === 'leaderAt12' && 'Leaders at 12 level'}
-                      {role === 'user' && 'Regular members'}
-                      {role === 'registrant' && 'Event check-in volunteers'}
-                      {!['admin','leader','leaderAt12','user','registrant'].includes(role) && `${role} role`}
+                      {role.description || `${role.name} role`}
                     </Typography>
+                    {role.is_default && <Chip size="small" label="Default for new signups" sx={{ mt: 1 }} />}
                   </CardContent>
                 </Card>
               </Grid>

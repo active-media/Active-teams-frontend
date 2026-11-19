@@ -16,7 +16,7 @@ import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
-
+import { getOrgRoles } from '../services/orgRoles';
 import {
   Home,
   Person,
@@ -170,6 +170,10 @@ export default function Sidebar({ mode, setMode }) {
   }, [setMode]);
 
   useEffect(() => {
+  if (user?.org_id) getOrgRoles(user.org_id).then(r => console.log('ROLES:', r)).catch(console.error);
+}, [user?.org_id]);
+
+  useEffect(() => {
   const orgId = user?.org_id;
     console.log('org_id:', user?.org_id);
   if (!orgId) return;
@@ -177,7 +181,9 @@ export default function Sidebar({ mode, setMode }) {
   try {
     const cached = localStorage.getItem(key);
     if (cached) setMenuConfig(hydrate(JSON.parse(cached)));
-  }catch{}
+  }catch(err){
+    console.error('Error loading cached menu config:', err);
+  }
 
   // Then fetch the copy in the background
   let cancelled = false;
