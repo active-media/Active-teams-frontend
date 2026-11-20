@@ -29,6 +29,8 @@ import {
   PhotoCamera as PhotoCameraIcon
 } from '@mui/icons-material';
 import NewUserModal from '../components/NewUserModal';
+import OrgRolesModal from '../components/OrgRolesModal';
+import { ALL_PAGES } from '../utils/pages';
 
 // ISO week id like "2026-W44" (matches the format the targets API uses)
 const getISOWeekId = (d = new Date()) => {
@@ -46,6 +48,14 @@ let globalUsersData = null;
 let globalDataLoaded = false;
 let globalDataTimestamp = null;
 let globalOrgFilter = null;
+
+// Pre-filled roles when a super admin creates a new organization (editable before saving)
+const STARTER_ROLES = [
+  { name: 'admin', description: 'Full access to everything',
+    pages: ALL_PAGES.map(p => p.path), is_default: false },
+  { name: 'member', description: 'Regular members',
+    pages: ['/', '/profile', '/daily-tasks'], is_default: true },
+];
 
 export default function AdminDashboard() {
   const theme = useTheme();
@@ -121,6 +131,7 @@ export default function AdminDashboard() {
   const [newRoleName, setNewRoleName] = useState('');
   const [creatingRole] = useState(false);
   const [organizationRoles, setOrganizationRoles] = useState([]);
+  const [rolesModalOrg, setRolesModalOrg] = useState(null);
   const [roleCreateError, setRoleCreateError] = useState('');
 
   const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
@@ -220,8 +231,11 @@ export default function AdminDashboard() {
     setRolesLoading(true);
     try {
       // Supreme admins can view any org (looked up by name); admins use their own org_id
-      const orgId = isSupremeAdmin ? organizations.find(o => o.name === org)?.id : currentUser?.org_id;
+      const orgId = isSupremeAdmin
+        ? organizations.find(o => o.name === org)?.id
+        : currentUser?.org_id;
       if (!orgId) return; // organizations list not loaded yet
+
       const roles = await getOrgRoles(orgId, { force });
       if (mountedRef.current) {
         setOrganizationRoles(
@@ -704,6 +718,10 @@ export default function AdminDashboard() {
       setShowOrgModal(false);
       setEditingOrg(null);
       await fetchOrgs();
+      // New org: set up its roles straight away
+      if (!id && saved?._id) {
+        setRolesModalOrg({ id: saved._id, name: saved.name || name, edit: false });
+      }
       if (body.logo_warning) alert(body.logo_warning);
     } catch (e) { setOrgFormErrors({ form: e.message }); }
     finally { setSavingOrg(false); }
@@ -812,6 +830,9 @@ export default function AdminDashboard() {
 
   // ===== render ────────────────
   const selectedOrgLogo = organizations.find(o => o.name === selectedOrg)?.logo || '';
+  const selectedOrgId = isSupremeAdmin
+    ? organizations.find(o => o.name === selectedOrg)?.id
+    : currentUser?.org_id;
   return (
     <Box sx={{ p: containerPadding, maxWidth: "1400px", margin: "0 auto", mt: getResponsiveValue(2,3,4,5,5), minHeight: "100vh", pb: getResponsiveValue(12,12,10,8,8) }}>
 
@@ -999,6 +1020,17 @@ export default function AdminDashboard() {
 
         {/* Roles tab: roles come from the Organizations table (roles column) */}
         {activeTab === 1 && (<Box padding={getResponsiveValue(1,2,3,3,3)}>
+          {isSupremeAdmin && (
+            <Button
+              variant="outlined"
+              startIcon={<EditIcon />}
+              disabled={!selectedOrgId}
+              onClick={() => setRolesModalOrg({ id: selectedOrgId, name: selectedOrg, edit: true })}
+              sx={{ mb: 2, borderRadius: 2 }}
+            >
+              Edit roles
+            </Button>
+          )}
           <Alert severity="info" sx={{ mb: 3, boxShadow: 1, borderRadius: 2 }}>
             <AlertTitle>{organizationRoles.length} roles in this organization</AlertTitle>
           </Alert>
@@ -1261,6 +1293,20 @@ export default function AdminDashboard() {
 
         {/* Modals */}
         <NewUserModal open={showAddUserModal} onClose={() => setShowAddUserModal(false)} onUserCreated={handleCreateUser} loading={creatingUser} />
+
+        {/* Roles setup / edit (super admin) */}
+        <OrgRolesModal
+          open={!!rolesModalOrg}
+          orgId={rolesModalOrg?.id}
+          orgName={rolesModalOrg?.name}
+          initialRoles={rolesModalOrg?.edit ? organizationRoles : STARTER_ROLES}
+          lockNames={!!rolesModalOrg?.edit}
+          roleCounts={roleStats}
+          onClose={(saved) => {
+            setRolesModalOrg(null);
+            if (saved) fetchRoles(selectedOrg, true);
+          }}
+        />
 
         {/* Supreme admin modal */}
         <Dialog open={showSupremeAdminModal} onClose={() => !addingSupremeAdmin && setShowSupremeAdminModal(false)} maxWidth="xs" fullWidth fullScreen={isXsDown} PaperProps={{ sx: { borderRadius: { xs: 0, sm: 2 } } }}>
