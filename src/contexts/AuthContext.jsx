@@ -303,7 +303,7 @@ export const AuthProvider = ({ children }) => {
    * Wraps fetch() with a Supabase session token.
    * Automatically retries once after a token refresh on 401.
    */
-  const authFetch = useCallback(async (url, options = {}) => {
+  const authFetch = useCallback(async (url, options = {}, { retryOnUnauthorized = true } = {}) => {
     const { data: { session } } = await supabase.auth.getSession();
     let token = session?.access_token;
 
@@ -322,7 +322,7 @@ export const AuthProvider = ({ children }) => {
 
     const res = await fetch(url, { ...options, headers: buildHeaders(token) });
 
-    if (res.status === 401) {
+    if (res.status === 401 && retryOnUnauthorized) {
       const { data: refreshed, error } = await supabase.auth.refreshSession();
       if (error || !refreshed?.session?.access_token) {
         const e = new Error('Authentication expired — please log in again');

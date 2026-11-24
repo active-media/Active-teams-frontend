@@ -13,16 +13,44 @@ export default function Home() {
 
   const [activeSlide, setActiveSlide] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const [isLoopReset, setIsLoopReset] = useState(false);
 
   useEffect(() => {
     if (isPaused) return undefined;
 
     const timer = window.setInterval(() => {
-      setActiveSlide((current) => (current + 1) % sections.length);
+      setActiveSlide((current) => {
+        const next = current + 1;
+        if (
+          next === sections.length &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ) {
+          return 0;
+        }
+        return next;
+      });
     }, 8000);
 
     return () => window.clearInterval(timer);
   }, [isPaused, sections.length]);
+
+  const handleTrackTransitionEnd = (event) => {
+    if (
+      event.target !== event.currentTarget ||
+      event.propertyName !== "transform" ||
+      activeSlide !== sections.length
+    ) {
+      return;
+    }
+
+    setIsLoopReset(true);
+    setActiveSlide(0);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => setIsLoopReset(false));
+    });
+  };
+
+  const indicatorSlide = activeSlide % sections.length;
 
   return (
     <main
@@ -39,16 +67,28 @@ export default function Home() {
     >
       <div
         className={styles.slideTrack}
-        style={{ transform: `translateX(-${activeSlide * 100}%)` }}
+        onTransitionEnd={handleTrackTransitionEnd}
+        style={{
+          transform: `translateX(-${activeSlide * 100}%)`,
+          transition: isLoopReset ? "none" : undefined,
+        }}
       >
         {sections.map((section, index) => (
           <div
             key={section.image}
             className={styles.slide}
-            style={{ backgroundImage: `url(${section.image})` }}
             aria-hidden={index !== activeSlide}
-          />
+          >
+            <img className={styles.slideImage} src={section.image} alt="" draggable="false" />
+          </div>
         ))}
+        <div
+          key="loop-clone"
+          className={styles.slide}
+          aria-hidden="true"
+        >
+          <img className={styles.slideImage} src={sections[0].image} alt="" draggable="false" />
+        </div>
       </div>
 
       <div className={styles.dots}>
@@ -56,10 +96,10 @@ export default function Home() {
           <button
             key={section.image}
             type="button"
-            className={`${styles.dot} ${index === activeSlide ? styles.dotActive : ""}`}
+            className={`${styles.dot} ${index === indicatorSlide ? styles.dotActive : ""}`}
             onClick={() => setActiveSlide(index)}
             aria-label={`Show slide ${index + 1}`}
-            aria-current={index === activeSlide ? "true" : undefined}
+            aria-current={index === indicatorSlide ? "true" : undefined}
           />
         ))}
       </div>
