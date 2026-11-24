@@ -364,6 +364,18 @@ const TaskGroupRow = React.memo(
     const { user, Tasks:tasks, totalCount, completedCount, incompleteCount } = group;
     const key = user.email || user.fullName;
 
+    // Mirrors the backend's is_overdue: not in a completed status and past due.
+    // Prefer the flag computed server-side (it uses the same normalised dates
+    // as the totals); fall back to a client-side check.
+    const COMPLETED_STATUSES = ["completed", "done", "closed", "finished"];
+    const overdueCount = tasks.filter((task) => {
+      if (typeof task.is_overdue === "boolean") return task.is_overdue;
+      if (COMPLETED_STATUSES.includes((task.status || "").toLowerCase()))
+        return false;
+      const due = task.followup_date ? new Date(task.followup_date) : null;
+      return due && !isNaN(due.getTime()) && due < new Date();
+    }).length;
+
     return (
       <Box
         sx={{
@@ -409,6 +421,7 @@ const TaskGroupRow = React.memo(
                 <Typography variant="caption" color="text.secondary">
                   {totalCount} task{totalCount !== 1 ? "s" : ""} captured •{" "}
                   {completedCount} completed • {incompleteCount} remaining
+                  {overdueCount > 0 && ` • ${overdueCount} overdue`}
                   {incompleteCount === 0 && totalCount > 0 && " — ALL DONE! ✓"}
                 </Typography>
               </Box>
@@ -619,6 +632,14 @@ const StatsDashboard = () => {
   // re-runs once the lock is released so filter changes are never dropped.
   const statsPendingRefreshRef = useRef(false);
   const cellsPendingRefreshRef = useRef(false);
+  // A period change that arrives mid-fetch is skipped by the lock above —
+  // remember it and re-run with the LATEST period once the in-flight request
+  // finishes, otherwise the dashboard keeps showing the previous period's
+  // totals under the new label (the "sometimes wrong" numbers).
+  const pendingStatsRef = useRef(false);
+  const pendingCellsRef = useRef(false);
+  const fetchStatsRef = useRef(null);
+  const fetchCellsRef = useRef(null);
 
   const canStartFetch = (lockRef, forceRefresh) => {
     if (lockRef.current && !forceRefresh) return false;
@@ -1416,6 +1437,10 @@ const StatsDashboard = () => {
     }
   }, [calendarEvents, formatDateForExcel, isDownloading]);
 
+  // One effect, not two. Both of these ran on mount with the same closure, and
+  // `fetchCalendarEvents` only bails out on `calendarLoading` as it stood in
+  // that render — neither saw the other's flag, so the same request went out
+  // twice every time the page loaded.
   useEffect(() => {
     fetchCalendarEvents();
   }, [fetchCalendarEvents]);
@@ -1978,10 +2003,12 @@ const StatsDashboard = () => {
         </Grid>
         <Grid item xs={6} sm={3} md={2.5}>
           <StatCard
-            title="Tasks Due"
+            title="Total Tasks"
             subtitle={getPeriodDisplayText(period)}
             color="secondary"
-            value={stats.overview?.tasks_due_in_period || 0}
+            /* Same source as the "All Tasks by Person (X people • Y total)"
+               header below, so the card and the list always agree. */
+            value={filteredTasks.length}
             icon={<Task />}
           />
         </Grid>

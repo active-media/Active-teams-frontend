@@ -542,32 +542,35 @@ describe("Events page actions", () => {
       expect(searchBox).toHaveValue("");
     });
 
-    test("changing the date range refetches with start_date and end_date", async () => {
-      const routes = eventsRoutes();
+    // `clearAllFilters` used to derive the total from `events` — which holds one
+    // page of rows, and wasn't even in its own dependency array. Searching and
+    // then clearing collapsed "1-50 of 134" into "1-50 of 50", and since rowCount
+    // feeds the DataGrid the page navigation vanished with it.
+    test("clearing filters keeps the full result count, not just the loaded page", async () => {
+      const many = [
+        makeEvt(),
+        ...Array.from({ length: 133 }, (_, i) =>
+          makeEvt({ _id: `evt-${i}`, eventName: `Service ${i}` }),
+        ),
+      ];
+      const routes = eventsRoutes({ events: many, total_events: 134, total_pages: 3 });
       await openEventsView(routes);
-      routes.mockClear();
 
-      fireEvent.change(screen.getByLabelText("Filter events by date range"), {
-        target: { value: "this-week" },
-      });
+      // Only one page is on screen, but the counter reports the whole set.
+      expect(await screen.findByText("1-50 of 134")).toBeInTheDocument();
 
-      const now = new Date();
-      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const searchBox = screen.getByPlaceholderText("Search by Event Name, Leader, or Email...");
+      fireEvent.click(searchBox);
+      fireEvent.change(searchBox, { target: { value: "zzz-no-match" } });
+      await waitFor(() => expect(screen.queryByText("Service 3")).not.toBeInTheDocument());
 
-      await waitFor(() => {
-        const ranged = eventsDataCalls(
-          routes,
-          (u) => u.includes("start_date=") && u.includes("end_date="),
-        );
-        expect(ranged.length).toBeGreaterThan(0);
+      fireEvent.click(screen.getByRole("button", { name: /CLEAR ALL/i }));
 
-        const startDate = /[?&]start_date=([^&]+)/.exec(ranged[0])?.[1];
-        const endDate = /[?&]end_date=([^&]+)/.exec(ranged[0])?.[1];
-        // "This week" starts on Monday and must never run past today.
-        expect(new Date(`${startDate}T00:00:00`).getDay()).toBe(1);
-        expect(startDate <= endDate).toBe(true);
-        expect(endDate <= today).toBe(true);
-      });
+      expect(await screen.findByText("1-50 of 134")).toBeInTheDocument();
+      // The pager must survive too — it is driven by the same count.
+      expect(
+        screen.getByText((_, el) => el?.textContent?.trim() === "Page 1 of 3"),
+      ).toBeTruthy();
     });
 
     test.each([

@@ -817,6 +817,10 @@ export const PeopleSection = () => {
             org: safeStr(data.organization || orgKey),
           });
 
+          // Remember which cache generation this payload came from so the poll
+          // below only re-downloads the full list when it actually changed.
+          window.globalCacheVersion = data?.cache_version ?? null;
+
           const mapped = (data?.cached_data || [])
             .map(mapRawPerson)
             .filter(Boolean);
@@ -828,52 +832,76 @@ export const PeopleSection = () => {
           if (!data.is_complete) {
             if (mapped.length > 0) {
               setAllPeople(mapped);
-              setLoading(false);
-              setBackgroundLoading(true);
-            } else {
-              setLoading(true);
-              setBackgroundLoading(false);
+              window.globalPeopleCache = mapped;
+              window.globalCacheTimestamp = Date.now();
+              window.globalPeopleCacheOrg = orgKey;
             }
+            // Poll every 3s until complete. /cache/people serialises all
+            // 17,737 people - 14.7 MB of JSON, 1.3 MB on the wire - while
+            // /cache/people/status is ~344 bytes and already reports
+            // is_complete and cache.version. Drive the loop from status and
+            // only re-download when the cache generation changed (plus a
+            // periodic catch-up). Re-downloading every tick was 20 full
+            // payloads per session, ~26 MB.
+            const CATCH_UP_EVERY = 5;
+            const MAX_POLL_ATTEMPTS = 20;
+            await new Promise((resolve) => {
+              let attempts = 0;
+              let lastVersion = window.globalCacheVersion ?? null;
 
-            let latest = mapped;
-            for (let attempt = 0; attempt < 60; attempt++) {
-              await new Promise((resolve) => setTimeout(resolve, 2000));
-              if (generation !== fetchGenerationRef.current) return latest;
-              try {
-                const pollRes = await authFetch(`${BACKEND_URL}/cache/people`);
-                if (!pollRes?.ok) continue;
-                const pollData = await pollRes.json();
-                if (!pollData?.success) continue;
+              const finish = (interval) => {
+                clearInterval(interval);
+                resolve();
+              };
 
-                const pollMapped = (pollData.cached_data || [])
-                  .map(mapRawPerson)
-                  .filter(Boolean);
+              const interval = setInterval(async () => {
+                attempts++;
+                try {
+                  const statusRes = await authFetch(
+                    `${BACKEND_URL}/cache/people/status`,
+                  );
+                  if (!statusRes?.ok) return;
+                  const status = await statusRes.json();
 
-                if (generation !== fetchGenerationRef.current) return latest;
+                  const isComplete = status?.is_complete ?? false;
+                  const version = status?.cache?.version ?? null;
+                  const versionChanged =
+                    version != null && version !== lastVersion;
 
-                if (pollMapped.length > 0) {
-                  latest = pollMapped;
-                  setAllPeople(pollMapped);
-                  setLoading(false);
-                  setBackgroundLoading(true);
+                  if (
+                    isComplete ||
+                    versionChanged ||
+                    attempts % CATCH_UP_EVERY === 0
+                  ) {
+                    const pollRes = await authFetch(
+                      `${BACKEND_URL}/cache/people`,
+                    );
+                    if (pollRes?.ok) {
+                      const pollData = await pollRes.json();
+                      const pollMapped = (pollData?.cached_data || [])
+                        .map(mapRawPerson)
+                        .filter(Boolean);
+                      if (pollMapped.length > 0) {
+                        window.globalCacheVersion =
+                          pollData?.cache_version ?? version;
+                        lastVersion = window.globalCacheVersion;
+                        setAllPeople(pollMapped);
+                        window.globalPeopleCache = pollMapped;
+                        window.globalCacheTimestamp = Date.now();
+                        window.globalPeopleCacheOrg = orgKey;
+                      }
+                    }
+                  }
+
+                  if (isComplete || attempts >= MAX_POLL_ATTEMPTS) {
+                    finish(interval);
+                  }
+                } catch {
+                  if (attempts >= MAX_POLL_ATTEMPTS) finish(interval);
                 }
-                setCacheInfo({
-                  source: safeStr(pollData.source),
-                  org: safeStr(pollData.organization || orgKey),
-                });
-
-                if (pollData.is_complete) {
-                  window.globalPeopleCache = pollMapped;
-                  window.globalCacheTimestamp = Date.now();
-                  window.globalPeopleCacheOrg = orgKey;
-                  return pollMapped;
-                }
-              } catch {
-                // transient error — keep polling
-              }
-            }
-
-            return latest;
+              }, 3000);
+            });
+            return window.globalPeopleCache || [];
           }
           // ── END NEW ──
 

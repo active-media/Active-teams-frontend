@@ -180,11 +180,19 @@ const isTaskCompleted = (task) => {
   return COMPLETED_STAGES.includes(stage);
 };
 
+const parseTaskDate = (value) => {
+  const isNaiveIsoDateTime =
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T/.test(value) &&
+    !/(Z|[+-]\d{2}:?\d{2})$/i.test(value);
+  return new Date(isNaiveIsoDateTime ? `${value}Z` : value);
+};
+
 const isTaskOverdue = (task) => {
   if (isTaskCompleted(task)) return false;
   const rawDate = task?.followup_date || task?.date;
   if (!rawDate) return false;
-  const due = new Date(rawDate);
+  const due = parseTaskDate(rawDate);
   return !Number.isNaN(due.getTime()) && due.getTime() < Date.now();
 };
 
@@ -1281,47 +1289,57 @@ export default function DailyTasks() {
     if (peoplePollRef.current) clearInterval(peoplePollRef.current);
     let attempts = 0;
     const MAX_ATTEMPTS = 90; // 3 minutes at 2s intervals
+    const CATCH_UP_EVERY = 10;
     let pollInFlight = false;
+    let lastVersion = window.globalCacheVersion ?? null;
+
+    const stopPolling = () => {
+      clearInterval(peoplePollRef.current);
+      peoplePollRef.current = null;
+      setIsLoadingPeople(false);
+    };
 
     peoplePollRef.current = setInterval(async () => {
       attempts += 1;
       if (pollInFlight) return;
       pollInFlight = true;
       try {
-        const res = await authFetch(`${API_URL}/cache/people`);
-        pollInFlight = false;
-        if (res?.ok) {
-          const data = await res.json();
-          const mapped = applyPeople(data?.cached_data || data?.people || []);
+        const statusRes = await authFetch(`${API_URL}/cache/people/status`);
+        if (!statusRes?.ok) throw new Error("Failed to fetch people cache status");
+        const status = await statusRes.json();
+        const isComplete = status?.is_complete ?? false;
+        const version = status?.cache?.version ?? null;
+        const versionChanged = version != null && version !== lastVersion;
+        const shouldDownload =
+          isComplete || versionChanged || attempts % CATCH_UP_EVERY === 0;
+        let mapped = [];
 
-          if (data?.is_complete !== false) {
-            clearInterval(peoplePollRef.current);
-            peoplePollRef.current = null;
-            setIsLoadingPeople(false);
-
-            // Last-resort fallback so recipient search still has data.
-            if (mapped.length === 0) {
-              await fetchMinimalPeopleFallback();
-            }
-            return;
+        if (shouldDownload) {
+          const dataRes = await authFetch(`${API_URL}/cache/people`);
+          if (!dataRes?.ok) throw new Error("Failed to fetch people cache");
+          const data = await dataRes.json();
+          mapped = applyPeople(data?.cached_data || data?.people || [], {
+            isPartial: data?.is_complete === false,
+          });
+          if (mapped.length > 0) {
+            window.globalCacheVersion = data?.cache_version ?? version;
+            lastVersion = window.globalCacheVersion;
           }
+        }
 
-          // Dropdowns are empty — serve the fast fallback while the heavy
-          // cache load finishes in the background.
-          if (mapped.length === 0 && attempts <= 2) {
-            fetchMinimalPeopleFallback();
-          }
+        if (isComplete) {
+          stopPolling();
+          if (mapped.length === 0) await fetchMinimalPeopleFallback();
           return;
         }
       } catch (err) {
-        pollInFlight = false;
         console.error("People cache poll failed:", err.message);
+      } finally {
+        pollInFlight = false;
       }
 
       if (attempts >= MAX_ATTEMPTS) {
-        clearInterval(peoplePollRef.current);
-        peoplePollRef.current = null;
-        setIsLoadingPeople(false);
+        stopPolling();
         await fetchMinimalPeopleFallback();
       }
     }, 2000);
@@ -1361,7 +1379,10 @@ export default function DailyTasks() {
         const res = await authFetch(`${API_URL}/cache/people`);
         if (!res?.ok) throw new Error("Failed to fetch people cache");
         const data = await res.json();
-        const mapped = applyPeople(data?.cached_data || data?.people || []);
+        window.globalCacheVersion = data?.cache_version ?? null;
+        const mapped = applyPeople(data?.cached_data || data?.people || [], {
+          isPartial: data?.is_complete === false,
+        });
 
         if (mapped.length > 0 && data?.is_complete !== false) {
           setIsLoadingPeople(false);
