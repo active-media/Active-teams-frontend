@@ -3,20 +3,6 @@ import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, F
 } from '@mui/material';
 import { ALL_PAGES } from '../utils/pages';
 import { saveOrgRoles } from '../services/orgRoles';
-
-/**
- * Lets a super admin create/edit an organization's roles:
- *  - name + description
- *  - which pages the role can access
- *  - which ONE role is the default for new signups
- *
- * Props:
- *  open, orgId, orgName
- *  initialRoles  - roles currently saved for the org ([] for a brand-new org)
- *  roleCounts    - { roleName: numberOfUsers }, used to warn before removing a role in use
- *  lockNames     - true when editing saved roles, false for a brand-new org's starter roles
- *  onClose(saved: boolean)
- */
 export default function OrgRolesModal({
   open, orgId, orgName, initialRoles = [], roleCounts = {}, lockNames = true, onClose,
 }) {
@@ -27,8 +13,7 @@ export default function OrgRolesModal({
   // Reset the form every time the modal opens
   useEffect(() => {
     if (!open) return;
-    setRoles(
-      initialRoles.map(r => ({
+    setRoles( initialRoles.map(r => ({
         name: r.name,
         description: r.description || '',
         pages: r.pages || [],
@@ -37,20 +22,10 @@ export default function OrgRolesModal({
       }))
     );
     setError('');
-  }, [open]); // eslint-disable-line
-
-  const update = (i, patch) =>
-    setRoles(r => r.map((x, j) => (j === i ? { ...x, ...patch } : x)));
-
-  const setDefault = (i) =>
-    setRoles(r => r.map((x, j) => ({ ...x, is_default: j === i })));
-
-  const addRole = () =>
-    setRoles(r => [
-      ...r,
-      { name: '', description: '', pages: ['/', '/profile'], is_default: r.length === 0 },
-    ]);
-
+  }, [open, initialRoles, lockNames]);
+  const update = (i, patch) => setRoles(r => r.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const setDefault = (i) => setRoles(r => r.map((x, j) => ({ ...x, is_default: j === i })));
+  const addRole = () => setRoles(r => [...r, { name: '', description: '', pages: ['/', '/profile'], is_default: r.length === 0 }]);
   const removeRole = (i) => {
     const role = roles[i];
     const inUse = roleCounts[role.name] || 0;
@@ -107,37 +82,12 @@ export default function OrgRolesModal({
         </Typography>
 
         {roles.map((role, i) => (
-          <Box
-            key={i}
-            sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 2, mb: 2 }}
-          >
+          <Box key={i} sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 2, mb: 2 }}>
             <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-              <TextField
-                label="Role name"
-                size="small"
-                value={role.name}
-                disabled={role._existing}
-                helperText={role._existing ? 'Name is locked (users have this role)' : ' '}
-                onChange={e => update(i, { name: e.target.value })}
-              />
-              <TextField
-                label="Description"
-                size="small"
-                sx={{ flex: 1, minWidth: 200 }}
-                value={role.description}
-                helperText=" "
-                onChange={e => update(i, { description: e.target.value })}
-              />
-              <FormControlLabel
-                label="Default for new signups"
-                control={
-                  <Radio
-                    size="small"
-                    checked={!!role.is_default}
-                    onChange={() => setDefault(i)}
-                  />
-                }
-              />
+              <TextField label="Role name" size="small" value={role.name} disabled={role._existing} helperText={role._existing ? 'Name is locked (users have this role)' : ' '} onChange={e => update(i, { name: e.target.value })}/>
+              <TextField label="Description" size="small" sx={{ flex: 1, minWidth: 200 }} value={role.description} helperText=" " onChange={e => update(i, { description: e.target.value })}/>
+              <FormControlLabel label="Default for new signups" control={
+                <Radio size="small" checked={!!role.is_default} onChange={() => setDefault(i)}/>}/>
             </Box>
 
             <Typography variant="caption" display="block" sx={{ mt: 1 }}>
@@ -145,28 +95,16 @@ export default function OrgRolesModal({
             </Typography>
             <FormGroup row>
               {ALL_PAGES.map(p => (
-                <FormControlLabel
-                  key={p.path}
-                  label={p.label}
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={role.pages.includes(p.path)}
-                      onChange={() => togglePage(i, p.path)}
-                    />
+                <FormControlLabel key={p.path} label={p.label} control={
+                    <Checkbox size="small" checked={role.pages.includes(p.path)} onChange={() => togglePage(i, p.path)}/>
                   }
                 />
               ))}
             </FormGroup>
-
-            <Button color="error" size="small" onClick={() => removeRole(i)}>
-              Remove role
-            </Button>
+            <Button color="error" size="small" onClick={() => removeRole(i)}>Remove role</Button>
           </Box>
         ))}
-
         <Button onClick={addRole}>+ Add role</Button>
-
         {error && (
           <Typography color="error" sx={{ mt: 2 }}>
             {error}
@@ -180,5 +118,5 @@ export default function OrgRolesModal({
         </Button>
       </DialogActions>
     </Dialog>
-  );
+  )
 }

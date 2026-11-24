@@ -86,9 +86,10 @@ export default function AdminDashboard() {
   const [selectedRole, setSelectedRole] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState(0);
-  const [, setLoading] = useState(!globalDataLoaded);
+  const [loading, setLoading] = useState(!globalDataLoaded);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const [, setRolesLoading] = useState(false);
+  const [rolesLoading, setRolesLoading] = useState(false);
   const [users, setUsers] = useState(globalUsersData || []);
   const [totalUsers, setTotalUsers] = useState(globalUsersData?.length || 0);
   const [activityLog, setActivityLog] = useState([]);
@@ -109,7 +110,7 @@ export default function AdminDashboard() {
     return globalOrgFilter || "Active Church";
   });
   const [orgAnchorEl, setOrgAnchorEl] = useState(null);
-  const [, setLoadingOrgs] = useState(false);
+  const [loadingOrgs, setLoadingOrgs] = useState(false);
   const [showSupremeAdminModal, setShowSupremeAdminModal] = useState(false);
   const [supremeAdminEmail, setSupremeAdminEmail] = useState('');
   const [addingSupremeAdmin, setAddingSupremeAdmin] = useState(false);
@@ -127,12 +128,8 @@ export default function AdminDashboard() {
   const [deletingOrg, setDeletingOrg] = useState(false);
   const [page, setPage] = useState(0);
   const [rowsPerPage] = useState(500);
-  const [showCreateRoleModal, setShowCreateRoleModal] = useState(false);
-  const [newRoleName, setNewRoleName] = useState('');
-  const [creatingRole] = useState(false);
   const [organizationRoles, setOrganizationRoles] = useState([]);
   const [rolesModalOrg, setRolesModalOrg] = useState(null);
-  const [roleCreateError, setRoleCreateError] = useState('');
 
   const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
   const fetchingRef = useRef(false);
@@ -373,18 +370,20 @@ export default function AdminDashboard() {
   const handleManualRefresh = useCallback(async () => {
     globalDataLoaded = false;
     fetchingRef.current = false;
+    setRefreshing(true);
     setLoading(true);
     try {
-      const { users: u, total } = await fetchUsers(selectedOrg);
+      const tasks = [fetchUsers(selectedOrg), fetchRoles(selectedOrg, true)];
+      if (isSupremeAdmin) tasks.push(fetchOrgs());
+      if (activeTab === 2) tasks.push(fetchActivityLog());
+      const [{ users: u, total }] = await Promise.all(tasks);
       if (mountedRef.current) { setUsers(u); setTotalUsers(total); }
-      if (isSupremeAdmin) fetchOrgs();
-      if (activeTab === 2) await fetchActivityLog();
     } catch (e) {
       console.error(e);
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current) { setLoading(false); setRefreshing(false); }
     }
-  }, [fetchUsers, fetchOrgs, fetchActivityLog, selectedOrg, isSupremeAdmin, activeTab]);
+  }, [fetchUsers, fetchOrgs, fetchActivityLog, fetchRoles, selectedOrg, isSupremeAdmin, activeTab]);
 
   // ─── CRUD handlers ────────────────
   const handleCreateUser = async (userData) => {
@@ -436,13 +435,6 @@ export default function AdminDashboard() {
     await handleRoleChange(user.id, 'admin');
   };
 
-  // A brand-new org may have no 'admin' role yet, so always offer it
-  const rolesForModal = useMemo(() => (
-    organizationRoles.some(r => r.name === 'admin')
-      ? organizationRoles
-      : [{ name: 'admin', count: 0, is_system: true, color: '#f44336' }, ...organizationRoles]
-  ), [organizationRoles]);
-
   const handleDeleteUser = async () => {
     if (!selectedUser) return;
     setDeletingUser(true);
@@ -456,19 +448,6 @@ export default function AdminDashboard() {
     } catch (e) { alert(e.message); }
     finally { setDeletingUser(false); }
   };
-
-  const handleCreateRole = () => {
-    if (!selectedOrg || selectedOrg === "Active Church") { setRoleCreateError('Cannot create custom roles for Active Church'); return; }
-    if (!newRoleName.trim()) { setRoleCreateError('Role name is required'); return; }
-    const fmt = newRoleName.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-    if (!fmt) { setRoleCreateError('Invalid role name'); return; }
-    if (organizationRoles.some(r => r.name === fmt)) { setRoleCreateError(`Role "${fmt}" already exists`); return; }
-    setOrganizationRoles(prev => [...prev, { name: fmt, count: 0, is_system: false, color: getRoleColor(fmt) }]);
-    addActivityLog('ROLE_CREATED', `Created role: ${fmt} for ${selectedOrg}`);
-    setShowCreateRoleModal(false); setNewRoleName(''); setRoleCreateError('');
-  };
-
-  // Super admin shortcut: promote a user to admin of the org currently being viewed
 
   // ===== TARGETS TAB =====
   const [selectedWeek, setSelectedWeek] = useState(() => getISOWeekId());
@@ -829,6 +808,18 @@ export default function AdminDashboard() {
   };
 
   // ===== render ────────────────
+  // Options for the "Change User Role" dropdown: the org's roles from the Organizations table.
+  // Matching ignores case so a user with role "user" selects the org's "User" role;
+  // a role the org no longer defines is still listed so the dropdown stays valid.
+  const currentRoleName = selectedUser?.role || '';
+  const matchedRole = organizationRoles.find(r => r.name.toLowerCase() === currentRoleName.toLowerCase());
+  const roleOptions = organizationRoles.map(r => r.name);
+  if (currentRoleName && !matchedRole) roleOptions.push(currentRoleName);
+  const roleSelectValue = matchedRole ? matchedRole.name : currentRoleName;
+
+  // Roles tab shows a loader while roles load (super admins also wait for the org list, which they are looked up from)
+  const rolesTabLoading = rolesLoading || (isSupremeAdmin && loadingOrgs);
+
   const selectedOrgLogo = organizations.find(o => o.name === selectedOrg)?.logo || '';
   const selectedOrgId = isSupremeAdmin
     ? organizations.find(o => o.name === selectedOrg)?.id
@@ -939,7 +930,7 @@ export default function AdminDashboard() {
             <Tab value={4} label="TARGETS" sx={{ fontWeight: 600 }} />
           </Tabs>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-            <Button variant="outlined" startIcon={<Refresh />} onClick={handleManualRefresh} sx={{ boxShadow: 1, borderRadius: 2, height: 40, flex: { xs: '1 1 auto', sm: 'none' } }} size={getResponsiveValue("small","small","medium","medium","medium")}>Refresh</Button>
+            <Button variant="outlined" startIcon={refreshing ? <CircularProgress size={18} /> : <Refresh />} onClick={handleManualRefresh} disabled={refreshing} sx={{ boxShadow: 1, borderRadius: 2, height: 40, flex: { xs: '1 1 auto', sm: 'none' } }} size={getResponsiveValue("small","small","medium","medium","medium")}>{refreshing ? 'Refreshing...' : 'Refresh'}</Button>
             {isSupremeAdmin && <Button variant="contained" startIcon={<AdminPanelSettings />} onClick={() => setShowSupremeAdminModal(true)} sx={{ boxShadow: 1, borderRadius: 2, height: 40, flex: { xs: '1 1 auto', sm: 'none' } }} size={getResponsiveValue("small","small","medium","medium","medium")}>Add Supreme</Button>}
           </Box>
         </Box>
@@ -959,7 +950,12 @@ export default function AdminDashboard() {
             </FormControl>
           </Stack>
 
-          {filteredUsers.length === 0 ? (
+          {loading ? (
+            <Box sx={{ textAlign: 'center', py: 8 }}>
+              <CircularProgress />
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Loading users...</Typography>
+            </Box>
+          ) : filteredUsers.length === 0 ? (
             <Box sx={{ textAlign: 'center', py: 8 }}>
               <People sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
               <Typography variant="h6" color="text.secondary">No users found</Typography>
@@ -1031,8 +1027,19 @@ export default function AdminDashboard() {
               Edit roles
             </Button>
           )}
-          <Alert severity="info" sx={{ mb: 3, boxShadow: 1, borderRadius: 2 }}>
-            <AlertTitle>{organizationRoles.length} roles in this organization</AlertTitle>
+          {rolesTabLoading ? (
+            <Box sx={{ textAlign: 'center', py: 8 }}>
+              <CircularProgress />
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Loading roles...</Typography>
+            </Box>
+          ) : (
+            <>
+          <Alert severity={organizationRoles.length ? 'info' : 'warning'} sx={{ mb: 3, boxShadow: 1, borderRadius: 2 }}>
+            <AlertTitle>
+              {organizationRoles.length
+                ? `${organizationRoles.length} roles in this organization`
+                : 'No roles have been set up for this organization yet'}
+            </AlertTitle>
           </Alert>
           <Grid container spacing={cardSpacing}>
             {organizationRoles.map((role, i) => (
@@ -1057,6 +1064,8 @@ export default function AdminDashboard() {
               </Grid>
             ))}
           </Grid>
+            </>
+          )}
         </Box>)}
 
         {/* Activity tab */}
@@ -1147,7 +1156,16 @@ export default function AdminDashboard() {
                 {organizations.length === 0 && (
                   <Grid size={12}>
                     <Box sx={{ textAlign: "center", py: 8 }}>
-                      <BusinessIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} /> <Typography variant="h6" color="text.secondary">No organizations found</Typography>
+                      {loadingOrgs ? (
+                        <>
+                          <CircularProgress />
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Loading organizations...</Typography>
+                        </>
+                      ) : (
+                        <>
+                          <BusinessIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} /> <Typography variant="h6" color="text.secondary">No organizations found</Typography>
+                        </>
+                      )}
                     </Box>
                   </Grid>
                 )}
@@ -1445,53 +1463,30 @@ export default function AdminDashboard() {
               <>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1, overflowWrap: 'anywhere' }}>User: <strong>{selectedUser.name}</strong></Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>Current: <Chip label={selectedUser.role} size="small" /></Typography>
-                {selectedOrg?.trim().toLowerCase() === 'active church' ? (
+                {organizationRoles.length === 0 ? (
+                  <Alert severity="info">
+                    No roles have been set up for this organization yet. A super admin can add them
+                    under Roles &amp; Permissions → Edit roles.
+                  </Alert>
+                ) : (
                   <>
                     <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 2 }}>Select New Role:</Typography>
                     <FormControl fullWidth>
-                      <Select value={selectedUser.role} onChange={e => handleRoleChange(selectedUser.id, e.target.value)} disabled={updatingRole}>
-                        {['admin','leader','leaderAt12','user','registrant'].map(r => <MenuItem key={r} value={r}>{getRoleDisplay(r)}</MenuItem>)}
+                      <Select
+                        value={roleSelectValue}
+                        onChange={e => handleRoleChange(selectedUser.id, e.target.value)}
+                        disabled={updatingRole}
+                      >
+                        {roleOptions.map(r => <MenuItem key={r} value={r}>{getRoleDisplay(r)}</MenuItem>)}
                       </Select>
                     </FormControl>
                   </>
-                  )
-                  : (
-                    <>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, gap: 1, flexWrap: 'wrap' }}>
-                        <Typography variant="subtitle2" fontWeight="bold">Available Roles:</Typography>
-                        <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => { setShowRoleModal(false); setShowCreateRoleModal(true); }} sx={{ borderRadius: 2 }}>ADD ROLE</Button>
-                      </Box>
-                      <Stack spacing={1} sx={{ maxHeight: { xs: 'none', sm: 400 }, overflowY: { xs: 'visible', sm: 'auto' }, pr: 1 }}>
-                        {rolesForModal.map(role => <RoleOption key={role.name} role={role} isSelected={selectedUser?.role === role.name} onSelect={() => handleRoleChange(selectedUser.id, role.name)} />)}
-                      </Stack>
-                    </>
-                  )}
+                )}
               </>
             )}
           </DialogContent>
           <DialogActions sx={{ p: 2 }}>
             <Button onClick={() => setShowRoleModal(false)} disabled={updatingRole} variant="outlined" sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>CANCEL</Button>
-          </DialogActions>
-        </Dialog>
-
-        {/* Create role modal */}
-        <Dialog open={showCreateRoleModal} onClose={() => !creatingRole && setShowCreateRoleModal(false)} maxWidth="xs" fullWidth fullScreen={isXsDown} PaperProps={{ sx: { borderRadius: { xs: 0, sm: 2 } } }}>
-          <DialogTitle><Typography variant="h6" fontWeight="bold">Create New Role</Typography></DialogTitle>
-          <DialogContent>
-            <Box sx={{ mt: 2 }}>
-              <TextField fullWidth label="Role Name" value={newRoleName} onChange={e => { setNewRoleName(e.target.value); setRoleCreateError(''); }} placeholder="e.g., Welcome Team, Sound Tech" error={!!roleCreateError} helperText={roleCreateError} disabled={creatingRole} autoFocus />
-              <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
-                <Typography variant="caption" color="text.secondary" display="block" gutterBottom>Preview:</Typography>
-                <Chip label={newRoleName.trim() || 'New Role'} color={getRoleColor(newRoleName)} icon={getRoleIcon(newRoleName)} sx={{ maxWidth: '100%' }} />
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1, overflowWrap: 'anywhere' }}>
-                  Stored as: <strong>{newRoleName.trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'') || 'new_role'}</strong>
-                </Typography>
-              </Box>
-            </Box>
-          </DialogContent>
-          <DialogActions sx={{ p: 2, gap: 1, flexWrap: 'wrap', '& > :not(style) ~ :not(style)': { marginLeft: 0 } }}>
-            <Button onClick={() => { setShowCreateRoleModal(false); setNewRoleName(''); setRoleCreateError(''); }} variant="outlined" disabled={creatingRole} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Cancel</Button>
-            <Button variant="contained" onClick={handleCreateRole} disabled={creatingRole || !newRoleName.trim()} startIcon={<CheckIcon />} sx={{ flex: { xs: '1 1 100%', sm: 'none' } }}>Create Role</Button>
           </DialogActions>
         </Dialog>
 
@@ -1517,23 +1512,3 @@ export default function AdminDashboard() {
     </Box>
   );
 }
-
-// RoleOption component
-const RoleOption = ({ role, onSelect, isSelected }) => (
-  <Paper variant="outlined" sx={{
-    p: 2, cursor: 'pointer',
-    border: isSelected ? 2 : 1,
-    borderColor: isSelected ? 'primary.main' : 'divider',
-    borderRadius: 1, transition: 'all 0.2s',
-    '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover', transform: 'translateY(-1px)', boxShadow: 1 }
-  }} onClick={onSelect}>
-    <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
-        <Avatar sx={{ width: 24, height: 24, bgcolor: role.color || '#9c27b0', flexShrink: 0 }}><PersonIcon /></Avatar>
-        <Typography variant="body1" fontWeight="medium" noWrap sx={{ overflowWrap: 'anywhere' }}>{role.name}</Typography>
-        {!role.is_system && <Chip label="custom" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.625rem', flexShrink: 0 }} />}
-      </Stack>
-      <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>{role.count} {role.count === 1 ? 'person' : 'people'}</Typography>
-    </Stack>
-  </Paper>
-);
