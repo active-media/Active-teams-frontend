@@ -4679,7 +4679,8 @@ const AttendanceModal = ({
                           const nameParts = (person.fullName || person.full_name || "").split(" ");
                           const firstName = nameParts[0] || "";
                           const lastName = nameParts.slice(1).join(" ") || "";
-                          console.log("Rendering row for person:", person, "Ticket info:", ticketInfo, "Financials:", financials);
+
+                          console.log("PRICE TIERS", eventPriceTiers)
 
                           return (
                             <tr key={person.id}>
@@ -4710,12 +4711,15 @@ const AttendanceModal = ({
                                     <div style={styles.priceTierDropdown}>
                                       <button
                                         style={styles.priceTierButton}
-                                        onClick={() =>
+                                        onClick={() =>{
+
+                                          // alert("??");
                                           setOpenPriceTierDropdown(
                                             openPriceTierDropdown === person.id
                                               ? null
                                               : person.id,
                                           )
+                                        }
                                         }
                                       >
                                         <span
