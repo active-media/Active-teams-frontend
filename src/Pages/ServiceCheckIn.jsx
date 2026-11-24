@@ -310,7 +310,7 @@ function ServiceCheckIn() {
   });
 
   const theme = useTheme();
-  const isXs = useMediaQuery(theme.breakpoints.down("xs"));
+  const isXs = useMediaQuery("(max-width: 480px)");
   const isSm = useMediaQuery(theme.breakpoints.down("sm"));
   const isMd = useMediaQuery(theme.breakpoints.down("md"));
   const isLg = useMediaQuery(theme.breakpoints.down("lg"));
@@ -1992,6 +1992,15 @@ const mainColumns = useMemo(() => {
               </Box>
             )}
           </Box>
+          {isXs && (
+            <Typography noWrap sx={{ fontSize: "0.68rem", color: mute, fontFamily: BODY }}>
+              {[params.row.leader1 && `L1 ${params.row.leader1}`,
+                params.row.leader12 && `L12 ${params.row.leader12}`,
+                params.row.leader144 && `L144 ${params.row.leader144}`]
+                .filter(Boolean)
+                .join(" · ") || "No leader details"}
+            </Typography>
+          )}
           {!isSm && (
             <Typography noWrap sx={{ fontSize: "0.75rem", color: mute, fontFamily: BODY }}>
               {params.row.email || "—"}
@@ -2004,14 +2013,14 @@ const mainColumns = useMemo(() => {
       field: "phone", headerName: "Phone", flex: 0.7, minWidth: 110, sortable: true,
       renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.number || "—"}</Typography>,
     }] : []),
-    {
+    ...(!isXs ? [{
       field: "leader1", headerName: isSm ? "L@1" : "Leader @1", flex: 0.6, minWidth: isSm ? 48 : 100, sortable: true,
       renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.leader1 || "—"}</Typography>,
-    },
-    {
+    }] : []),
+    ...(!isXs ? [{
       field: "leader12", headerName: isSm ? "L@12" : "Leader @12", flex: 0.6, minWidth: isSm ? 52 : 100, sortable: true,
       renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.leader12 || "—"}</Typography>,
-    },
+    }] : []),
     ...(!isXs ? [{
       field: "leader144", headerName: isSm ? "L@144" : "Leader @144", flex: 0.6, minWidth: isSm ? 56 : 104, sortable: true,
       renderCell: (p) => <Typography noWrap sx={textSx}>{p.row.leader144 || "—"}</Typography>,
@@ -2106,7 +2115,7 @@ const mainColumns = useMemo(() => {
         width: "100%",
         maxWidth: 1000,
         mx: "auto",
-        mt: 6,
+        mt: { xs: 1, sm: 3, md: 6 },
         minHeight: "100vh",
         overflowX: "hidden",
       }}
@@ -2333,6 +2342,7 @@ const mainColumns = useMemo(() => {
               handleConsolidationClick={handleConsolidationClick}
               handleSaveAndCloseEvent={handleSaveAndCloseEvent}
               handleFullRefresh={handleFullRefresh}
+              theme={theme}
               accent={accent}
               outlinedBtnSx={outlinedBtnSx}
             />

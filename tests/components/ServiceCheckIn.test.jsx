@@ -388,6 +388,30 @@ describe("ServiceCheckIn page actions", () => {
     });
   });
 
+  test("mobile layout keeps leader details with the name and renders action buttons", async () => {
+    const matchMedia = vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    try {
+      const routes = routesFor({ events: [makeEvent()], people: [amy], realtime: makeRealtime() });
+      renderPage(routes);
+
+      await screen.findByText("Amy Ndlovu");
+      expect(screen.getByText("L1 L1 · L12 L12 · L144 L144")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Save/i })).toBeInTheDocument();
+    } finally {
+      matchMedia.mockRestore();
+    }
+  });
+
   test("mark as new flag POSTs a new_person check-in", async () => {
     const routes = routesFor({ events: [makeEvent()], people: [amy], realtime: makeRealtime() });
     renderPage(routes);

@@ -58,6 +58,11 @@ vi.mock("../../src/Pages/CreateEvents", async () => {
         "div",
         { "data-testid": "create-events-modal", "data-type": props.selectedEventType || "" },
         "Create Event Data Form",
+        React.createElement(
+          "button",
+          { onClick: () => props.onClose(true) },
+          "Finish creating event",
+        ),
       ),
   };
 });
@@ -793,6 +798,34 @@ describe("Events page actions", () => {
       expect(await screen.findByText("Create New Event")).toBeInTheDocument();
       const modal = screen.getByTestId("create-events-modal");
       expect(modal).toHaveAttribute("data-type", "Service");
+    });
+
+    test("creating a cell refetches the incomplete list", async () => {
+      const routes = eventsRoutes();
+      renderEvents(routes);
+      await screen.findByText(/^Select Event Types?$/);
+      fireEvent.click(typeCard("Cells"));
+
+      fireEvent.click(screen.getByText("COMPLETE"));
+      await waitFor(() =>
+        expect(
+          cellsCalls(routes, (url) => url.includes("status=complete")).length,
+        ).toBeGreaterThan(0),
+      );
+
+      routes.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: /Open menu/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Create Event Data/i }));
+      fireEvent.click(await screen.findByRole("button", { name: "Finish creating event" }));
+
+      await waitFor(() =>
+        expect(
+          cellsCalls(routes, (url) => url.includes("status=incomplete")).length,
+        ).toBeGreaterThan(0),
+      );
+      expect(
+        cellsCalls(routes, (url) => url.includes("status=complete")),
+      ).toHaveLength(0);
     });
 
     test("edit event opens the edit modal prefilled with that row", async () => {

@@ -163,7 +163,7 @@ const Login = ({ mode }) => {
         >
           Forgot Password?
         </Link>
-        <Typography variant="body2" mt={1}>
+        <Typography variant="body2" mt={1} color="text.primary">
           Don't have an account?{" "}
           <Link
             component="button"
