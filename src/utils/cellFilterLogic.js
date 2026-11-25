@@ -22,6 +22,9 @@ export const isCellOverdue = (cell, todayStr = null) => {
   if ("isOverdue" in cell) {
     return !!cell.isOverdue;
   }
+  if ("_is_overdue" in cell) {
+    return !!cell._is_overdue;
+  }
   const status = (cell.status || cell.Status || "").trim().toLowerCase();
   const isIncomplete =
     status === "incomplete" ||

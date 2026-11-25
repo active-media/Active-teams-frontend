@@ -553,6 +553,8 @@ export default function AddPersonDialog({
       });
 
       const payload = {
+        _id: personId,
+        person_id:editingPersonObject.person_id,
         invitedBy: formData.invitedBy || "",
         invitedById: formData.invitedById || "",
         name: formData.name, surname: formData.surname,
@@ -576,6 +578,7 @@ export default function AddPersonDialog({
         leaderId: formData.leader1Id || formData.invitedById || "",
         stage: formData.stage || "Win",
       };
+      console.log('editting person',editingPersonObject)
 
       if (isEdit && personId) {
         const response = await authFetch(`${BASE_URL}/people/${personId}`, { method: "PATCH", body: JSON.stringify(payload) });
