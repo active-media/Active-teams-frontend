@@ -700,7 +700,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter, even
   const filteredFields = Object.keys(sampleEvent).filter((key) => {
     const keyLower = key.toLowerCase();
     const excludedFields = [
-      "event_id","session_id",
+      "event_id","session_id","reminder_emails",
       "persistent_attendees", "uuid", "did_not_meet", "status", "week_identifier",
       "attendees", "_id", "id", "isoverdue", "attendance", "location", "eventtype",
       "event_type", "eventtypes", "displaydate", "originatedid", "leader12",
@@ -1793,7 +1793,7 @@ const fetchEventTypes = useCallback(async () => {
       
       const role = (currentUser?.role || "").toLowerCase().trim();
       const email = (currentUser?.email || "").toLowerCase();
-      const isManager = role === "admin" || role === "leaderat12" || role === "registrant";
+      const isManager = role === "admin" || role === "leaderat12" || role === "registrant" || role === "leader";
       
       if (isManager) return true;
       const isGlobalType = type.isGlobal === true || type.isGlobal === "true";

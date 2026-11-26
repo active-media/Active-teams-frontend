@@ -1,11 +1,24 @@
 import React, { useEffect, useState } from "react";
 import "./SplashScreen.css";
+import { API_BASE } from '../api/config';
 
 export default function SplashScreen({ onFinish }) {
+  
   const [fadeOut, setFadeOut] = useState(false);
   const [textPhase, setTextPhase] = useState(0);
   const [particlesVisible, setParticlesVisible] = useState(false);
   const [crossVisible, setCrossVisible] = useState(false);
+
+  const wakeupbackend = async () =>{
+    try  {
+      res = await fetch(`${API_BASE}/`)
+  }catch(e){
+console.error(e)
+  }
+  }
+  useEffect(()=>{
+wakeupbackend()
+  },[])
 
   useEffect(() => {
     const crossTimer = setTimeout(() => setCrossVisible(true), 300);

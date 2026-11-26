@@ -46,7 +46,7 @@ export const OrgConfigProvider = ({ children }) => {
         setConfigLoaded(true);
       }
     };
-    load();
+    // load();
   }, [authFetch, BACKEND_URL, loading, user]);
 
   const getHierarchyLabel = (level) => {
