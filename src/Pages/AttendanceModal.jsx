@@ -24,7 +24,13 @@ import {
   Menu,
   User,
 } from "lucide-react";
-import { CircularProgress, Box, IconButton, Typography } from "@mui/material";
+import {
+  CircularProgress,
+  Box,
+  IconButton,
+  Skeleton,
+  Typography,
+} from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import DownloadIcon from "@mui/icons-material/Download";
 import EventBusyIcon from "@mui/icons-material/EventBusy";
@@ -1489,6 +1495,10 @@ const AttendanceModal = ({
   const [persistentCommonAttendees, setPersistentCommonAttendees] = useState(
     [],
   );
+  const [isLoadingPersistentAttendees, setIsLoadingPersistentAttendees] =
+    useState(false);
+  const [persistentAttendeesLoadError, setPersistentAttendeesLoadError] =
+    useState(false);
   const [peoplePage, setPeoplePage] = useState(1);
   const [peopleHasMore, setPeopleHasMore] = useState(false);
   const [peopleTotal, setPeopleTotal] = useState(0);
@@ -2161,6 +2171,8 @@ const AttendanceModal = ({
       return;
     }
 
+    setIsLoadingPersistentAttendees(true);
+    setPersistentAttendeesLoadError(false);
     try {
       const token = localStorage.getItem("token");
 
@@ -2190,6 +2202,7 @@ const AttendanceModal = ({
           response.status,
           detail,
         );
+        setPersistentAttendeesLoadError(true);
         return;
       }
 
@@ -2352,6 +2365,9 @@ const AttendanceModal = ({
       }
     } catch (error) {
       console.error("Error loading persistent attendees:", error);
+      setPersistentAttendeesLoadError(true);
+    } finally {
+      setIsLoadingPersistentAttendees(false);
     }
   };
 
@@ -4673,7 +4689,80 @@ const AttendanceModal = ({
                   />
                 </div>
 
-                {isMobile ? (
+                {isLoadingPersistentAttendees ? (
+                  isMobile ? (
+                    <Box
+                      role="status"
+                      aria-label="Loading persistent attendees"
+                      sx={{ display: "grid", gap: 1, py: 1 }}
+                    >
+                      {Array.from({ length: 4 }, (_, index) => (
+                        <Box
+                          key={index}
+                          sx={{
+                            p: 2,
+                            border: "1px solid",
+                            borderColor: "divider",
+                            borderRadius: 2,
+                          }}
+                        >
+                          <Skeleton variant="text" width="55%" height={28} />
+                          <Skeleton variant="text" width="75%" />
+                          <Skeleton variant="text" width="40%" />
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : (
+                    <div style={styles.tableContainer}>
+                      <table style={styles.table}>
+                        <tbody
+                          role="status"
+                          aria-label="Loading persistent attendees"
+                        >
+                          {Array.from({ length: 5 }, (_, rowIndex) => (
+                            <tr key={rowIndex}>
+                              {Array.from(
+                                {
+                                  length:
+                                    3 +
+                                    (isActiveTeams ? 2 : 1) +
+                                    1 +
+                                    (isTicketedEvent ? 7 : 0) +
+                                    1 +
+                                    (!isTicketedEvent && isActiveTeams ? 1 : 0) +
+                                    1,
+                                },
+                                (_, cellIndex) => (
+                                  <td key={cellIndex} style={styles.td}>
+                                    <Skeleton
+                                      variant="text"
+                                      width={`${55 + ((rowIndex + cellIndex) % 4) * 10}%`}
+                                    />
+                                  </td>
+                                ),
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                ) : persistentAttendeesLoadError ? (
+                  <Box sx={{ py: 5, textAlign: "center" }} role="alert">
+                    <Typography color="text.secondary">
+                      Unable to load attendees.
+                    </Typography>
+                  </Box>
+                ) : persistentCommonAttendees.length === 0 ||
+                  filteredCommonAttendees.length === 0 ? (
+                  <Box sx={{ py: 5, textAlign: "center" }}>
+                    <Typography color="text.secondary">
+                      {persistentCommonAttendees.length === 0
+                        ? "No persistent attendees for this event."
+                        : "No attendees match your search."}
+                    </Typography>
+                  </Box>
+                ) : isMobile ? (
                   <div>
                     {filteredCommonAttendees.map(renderMobileAttendeeCard)}
                     {isTicketedEvent && subtotals && (
@@ -4784,7 +4873,8 @@ const AttendanceModal = ({
                           const nameParts = (person.fullName || person.full_name || "").split(" ");
                           const firstName = nameParts[0] || "";
                           const lastName = nameParts.slice(1).join(" ") || "";
-                          console.log("Rendering row for person:", person, "Ticket info:", ticketInfo, "Financials:", financials);
+
+                          console.log("PRICE TIERS", eventPriceTiers)
 
                           return (
                             <tr key={person.id}>
@@ -4815,12 +4905,15 @@ const AttendanceModal = ({
                                     <div style={styles.priceTierDropdown}>
                                       <button
                                         style={styles.priceTierButton}
-                                        onClick={() =>
+                                        onClick={() =>{
+
+                                          // alert("??");
                                           setOpenPriceTierDropdown(
                                             openPriceTierDropdown === person.id
                                               ? null
                                               : person.id,
                                           )
+                                        }
                                         }
                                       >
                                         <span

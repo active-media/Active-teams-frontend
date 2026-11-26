@@ -584,7 +584,7 @@ const StatsDashboard = () => {
 
   const [createEventModalOpen, setCreateEventModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
-  const [cellFilter, setCellFilter] = useState("all");
+  const [cellFilter, setCellFilter] = useState("overdue");
   const [selectedCellPerson, setSelectedCellPerson] = useState("all");
   const [taskFilter, setTaskFilter] = useState("all");
   const [taskView, setTaskView] = useState("people");
@@ -791,7 +791,7 @@ const StatsDashboard = () => {
 
           try {
             const hierarchyParams = buildHierarchyParams();
-            const url = `${BACKEND_URL}/events/cells?all_cells=true&event_type=Cells&page=${page}&limit=${limit}&start_date=${startDate}&end_date=${endDate}${hierarchyParams ? `&${hierarchyParams}` : ""}`;
+            const url = `${BACKEND_URL}/events/cells?all_events=true&event_type=Cells&page=${page}&limit=${limit}&start_date=${startDate}&end_date=${endDate}${hierarchyParams ? `&${hierarchyParams}` : ""}`;
 
             const res = await authFetch(url, { signal: controller.signal });
             clearTimeout(timeoutId);

@@ -16,18 +16,23 @@ export const getCellStatus = (cell) => {
 
 export const isCellOverdue = (cell, todayStr = null) => {
   if (!cell) return false;
-  if ("is_overdue" in cell) {
-    return !!cell.is_overdue;
+  const isTrueFlag = (value) =>
+    value === true ||
+    value === 1 ||
+    (typeof value === "string" && value.trim().toLowerCase() === "true");
+
+  if (
+    getCellStatus(cell) !== "incomplete" ||
+    isTrueFlag(cell.did_not_meet)
+  ) {
+    return false;
   }
-  if ("isOverdue" in cell) {
-    return !!cell.isOverdue;
+
+  if (
+    [cell.is_overdue, cell.isOverdue, cell._is_overdue].some(isTrueFlag)
+  ) {
+    return true;
   }
-  const status = (cell.status || cell.Status || "").trim().toLowerCase();
-  const isIncomplete =
-    status === "incomplete" ||
-    status.includes("incomplete") ||
-    status === "incomp" ||
-    status === "not completed";
 
   // Compare calendar dates in the org's operating timezone (Africa/Johannesburg)
   const cellDay = cell.date
@@ -41,7 +46,7 @@ export const isCellOverdue = (cell, todayStr = null) => {
       timeZone: "Africa/Johannesburg",
     });
 
-  return isIncomplete && !!cellDay && cellDay < currentTodayStr;
+  return !!cellDay && cellDay < currentTodayStr;
 };
 
 export const getCellLeader12 = (cell) => {

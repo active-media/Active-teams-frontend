@@ -11,6 +11,7 @@ import AttendanceModal from "./AttendanceModal";
 import IconButton from "@mui/material/IconButton";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
+import PauseCircleOutlineIcon from "@mui/icons-material/PauseCircleOutline";
 import CheckBoxIcon from "@mui/icons-material/CheckBox";
 import Tooltip from "@mui/material/Tooltip";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
@@ -18,6 +19,7 @@ import {
   Box,
   useMediaQuery,
   LinearProgress,
+  Skeleton,
   TextField,
   InputAdornment,
 } from "@mui/material";
@@ -698,7 +700,7 @@ const generateDynamicColumns = (events, isOverdue, selectedEventTypeFilter, even
   const filteredFields = Object.keys(sampleEvent).filter((key) => {
     const keyLower = key.toLowerCase();
     const excludedFields = [
-      "event_id","session_id",
+      "event_id","session_id","reminder_emails",
       "persistent_attendees", "uuid", "did_not_meet", "status", "week_identifier",
       "attendees", "_id", "id", "isoverdue", "attendance", "location", "eventtype",
       "event_type", "eventtypes", "displaydate", "originatedid", "leader12",
@@ -1198,9 +1200,15 @@ const Events = () => {
   const [currentUserLeaderAt1, setCurrentUserLeaderAt1] = useState("");
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [toDeleteType, setToDeleteType] = useState(null);
+  const [deactivateTypeDialogOpen, setDeactivateTypeDialogOpen] = useState(false);
+  const [deactivateTypeName, setDeactivateTypeName] = useState("");
+  const [deactivateTypeReason, setDeactivateTypeReason] = useState("");
+  const [deactivateTypeWeeks, setDeactivateTypeWeeks] = useState("2");
+  const [isDeactivatingType, setIsDeactivatingType] = useState(false);
   const [eventTypesModalOpen, setEventTypesModalOpen] = useState(false);
   const [editingEventType, setEditingEventType] = useState(null);
   const [eventTypes, setEventTypes] = useState([]);
+  const [eventTypesLoading, setEventTypesLoading] = useState(true);
   const [showingEvents, setShowingEvents] = useState(false);
   const [eventTypeSearch, setEventTypeSearch] = useState("");
   const [viewMode, setViewMode] = useState("grid");
@@ -1766,6 +1774,7 @@ const fetchEventsFilters = (filters) => {
 
 const [fetchedEventTypes, setFetchedEventTypes] = useState([]);
 const fetchEventTypes = useCallback(async () => {
+  setEventTypesLoading(true);
   try {
     const org_id = userOrgId || currentUser?.org_id || "";
     console.log("Fetching event types for org_id:", org_id);
@@ -1784,7 +1793,7 @@ const fetchEventTypes = useCallback(async () => {
       
       const role = (currentUser?.role || "").toLowerCase().trim();
       const email = (currentUser?.email || "").toLowerCase();
-      const isManager = role === "admin" || role === "leaderat12" || role === "registrant";
+      const isManager = role === "admin" || role === "leaderat12" || role === "registrant" || role === "leader";
       
       if (isManager) return true;
       const isGlobalType = type.isGlobal === true || type.isGlobal === "true";
@@ -1799,12 +1808,16 @@ const fetchEventTypes = useCallback(async () => {
   } catch (error) {
     console.error("Error fetching event types:", error);
     return [];
+  } finally {
+    setEventTypesLoading(false);
   }
 }, [BACKEND_URL, authFetch, currentUser?.email, currentUser?.role]);
 
     useEffect(() => {
       if (currentUser?.email) {
         fetchEventTypes();
+      } else {
+        setEventTypesLoading(false);
       }
     }, [fetchEventTypes, currentUser?.email]);
     useEffect(() => {
@@ -3201,6 +3214,72 @@ const getFilteredEventTypes = (allEventTypes) => {
       setEditingEventType(null);
     }, 300);
   }, []);
+
+  const handleDeactivateEventType = useCallback(async () => {
+    const eventTypeName = deactivateTypeName.trim();
+    const reason = deactivateTypeReason.trim();
+    const weeks = Number(deactivateTypeWeeks);
+
+    if (!eventTypeName || !reason || !Number.isInteger(weeks) || weeks < 1 || weeks > 12) {
+      toast.error("Choose an event type, enter a reason, and select 1 to 12 weeks.");
+      return;
+    }
+
+    setIsDeactivatingType(true);
+    try {
+      const params = new URLSearchParams({
+        event_type: eventTypeName,
+        reason,
+        weeks: String(weeks),
+      });
+      const response = await authFetch(
+        `${BACKEND_URL}/events/deactivate_event_type?${params.toString()}`,
+        { method: "PUT" },
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to deactivate this event type");
+      }
+
+      const result = await response.json();
+      if (Number.isInteger(result.deactivated_count)) {
+        toast.success(
+          result.message || `Deactivated ${result.deactivated_count} event(s).`,
+        );
+      } else {
+        toast.warning(
+          "The endpoint accepted the request but did not report deactivated events. The current backend only saves the reason; active status is unchanged.",
+          { autoClose: 8000 },
+        );
+      }
+      setDeactivateTypeDialogOpen(false);
+      setDeactivateTypeName("");
+      setDeactivateTypeReason("");
+      setDeactivateTypeWeeks("2");
+      clearCache();
+      eventsCache.current = {};
+
+      if (showingEvents && selectedEventTypeFilter === eventTypeName) {
+        await fetchEvents({}, false);
+      }
+    } catch (error) {
+      console.error("Failed to deactivate event type:", error);
+      toast.error(error.message || "Failed to deactivate this event type");
+    } finally {
+      setIsDeactivatingType(false);
+    }
+  }, [
+    BACKEND_URL,
+    authFetch,
+    clearCache,
+    deactivateTypeName,
+    deactivateTypeReason,
+    deactivateTypeWeeks,
+    fetchEvents,
+    selectedEventTypeFilter,
+    showingEvents,
+  ]);
 
   const handleDeleteType = useCallback(async () => {
     try {
@@ -5783,7 +5862,51 @@ const getTypeValue = (type) => {
               </Box>
             </>
           )
-       ) : viewMode === "grid" ? (
+       ) : eventTypesLoading ? (
+  <Box
+    role="status"
+    aria-label="Loading event types"
+    sx={{
+      flexGrow: 1,
+      overflowY: "auto",
+      width: "100%",
+      p: 2,
+    }}
+  >
+    <Box
+      sx={{
+        display: viewMode === "grid" ? "grid" : "flex",
+        gridTemplateColumns:
+          viewMode === "grid" ? "repeat(auto-fill, minmax(200px, 1fr))" : undefined,
+        flexDirection: viewMode === "grid" ? undefined : "column",
+        gap: 2,
+        width: "100%",
+        maxWidth: viewMode === "grid" ? "1000px" : "800px",
+        margin: "0 auto",
+      }}
+    >
+      {Array.from({ length: 6 }, (_, index) => (
+        <Box
+          key={index}
+          sx={{
+            minHeight: viewMode === "grid" ? 110 : 72,
+            p: 1.5,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 2,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+          }}
+        >
+          <Skeleton variant="text" width="60%" height={26} />
+          {viewMode === "grid" && <Skeleton variant="text" width="100%" height={40} />}
+          <Skeleton variant="rectangular" width="100%" height={4} />
+        </Box>
+      ))}
+    </Box>
+  </Box>
+) : viewMode === "grid" ? (
   <Box
     sx={{
       flexGrow: 1,
@@ -6216,6 +6339,28 @@ const getTypeValue = (type) => {
         <MenuItem
           onClick={() => {
             if (selectedTypeForMenu) {
+              const eventTypeName =
+                selectedTypeForMenu.name ||
+                selectedTypeForMenu.eventTypeName ||
+                selectedTypeForMenu.eventType ||
+                selectedTypeForMenu;
+              setDeactivateTypeName(String(eventTypeName));
+              setDeactivateTypeReason("");
+              setDeactivateTypeWeeks("2");
+              setDeactivateTypeDialogOpen(true);
+            }
+            setMenuAnchor(null);
+          }}
+          sx={{ fontSize: "14px", color: theme.palette.warning.dark }}
+        >
+          <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
+            <PauseCircleOutlineIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Deactivate all events</ListItemText>
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            if (selectedTypeForMenu) {
               setToDeleteType(selectedTypeForMenu);
               setConfirmDeleteOpen(true);
             }
@@ -6491,6 +6636,76 @@ const getTypeValue = (type) => {
             autoFocus
           >
             Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={deactivateTypeDialogOpen}
+        onClose={() => {
+          if (!isDeactivatingType) setDeactivateTypeDialogOpen(false);
+        }}
+        aria-labelledby="deactivate-event-type-title"
+        sx={{
+          "& .MuiPaper-root": {
+            backgroundColor: isDarkMode
+              ? theme.palette.background.paper
+              : "#fff",
+            color: isDarkMode ? theme.palette.text.primary : "#000",
+            width: "100%",
+            maxWidth: 480,
+          },
+        }}
+      >
+        <DialogTitle id="deactivate-event-type-title">
+          Deactivate {deactivateTypeName}
+        </DialogTitle>
+        <DialogContent>
+          <Typography sx={{ mb: 2 }}>
+            This will deactivate(pause) all currently active events in the {deactivateTypeName} event type. They
+            will be eligible for automatic reactivation after the selected
+            period.
+          </Typography>
+          <TextField
+            autoFocus
+            fullWidth
+            required
+            label="Reason"
+            value={deactivateTypeReason}
+            onChange={(event) => setDeactivateTypeReason(event.target.value)}
+            margin="dense"
+          />
+          <TextField
+            fullWidth
+            required
+            type="number"
+            label="Weeks to deactivate"
+            value={deactivateTypeWeeks}
+            onChange={(event) => setDeactivateTypeWeeks(event.target.value)}
+            inputProps={{ min: 1, max: 12, step: 1 }}
+            helperText="Choose between 1 and 12 weeks"
+            margin="dense"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setDeactivateTypeDialogOpen(false)}
+            disabled={isDeactivatingType}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleDeactivateEventType}
+            color="warning"
+            variant="contained"
+            disabled={
+              isDeactivatingType ||
+              !deactivateTypeReason.trim() ||
+              !Number.isInteger(Number(deactivateTypeWeeks)) ||
+              Number(deactivateTypeWeeks) < 1 ||
+              Number(deactivateTypeWeeks) > 12
+            }
+          >
+            {isDeactivatingType ? "Deactivating..." : "Deactivate all"}
           </Button>
         </DialogActions>
       </Dialog>

@@ -394,8 +394,8 @@ function ServiceCheckIn() {
     [isXs, isSm, isMd, isLg],
   );
 
-  const containerPadding = rv(0.5, 1, 2, 3, 3);
-  const cardSpacing = rv(0.5, 1, 1.5, 2, 2);
+  const containerPadding = rv(0.5, 1, 1.5, 2, 2);
+  const cardSpacing = rv(0.5, 1, 1.25, 1.5, 1.5);
 
   const attendeeMap = useMemo(() => {
     const map = new Map();
@@ -2113,9 +2113,9 @@ const mainColumns = useMemo(() => {
       p={containerPadding}
       sx={{
         width: "100%",
-        maxWidth: 1000,
+        maxWidth:{ xs: 350, sm: 100, md: 1200 },
         mx: "auto",
-        mt: { xs: 1, sm: 3, md: 6 },
+        mt: { xs: 1, sm: 2, md: 3 },
         minHeight: "100vh",
         overflowX: "hidden",
       }}

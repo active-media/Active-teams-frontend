@@ -41,6 +41,48 @@ describe("isCellOverdue", () => {
   test("returns true when is_overdue or isOverdue is explicitly true", () => {
     assert.equal(isCellOverdue({ is_overdue: true }, referenceToday), true);
     assert.equal(isCellOverdue({ isOverdue: true }, referenceToday), true);
+    assert.equal(isCellOverdue({ _is_overdue: true }, referenceToday), true);
+  });
+
+  test("does not mark completed or did-not-meet cells overdue from flags", () => {
+    assert.equal(
+      isCellOverdue(
+        { status: "completed", _is_overdue: true, date: "2026-10-01" },
+        referenceToday,
+      ),
+      false,
+    );
+    assert.equal(
+      isCellOverdue(
+        { status: "did_not_meet", _is_overdue: true, date: "2026-10-01" },
+        referenceToday,
+      ),
+      false,
+    );
+    assert.equal(
+      isCellOverdue(
+        { status: "incomplete", did_not_meet: true, date: "2026-10-01" },
+        referenceToday,
+      ),
+      false,
+    );
+  });
+
+  test("recomputes overdue state when the API flag is false", () => {
+    assert.equal(
+      isCellOverdue(
+        { status: "incomplete", _is_overdue: false, date: "2026-10-20" },
+        referenceToday,
+      ),
+      true,
+    );
+    assert.equal(
+      isCellOverdue(
+        { status: "incomplete", _is_overdue: false, date: "2026-10-30" },
+        referenceToday,
+      ),
+      false,
+    );
   });
 
   test("returns false for completed cells even if past date", () => {
